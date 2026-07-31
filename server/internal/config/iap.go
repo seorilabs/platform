@@ -97,7 +97,11 @@ const (
 // 자격증명이 없는 마켓은 조용히 빠진다. 그 마켓 결제만
 // platform_unavailable로 거부되고 나머지는 정상 동작한다.
 // AIT 인증서 미확보 같은 상황이 실제로 있어서 전부-아니면-전무로 두지 않는다.
-func loadIAP() (IAPConfig, error) {
+//
+// requireMarket이 false면 원장 환경만 읽는다. Admin API가 그렇다 —
+// 원장을 읽고 운영자 지급을 쓸 뿐 마켓에 묻지 않는다. 필요 없는
+// 비밀을 마운트하지 않는 것이 R3의 실질이다.
+func loadIAP(requireMarket bool) (IAPConfig, error) {
 	c := IAPConfig{
 		Environment:           envOr("IAP_LEDGER_ENVIRONMENT", EnvProduction),
 		VerifyRatePerMinute:   30,
@@ -110,6 +114,11 @@ func loadIAP() (IAPConfig, error) {
 	default:
 		return IAPConfig{}, fmt.Errorf(
 			"config: IAP_LEDGER_ENVIRONMENT는 production 또는 sandbox여야 한다: %q", c.Environment)
+	}
+
+	if !requireMarket {
+		// 원장 경로를 가르는 환경만 있으면 된다.
+		return c, nil
 	}
 
 	raw := os.Getenv("IAP_CATALOG_JSON")

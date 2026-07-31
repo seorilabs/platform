@@ -109,6 +109,25 @@ func newIAPService(
 	}, nil
 }
 
+// newAdminIAP는 검증기 없이 원장만 조립한다.
+//
+// Admin API는 원장을 읽고 운영자 지급을 쓴다. 마켓에 물어볼 일이 없다.
+// 그래서 마켓 자격증명도 카탈로그도 필요 없다 — 필요한 것은
+// 원장 경로를 가르는 환경 하나뿐이다.
+func newAdminIAP(cfg config.Config, st *store.Client) *iapParts {
+	env := domain.EnvProduction
+	if cfg.IAP.IsSandbox() {
+		env = domain.EnvSandbox
+	}
+
+	slog.Info("Admin 원장 준비 완료", "environment", cfg.IAP.Environment)
+
+	return &iapParts{
+		ledger:    ledger.New(st, env),
+		verifiers: map[domain.Platform]verify.Verifier{},
+	}
+}
+
 // newVerifiers는 자격증명이 있는 마켓의 검증기를 만든다.
 //
 // 조립에 성공한 마켓 목록을 함께 돌려준다. 카탈로그 검사 기준이 된다.

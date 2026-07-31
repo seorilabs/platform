@@ -31,7 +31,7 @@ func setIAPBase(t *testing.T) {
 func TestLoadIAPDefaults(t *testing.T) {
 	setIAPBase(t)
 
-	c, err := loadIAP()
+	c, err := loadIAP(true)
 	if err != nil {
 		t.Fatalf("설정 읽기 실패: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestAppleEnvironmentMustMatchLedger(t *testing.T) {
 			t.Setenv("IAP_LEDGER_ENVIRONMENT", tt.ledger)
 			t.Setenv("APPLE_APP_STORE_ENVIRONMENT", tt.apple)
 
-			c, err := loadIAP()
+			c, err := loadIAP(true)
 
 			if tt.wantError {
 				if err == nil {
@@ -103,7 +103,7 @@ func TestRejectsUnknownEnvironment(t *testing.T) {
 	setIAPBase(t)
 	t.Setenv("IAP_LEDGER_ENVIRONMENT", "staging")
 
-	if _, err := loadIAP(); err == nil {
+	if _, err := loadIAP(true); err == nil {
 		t.Fatal("모르는 환경을 통과시켰다")
 	}
 }
@@ -134,7 +134,7 @@ func TestBindingKeyValidation(t *testing.T) {
 			t.Setenv("IAP_CATALOG_JSON", testCatalog)
 			t.Setenv("IAP_ACCOUNT_BINDING_KEYS", tt.value)
 
-			c, err := loadIAP()
+			c, err := loadIAP(true)
 
 			if tt.wantError {
 				if err == nil {
@@ -156,7 +156,7 @@ func TestRequiresCatalog(t *testing.T) {
 	t.Setenv("IAP_ACCOUNT_BINDING_KEYS", testKey('k'))
 	t.Setenv("IAP_CATALOG_JSON", "")
 
-	if _, err := loadIAP(); err == nil {
+	if _, err := loadIAP(true); err == nil {
 		t.Fatal("카탈로그 없이 통과시켰다")
 	}
 }
@@ -194,7 +194,7 @@ func TestMarketEnabledDetection(t *testing.T) {
 	t.Setenv("IAP_APPLE_ISSUER_ID", "57246542-96fe-1a63-e053-0824d011072a")
 	t.Setenv("IAP_APPLE_BUNDLE_ID", "com.seorilabs.lizardtycoon")
 
-	c, err := loadIAP()
+	c, err := loadIAP(true)
 	if err != nil {
 		t.Fatalf("설정 읽기 실패: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestMarketEnabledDetection(t *testing.T) {
 
 	// 일부만 있으면 켜지지 않는다
 	t.Setenv("IAP_APPLE_KEY_ID", "")
-	partial, err := loadIAP()
+	partial, err := loadIAP(true)
 	if err != nil {
 		t.Fatalf("설정 읽기 실패: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestLimitOverrides(t *testing.T) {
 	t.Setenv("IAP_COMPLETION_MAX_ATTEMPTS", "5")
 	t.Setenv("IAP_COMPLETION_MAX_AGE_HOURS", "24")
 
-	c, err := loadIAP()
+	c, err := loadIAP(true)
 	if err != nil {
 		t.Fatalf("설정 읽기 실패: %v", err)
 	}
@@ -243,9 +243,35 @@ func TestLimitOverrides(t *testing.T) {
 		t.Run("잘못된 값 "+bad, func(t *testing.T) {
 			setIAPBase(t)
 			t.Setenv("IAP_COMPLETION_MAX_ATTEMPTS", bad)
-			if _, err := loadIAP(); err == nil {
+			if _, err := loadIAP(true); err == nil {
 				t.Errorf("%q를 통과시켰다", bad)
 			}
 		})
+	}
+}
+
+// Admin API는 마켓에 묻지 않는다. 카탈로그도 키도 요구하지 않아야 한다.
+//
+// 필요 없는 비밀을 마운트하면 폭발 반경만 넓어진다. R3다.
+func TestAdminNeedsOnlyEnvironment(t *testing.T) {
+	t.Setenv("IAP_LEDGER_ENVIRONMENT", EnvSandbox)
+	// 카탈로그와 키를 일부러 비워둔다
+	t.Setenv("IAP_CATALOG_JSON", "")
+	t.Setenv("IAP_ACCOUNT_BINDING_KEYS", "")
+
+	c, err := loadIAP(false)
+	if err != nil {
+		t.Fatalf("admin 설정을 거부했다: %v", err)
+	}
+	if !c.IsSandbox() {
+		t.Error("환경을 읽지 못했다")
+	}
+	if len(c.CatalogJSON) != 0 || len(c.BindingKeys) != 0 {
+		t.Error("요구하지 않은 값이 채워졌다")
+	}
+
+	// 마켓이 필요한 role은 여전히 거부해야 한다
+	if _, err := loadIAP(true); err == nil {
+		t.Error("카탈로그 없이 마켓 role을 통과시켰다")
 	}
 }

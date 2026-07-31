@@ -137,14 +137,20 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 
 	// 마켓 자격증명은 iap와 worker role에만 마운트된다. R3다.
 	// 워커도 완료 재시도 때 마켓을 호출하므로 검증기가 필요하다.
-	// 다른 role에서 조립을 시도하면 없는 비밀을 찾다가 부팅이 실패한다.
-	if cfg.Role == config.RoleIAP || cfg.Role == config.RoleWorker {
+	switch cfg.Role {
+	case config.RoleIAP, config.RoleWorker:
 		svc, err := newIAPService(ctx, cfg, st, d.events)
 		if err != nil {
 			st.Close()
 			return nil, err
 		}
 		d.iap = svc
+
+	case config.RoleAdmin:
+		// admin은 원장을 읽고 운영자 지급을 쓴다. 마켓에 묻지 않는다.
+		// 검증기를 조립하려 들면 없는 자격증명을 찾다가 부팅이 실패하고,
+		// 자격증명을 붙이면 폭발 반경이 admin까지 넓어진다.
+		d.iap = newAdminIAP(cfg, st)
 	}
 
 	return d, nil

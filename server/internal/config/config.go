@@ -89,10 +89,14 @@ func Load() (Config, error) {
 		c.SessionTTL = d
 	}
 
-	// 결제를 다루는 role만 마켓 설정을 읽는다.
-	// worker는 완료 재시도 때 마켓을 호출하므로 함께 필요하다.
-	if role == RoleIAP || role == RoleWorker {
-		iap, err := loadIAP()
+	// 원장을 다루는 role이 마켓 설정을 읽는다.
+	//
+	// worker는 완료 재시도 때 마켓을 호출하므로 검증기가 필요하고,
+	// admin은 원장 경로(환경 prefix)만 알면 된다. 마켓 자격증명은
+	// iap와 worker에만 마운트한다. R3다.
+	if role == RoleIAP || role == RoleWorker || role == RoleAdmin {
+		// admin은 마켓에 묻지 않으므로 자격증명도 카탈로그도 요구하지 않는다.
+		iap, err := loadIAP(role != RoleAdmin)
 		if err != nil {
 			return Config{}, err
 		}
