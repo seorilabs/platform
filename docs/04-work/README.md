@@ -4,7 +4,24 @@
 
 ## 현재 단계
 
-**P0 진행 중.** 인프라 부트스트랩 완료, 실측 7건 중 3건 확인.
+**P1 완료.** 실제 Cloud Run 배포에서 E2E 통과. 다음은 P2 지표 수집.
+
+### P1 완료 (identity + 계약)
+
+- [x] `platformerr` — Code 60여 개 + statusByCode. **AST 파싱으로 누락 자동 검출**
+- [x] `store` — Firestore 접근 독점. `fs` 미노출 + `fspath.Path`만 수용
+- [x] `httpx` — envelope, 미들웨어, `DisallowUnknownFields`로 불변식 8 강제
+- [x] `registry` — 앱 레지스트리 + 캐시. 항목 하나가 깨져도 나머지 유지
+- [x] `identity` — Firebase 토큰 검증, 세션 발급/회전, platform_user
+- [x] **골든 JWT 6종 거부** — 만료/aud/iss/alg(none·HS256)/kid/서명
+- [x] **100회 동시 호출 → `platform_user_id` 1개**
+- [x] `cmd/regsync` — 레지스트리 Firestore 동기화
+- [x] Cloud Run 배포 + Secret Manager 세션 키
+- [x] 배포 E2E — 세션 발급·갱신·삭제, 불변식 8, 미등록 앱 403
+
+배포: `https://platform-api-306278488979.asia-northeast3.run.app`
+
+### P0 완료
 
 ### P0 진행
 
