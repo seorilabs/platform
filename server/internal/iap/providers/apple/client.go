@@ -3,7 +3,9 @@ package apple
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/richzw/appstore"
@@ -217,4 +219,52 @@ func (c *Client) ParseTransaction(signedTransactionInfo string) (*appstore.JWSTr
 			"App Store 거래 서명을 확인하지 못했어요")
 	}
 	return tx, nil
+}
+
+// RequestTestNotification은 Apple에 테스트 알림 발송을 요청한다.
+//
+// Apple이 App Store Connect에 등록된 웹훅 URL로 실제 ASSN v2 알림을
+// 보낸다. 웹훅 배선 전체를 실결제 없이 확인할 수 있는 유일한 경로다.
+//
+// 돌려주는 토큰으로 발송 결과를 조회할 수 있다.
+func (c *Client) RequestTestNotification(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	status, body, err := c.store.SendRequestTestNotification(ctx)
+	if err != nil {
+		return "", mapAPIError(ctx, err)
+	}
+	if status != http.StatusOK {
+		return "", platformerr.Newf(platformerr.CodeProviderUnavailable,
+			"App Store 테스트 알림 요청이 %d예요", status)
+	}
+
+	var resp struct {
+		TestNotificationToken string `json:"testNotificationToken"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", platformerr.Wrap(err, platformerr.CodeProviderResponseInvalid,
+			"App Store 테스트 알림 응답을 해석하지 못했어요")
+	}
+	return resp.TestNotificationToken, nil
+}
+
+// TestNotificationStatus는 테스트 알림 발송 결과를 조회한다.
+//
+// Apple이 우리 웹훅을 호출한 결과를 그대로 보여준다.
+// 응답 코드와 본문이 들어 있어 배선 오류를 그 자리에서 알 수 있다.
+func (c *Client) TestNotificationStatus(ctx context.Context, token string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	status, body, err := c.store.GetTestNotificationStatus(ctx, token)
+	if err != nil {
+		return nil, mapAPIError(ctx, err)
+	}
+	if status != http.StatusOK {
+		return nil, platformerr.Newf(platformerr.CodeProviderUnavailable,
+			"App Store 테스트 알림 조회가 %d예요", status)
+	}
+	return body, nil
 }

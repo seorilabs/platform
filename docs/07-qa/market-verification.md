@@ -103,6 +103,52 @@ publisher SA로 `purchases.productsv2`에 붙었다. 인증이 통했고 가짜
 인증서를 받기 전까지 AIT 검증기는 조립되지 않고, AIT 결제만
 `platform_unavailable`로 거부된다. 나머지 두 마켓은 정상 동작한다.
 
+## Apple 웹훅 E2E — 실제 알림으로 검증
+
+Apple의 `SendRequestTestNotification`을 호출하면 Apple이 실제 ASSN v2
+알림을 보내고, `GetTestNotificationStatus`가 **Apple이 서명한
+signedPayload를 그대로 돌려준다.** 그것을 우리 웹훅에 직접 보냈다.
+
+실결제 없이 웹훅 배선 전체를 검증할 수 있는 경로다.
+
+```
+notificationType   TEST
+bundleId           com.seorilabs.lizardtycoon
+environment        Sandbox
+notificationUUID   045a6246-8788-404e-bd82-273c6ed1b37f
+```
+
+| 검증 | 결과 |
+|---|---|
+| Apple 서명 JWS 검증 (인증서 체인) | **통과** |
+| bundleId 대조 | **통과** |
+| 웹훅 응답 | HTTP 200 |
+| 이벤트 원장 기록 | `status: completed`, `attemptCount: 1` |
+| 같은 알림 3회 전송 | 전부 200, `attemptCount`는 1 유지 |
+
+멱등성이 실제로 동작한다. 같은 알림이 두 번 와도 한 번만 처리하고,
+Apple에는 200을 줘서 재전송을 멈춘다.
+
+`TEST` 타입은 우리가 반응하는 알림이 아니다. 점유만 하고 완료 처리하는
+것이 정확한 동작이고, 실패로 만들면 Apple이 계속 재전송한다.
+
+### 재현
+
+```bash
+export APPLE_SEND_TEST_NOTIFICATION=1
+go test -tags=market ./internal/iap/providers/ -run TestAppleTestNotification -v
+
+# 출력의 signedPayload를 웹훅에 보낸다
+curl -X POST -H 'Content-Type: application/json' \
+  -d "{\"signedPayload\":\"$PAYLOAD\"}" \
+  "$IAP_URL/v1/iap/webhooks/apple"
+```
+
+> **주의**: 알림 URL은 App Store Connect에 등록된 것으로 간다. 현재는
+> lizard-tycoon의 Firebase Functions다. 위 절차는 Apple이 준 payload를
+> 우리가 직접 우리 웹훅에 넣는 방식이라 URL 등록과 무관하게 동작한다.
+> 실제 전환 시에는 App Store Connect에서 URL을 바꿔야 한다.
+
 ## 아직 못 한 것 — 신규 실결제
 
 기존 구매 재검증으로 상당 부분이 덮였지만, 새 결제를 해야만
