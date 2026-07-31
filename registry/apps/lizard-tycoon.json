@@ -1,0 +1,31 @@
+{
+  "app_id": "lizard-tycoon",
+  "display_name": "도마뱀 테라리움",
+  "firebase_project_id": "lizard-tycoon",
+  "status": "active",
+  "features": {
+    "config": true,
+    "events": true,
+    "iap": false
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "iap": {
+    "ledger_environment": "sandbox",
+    "markets": ["google_play", "app_store", "apps_in_toss"]
+  },
+  "platform_event_allowlist": [
+    "seori_session_start",
+    "seori_sdk_error",
+    "seori_iap_verify",
+    "core_purchase_start",
+    "core_purchase_result",
+    "core_ad_impression",
+    "core_ad_reward",
+    "core_tutorial_step"
+  ],
+  "cors_origins": [],
+  "blocked_uids": []
+}

@@ -21,29 +21,13 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/seorilabs/platform/server/internal/config"
+	"github.com/seorilabs/platform/server/internal/httpx"
+	"github.com/seorilabs/platform/server/internal/identity"
+	"github.com/seorilabs/platform/server/internal/registry"
+	"github.com/seorilabs/platform/server/internal/store"
 )
-
-// Role은 이 프로세스가 담당하는 역할이다.
-type Role string
-
-const (
-	RoleAPI    Role = "api"    // session, RemoteConfig, entitlement 조회
-	RoleIAP    Role = "iap"    // 마켓 검증과 웹훅. 자격증명 보유
-	RoleIngest Role = "ingest" // 이벤트 수집. 고QPS
-	RoleAdmin  Role = "admin"  // 백오피스 전용. private
-	RoleWorker Role = "worker" // 완료 outbox 재시도. Cloud Run Job
-)
-
-func parseRole(s string) (Role, error) {
-	switch Role(s) {
-	case RoleAPI, RoleIAP, RoleIngest, RoleAdmin, RoleWorker:
-		return Role(s), nil
-	case "":
-		return "", errors.New("PLATFORM_ROLE 환경변수가 필요하다")
-	default:
-		return "", fmt.Errorf("알 수 없는 PLATFORM_ROLE: %s", s)
-	}
-}
 
 func main() {
 	// main은 얇게 두고 로직은 run에 둔다.
@@ -59,49 +43,176 @@ func run() error {
 	// 토큰·영수증·purchaseToken 원문은 절대 로그에 남기지 않는다. AGENTS.md 참고.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	role, err := parseRole(os.Getenv("PLATFORM_ROLE"))
+	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080" // Cloud Run이 주입하지만 로컬 실행을 위한 기본값
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.Role == config.RoleWorker {
+		return runWorker(ctx, cfg)
 	}
 
+	deps, err := newDeps(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer deps.Close()
+
+	handler, err := buildHandler(cfg, deps)
+	if err != nil {
+		return err
+	}
+
+	// 캐시를 미리 채워 첫 요청이 키셋과 레지스트리 왕복을 기다리지 않게 한다.
+	// 콜드스타트 425ms에 네트워크 왕복이 더 붙으면 결제 경로에서 체감된다.
+	deps.warm(ctx)
+
+	return serve(ctx, cfg, handler)
+}
+
+// deps는 role들이 공유하는 의존성이다.
+//
+// composition root에서만 조립한다. 패키지끼리 직접 조립하지 않는다.
+type deps struct {
+	store    *store.Client
+	registry *registry.Registry
+	identity *identity.Handler
+	keys     *identity.KeyCache
+}
+
+func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
+	st, err := store.New(ctx, cfg.ProjectID, cfg.FirestorePrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	reg := registry.New(registry.NewStoreSource(st))
+
+	d := &deps{store: st, registry: reg}
+
+	// 세션 비밀키가 있는 role만 identity를 조립한다.
+	// ingest는 익명 수집을 허용하므로 세션이 필요 없다.
+	if len(cfg.SessionSecret) > 0 {
+		keys := identity.NewKeyCache(nil)
+		issuer, err := identity.NewSessionIssuer(cfg.SessionSecret, cfg.SessionTTL)
+		if err != nil {
+			st.Close()
+			return nil, err
+		}
+
+		svc := identity.NewService(
+			reg,
+			identity.NewFirebaseVerifier(keys),
+			identity.NewStoreRepository(st),
+			issuer,
+		)
+		d.identity = identity.NewHandler(svc)
+		d.keys = keys
+	}
+
+	return d, nil
+}
+
+func (d *deps) Close() {
+	if d.store != nil {
+		if err := d.store.Close(); err != nil {
+			slog.Error("store 종료 실패", "err", err)
+		}
+	}
+}
+
+// warm은 첫 요청이 기다리지 않도록 캐시를 미리 채운다.
+//
+// 실패해도 서버는 뜬다. 첫 요청 시점에 다시 시도한다.
+// 부팅을 막으면 일시적인 네트워크 문제로 배포가 실패한다.
+func (d *deps) warm(ctx context.Context) {
+	if d.keys != nil {
+		if err := d.keys.Warm(ctx); err != nil {
+			slog.WarnContext(ctx, "Firebase 키셋 예열 실패", "err", err)
+		}
+	}
+	if err := d.registry.Reload(ctx); err != nil {
+		slog.WarnContext(ctx, "레지스트리 예열 실패", "err", err)
+	}
+}
+
+func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 	mux := http.NewServeMux()
 
 	// 헬스체크는 계약이 아니라 인프라 관심사다. spec/openapi.yaml에 두지 않는다.
-	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
-		// TODO(P1): Firestore 연결과 레지스트리 로드를 확인한다
+		// 레지스트리를 읽을 수 있어야 요청을 받을 준비가 된 것이다.
+		if _, err := d.registry.List(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintln(w, "not ready")
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ready")
 	})
 
-	// TODO(P1): role별 라우트를 등록한다
-	// 표준 net/http의 ServeMux가 "POST /v1/inbox/{id}/claim" 패턴을 지원하므로
-	// 외부 라우터를 도입하지 않는다.
+	switch cfg.Role {
+	case config.RoleAPI:
+		if d.identity == nil {
+			return nil, errors.New("api role에 identity가 필요하다")
+		}
+		d.identity.Register(mux)
+		// TODO(P3): RemoteConfig 라우트
+		// TODO(P4): entitlement 조회 라우트
 
-	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second, // Apple 검증은 외부 API 왕복이 붙는다
-		IdleTimeout:       120 * time.Second,
+	case config.RoleIAP:
+		if d.identity == nil {
+			return nil, errors.New("iap role에 identity가 필요하다")
+		}
+		// TODO(P5): 마켓 검증 라우트
+		// TODO(P6): 웹훅 라우트
+
+	case config.RoleIngest:
+		// TODO(P2): 이벤트 수집 라우트
+
+	case config.RoleAdmin:
+		// TODO(P7): 백오피스 Admin API
+
+	default:
+		return nil, fmt.Errorf("HTTP를 열지 않는 role이다: %s", cfg.Role)
 	}
 
-	// graceful shutdown. Cloud Run이 SIGTERM을 보내면 진행 중 요청을 마치고 내려간다.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// 앞에 쓴 미들웨어가 바깥이다. 요청을 먼저 본다.
+	// Recover가 가장 바깥이어야 다른 미들웨어의 패닉도 잡는다.
+	return httpx.Chain(mux,
+		httpx.Recover(),
+		httpx.RequestID(),
+		httpx.AccessLog(),
+		httpx.Timeout(30*time.Second),
+	), nil
+}
+
+func serve(ctx context.Context, cfg config.Config, handler http.Handler) error {
+	srv := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// Apple 검증은 외부 API 왕복이 붙어 오래 걸릴 수 있다.
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("서버 시작", "role", role, "port", port)
+		slog.Info("서버 시작",
+			"role", cfg.Role,
+			"port", cfg.Port,
+			"project", cfg.ProjectID,
+			"staging", cfg.IsStaging(),
+		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -114,11 +225,19 @@ func run() error {
 		slog.Info("종료 신호 수신")
 	}
 
+	// Cloud Run이 SIGTERM을 보내면 진행 중 요청을 마치고 내려간다.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown 실패: %w", err)
 	}
 	slog.Info("정상 종료")
+	return nil
+}
+
+// runWorker는 완료 outbox 재시도 워커다. Cloud Run Job으로 돈다.
+func runWorker(_ context.Context, cfg config.Config) error {
+	// TODO(P6): outbox claim → 마켓 완료 → backoff → dead-letter
+	slog.Info("워커는 아직 구현되지 않았다", "role", cfg.Role)
 	return nil
 }

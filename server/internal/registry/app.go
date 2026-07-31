@@ -38,27 +38,30 @@ const (
 )
 
 // App은 레지스트리 항목이다.
+//
+// json 태그는 registry/apps/*.json 파일용이고 firestore 태그는 저장용이다.
+// 둘을 같은 이름으로 맞춘다. 다르면 파일과 Firestore를 대조할 때 헷갈린다.
 type App struct {
-	AppID             string `json:"app_id"`
-	DisplayName       string `json:"display_name"`
-	FirebaseProjectID string `json:"firebase_project_id"`
-	Status            Status `json:"status"`
+	AppID             string `json:"app_id" firestore:"app_id"`
+	DisplayName       string `json:"display_name" firestore:"display_name"`
+	FirebaseProjectID string `json:"firebase_project_id" firestore:"firebase_project_id"`
+	Status            Status `json:"status" firestore:"status"`
 
-	Features        map[string]bool `json:"features"`
-	RequireAppCheck bool            `json:"require_app_check"`
+	Features        map[string]bool `json:"features" firestore:"features"`
+	RequireAppCheck bool            `json:"require_app_check" firestore:"require_app_check"`
 
-	GA4 GA4Config `json:"ga4"`
-	IAP IAPConfig `json:"iap"`
+	GA4 GA4Config `json:"ga4" firestore:"ga4"`
+	IAP IAPConfig `json:"iap" firestore:"iap"`
 
 	// PlatformEventAllowlist에 없는 이벤트는 플랫폼으로 보내지 않는다.
 	// 비용과 QPS를 규모와 무관한 상수로 묶는 장치다.
-	PlatformEventAllowlist []string `json:"platform_event_allowlist"`
+	PlatformEventAllowlist []string `json:"platform_event_allowlist" firestore:"platform_event_allowlist"`
 
 	// CORSOrigins는 웹과 AIT 빌드용이다. 비어 있으면 CORS를 허용하지 않는다.
-	CORSOrigins []string `json:"cors_origins"`
+	CORSOrigins []string `json:"cors_origins" firestore:"cors_origins"`
 
 	// BlockedUIDs는 남용 계정 차단용이다. 앱 전체를 멈추지 않고 개별 차단한다.
-	BlockedUIDs []string `json:"blocked_uids"`
+	BlockedUIDs []string `json:"blocked_uids" firestore:"blocked_uids"`
 }
 
 type GA4Config struct {
@@ -68,12 +71,12 @@ type GA4Config struct {
 	// 원래 불필요했다. 플랫폼 테이블은 app_id 컬럼이 있으므로
 	// 접두사를 벗겨야 횡단 쿼리가 가능해진다.
 	// GA4로는 기존 이름 그대로 보내 시계열을 끊지 않는다.
-	EventPrefix string `json:"event_prefix"`
+	EventPrefix string `json:"event_prefix" firestore:"event_prefix"`
 }
 
 type IAPConfig struct {
-	LedgerEnvironment LedgerEnvironment `json:"ledger_environment"`
-	Markets           []string          `json:"markets"`
+	LedgerEnvironment LedgerEnvironment `json:"ledger_environment" firestore:"ledger_environment"`
+	Markets           []string          `json:"markets" firestore:"markets"`
 }
 
 var appIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
