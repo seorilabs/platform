@@ -21,12 +21,33 @@
 # 사람 계정에 run.invoker를 평시에 부여해둔다. 장애 중에 IAM을 바꿀 수는 없다.
 gcloud run services add-iam-policy-binding platform-admin \
   --region=asia-northeast3 \
-  --member="user:ih@toss.im" \
+  --member="user:ih@seorilabs.com" \
   --role="roles/run.invoker" \
   --project=seorilabs-platform
 ```
 
-> 이 조직은 org policy `iam.allowedPolicyMemberDomains`가 seorilabs 디렉토리만 허용한다. **사람 계정 바인딩은 같은 디렉토리 소속이므로 통과하지만 `allUsers`는 막힌다.**
+> **반드시 `@seorilabs.com` 계정이어야 한다.** org policy
+> `iam.allowedPolicyMemberDomains`가 디렉토리 `C02f93h8p`(seorilabs.com)만
+> 허용한다. `ih@seorilabs.com`으로 시도하면 다음과 같이 막힌다.
+>
+> ```
+> FAILED_PRECONDITION: One or more users named in the policy do not
+> belong to a permitted customer, perhaps due to an organization policy.
+> ```
+>
+> 리허설에서 실제로 겪었다. 장애 중에 이걸 발견하면 늦는다.
+
+### 인증이 두 겹이다
+
+Cloud Run IAM을 통과해도 애플리케이션이 한 번 더 본다.
+
+| 층 | 실패 시 |
+|---|---|
+| Cloud Run `run.invoker` | 403, 응답 본문 없음 |
+| `ADMIN_ALLOWED_ACCOUNTS` | 403, `{"ok":false,"error":{"code":"auth_forbidden"}}` |
+
+`auth_forbidden`이 오면 IAM은 통과했고 허용 목록에 계정이 없는 것이다.
+`ADMIN_ALLOWED_ACCOUNTS` 환경변수를 확인한다.
 
 ## 준비
 
@@ -46,7 +67,7 @@ TOKEN="$(gcloud auth print-identity-token --audiences="$ADMIN_URL")"
 | 헤더 | 뜻 |
 |---|---|
 | `Authorization: Bearer $TOKEN` | OIDC 인증. 없으면 401 |
-| `X-Seori-Actor: ih@toss.im` | 누가 눌렀는지. 없으면 서비스 계정 이름만 남는다 |
+| `X-Seori-Actor: ih@seorilabs.com` | 누가 눌렀는지. 없으면 서비스 계정 이름만 남는다 |
 
 `X-Seori-Actor`는 증명되지 않는 값이라 권한 판단에 쓰이지 않는다.
 감사 기록에만 들어간다. 그래도 반드시 넣는다 — 나중에 이 기록을 보는
@@ -77,7 +98,7 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$ADMIN_URL/v1/admin/health"
 ```bash
 curl -sS -X POST "$ADMIN_URL/v1/admin/config/maintenance" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Seori-Actor: ih@toss.im" \
+  -H "X-Seori-Actor: ih@seorilabs.com" \
   -H "Content-Type: application/json" \
   -d '{"appId":"lizard-tycoon","minutes":30}'
 ```
@@ -93,7 +114,7 @@ curl -sS -X POST "$ADMIN_URL/v1/admin/config/maintenance" \
 ```bash
 curl -sS -X POST "$ADMIN_URL/v1/admin/config/maintenance" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Seori-Actor: ih@toss.im" \
+  -H "X-Seori-Actor: ih@seorilabs.com" \
   -H "Content-Type: application/json" \
   -d '{"appId":"lizard-tycoon","minutes":0}'
 ```
@@ -126,7 +147,7 @@ REQUEST_ID="$(uuidgen | tr 'A-Z' 'a-z')"
 
 curl -sS -X POST "$ADMIN_URL/v1/admin/entitlements/grant" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Seori-Actor: ih@toss.im" \
+  -H "X-Seori-Actor: ih@seorilabs.com" \
   -H "Content-Type: application/json" \
   -d "{
     \"requestId\": \"$REQUEST_ID\",
@@ -205,5 +226,31 @@ kubectl -n platform scale deploy/backoffice --replicas=0
 kubectl -n platform scale deploy/backoffice --replicas=1
 ```
 
-> **미실시**: `platform-admin`이 아직 배포되지 않아 리허설을 하지 못했다.
-> 배포 후 반드시 한 번 돌린다. 그때까지 이 문서는 검증되지 않은 상태다.
+### 2026-07-31 실시 결과
+
+`platform-admin`을 배포하고 전 구간을 실행했다. **여기 적힌 명령은
+실제로 돌려본 것이다.**
+
+| 항목 | 결과 |
+|---|---|
+| 인증 없이 호출 | 403 |
+| 상태 확인 | `deadLetterCount: 0` |
+| 최근 주문 조회 | 실제 원장 3건 |
+| 점검 모드 on → 클라이언트 반영 | **약 6초** (캐시 TTL 60초 이내) |
+| 점검 모드 off | 정상 |
+| 운영자 지급 1차 | `applied: true` |
+| 같은 requestId 2차 | `applied: false` (멱등 동작) |
+| 감사 기록 | `actorLogin: ih@seorilabs.com`, `reason` 보존 |
+| 백오피스 다운 중 config·이벤트·break-glass | 전부 정상 |
+
+리허설에서 찾은 것 셋을 함께 고쳤다.
+
+1. **admin role이 부팅에 실패했다.** `buildHandler`가 결제 설정을
+   요구하는데 `newDeps`가 admin에서는 조립하지 않았다
+2. **`platform-api`와 `platform-admin`의 Firestore prefix가 달랐다.**
+   admin이 `stg_`, api가 production이라 서로 다른 컬렉션을 봤다.
+   점검 모드를 켜도 클라이언트에 아무 변화가 없었고, 운영자는
+   "켰다"고 믿는다. **배포 시 두 서비스의 prefix가 같은지 확인한다**
+3. **SDK가 보내는 이벤트가 전부 버려지고 있었다.** `eventId`가 없으면
+   서버가 200을 주면서 그 이벤트만 버린다. SDK는 성공으로 알고
+   outbox에서 지워 조용히 유실됐다

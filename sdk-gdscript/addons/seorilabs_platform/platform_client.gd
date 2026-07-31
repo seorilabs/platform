@@ -217,10 +217,17 @@ func track(event_name: String, params: Dictionary = {}) -> void:
 	if event_name.is_empty():
 		return
 
+	# 필드 이름은 서버 계약을 따른다. 서버가 미지 필드를 거부하므로
+	# 여기서 다른 이름을 쓰면 배치 전체가 400으로 떨어진다.
+	#
+	# eventId가 없으면 서버가 배치를 받아들이면서도 그 이벤트를 버린다.
+	# 응답이 200이라 여기서는 성공으로 알고 outbox에서 지운다 —
+	# 조용히 유실된다.
 	_event_buffer.append({
+		"eventId": _new_event_id(),
 		"name": event_name,
 		"params": Normalizer.normalize(params),
-		"clientTimestamp": Time.get_unix_time_from_system() * 1000.0,
+		"tsUnixMs": int(Time.get_unix_time_from_system() * 1000.0),
 	})
 
 	if _event_buffer.size() >= MAX_EVENT_BATCH:
@@ -272,6 +279,16 @@ func flush_events(callback: Callable = Callable()) -> void:
 		with_token(func(token: String, _error: Dictionary) -> void:
 			send.call(token)
 		)
+
+
+## 이벤트 식별자를 만든다. 서버가 중복 제거에 쓴다.
+func _new_event_id() -> String:
+	# Godot에는 UUID가 없다. 무작위 16바이트를 hex로 쓴다.
+	var bytes := PackedByteArray()
+	bytes.resize(16)
+	for i in 16:
+		bytes[i] = randi() % 256
+	return bytes.hex_encode()
 
 
 func _push_outbox(events: Array) -> void:

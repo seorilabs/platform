@@ -364,7 +364,7 @@ describe("Events", () => {
     await outbox.push([1, 2, 3, 4, 5].map((i) => ({
       name: `e${i}`,
       params: {},
-      clientTimestamp: i,
+      tsUnixMs: i,
     })));
 
     assert.equal(await outbox.size(), 3);
@@ -516,5 +516,75 @@ describe("Config", () => {
 
     // seed가 캐시를 채웠으니 네트워크를 타지 않는다
     assert.equal(f.count, 0);
+  });
+});
+
+describe("서버 계약", () => {
+  // 이 테스트가 없어서 두 가지를 놓쳤다. SDK가 clientTimestamp를 보내
+  // 배치 전체가 400으로 떨어졌고, eventId가 없어 서버가 200을 주면서도
+  // 이벤트를 버렸다. 후자는 SDK가 성공으로 알고 outbox에서 지워
+  // 조용히 유실됐다.
+  //
+  // 서버의 clientEvent 구조(internal/events/handler.go)와 맞춘다.
+  const SERVER_EVENT_FIELDS = ["eventId", "name", "tsUnixMs", "sessionId", "params"];
+
+  it("이벤트가 서버가 아는 필드만 보낸다", async () => {
+    const f = fakeFetch([ok({})]);
+    const events = new Events({
+      transport: newTransport(f.impl, 0),
+      now: () => 1_700_000_000_000,
+    });
+
+    events.track({ name: "seori_session_start", params: { level: 3 } });
+    await events.flush();
+
+    const body = f.calls[0]!.body as { events: Array<Record<string, unknown>> };
+    const sent = body.events[0]!;
+
+    for (const key of Object.keys(sent)) {
+      assert.ok(
+        SERVER_EVENT_FIELDS.includes(key),
+        `서버가 모르는 필드를 보낸다: ${key} — DecodeStrict가 400을 준다`,
+      );
+    }
+  });
+
+  it("eventId를 반드시 채운다", async () => {
+    const f = fakeFetch([ok({})]);
+    const events = new Events({
+      transport: newTransport(f.impl, 0),
+      now: () => 1_700_000_000_000,
+    });
+
+    events.track({ name: "seori_session_start" });
+    events.track({ name: "seori_sdk_error" });
+    await events.flush();
+
+    const body = f.calls[0]!.body as { events: Array<{ eventId?: string }> };
+
+    const ids = body.events.map((e) => e.eventId);
+    for (const id of ids) {
+      // 비면 서버가 200을 주면서 그 이벤트만 버린다
+      assert.ok(id && id.length >= 8, `eventId가 비었다: ${id}`);
+    }
+    // 같은 배치에서 충돌하면 서버가 중복으로 보고 하나를 버린다
+    assert.equal(new Set(ids).size, ids.length, "eventId가 중복이다");
+  });
+
+  it("tsUnixMs를 밀리초 정수로 보낸다", async () => {
+    const f = fakeFetch([ok({})]);
+    const events = new Events({
+      transport: newTransport(f.impl, 0),
+      now: () => 1_700_000_000_123,
+    });
+
+    events.track({ name: "seori_session_start" });
+    await events.flush();
+
+    const body = f.calls[0]!.body as { events: Array<{ tsUnixMs?: number }> };
+    const ts = body.events[0]!.tsUnixMs!;
+
+    assert.equal(Number.isInteger(ts), true, "정수가 아니다");
+    assert.equal(ts, 1_700_000_000_123);
   });
 });

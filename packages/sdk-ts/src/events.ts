@@ -14,10 +14,23 @@ export interface EventInput {
 }
 
 interface NormalizedEvent {
+  /**
+   * 이벤트 고유 식별자.
+   *
+   * 서버가 중복 제거에 쓰고, 없으면 배치를 받아들이면서도 그 이벤트를
+   * 버린다. 응답은 200이라 클라이언트는 성공으로 알고 outbox에서
+   * 지운다 — 조용히 유실된다. 반드시 채운다.
+   */
+  eventId: string;
   name: string;
   params: Record<string, ParamValue>;
-  /** 클라이언트가 이벤트를 만든 시각(epoch ms). */
-  clientTimestamp: number;
+  /**
+   * 클라이언트가 이벤트를 만든 시각(epoch ms).
+   *
+   * 필드 이름은 서버 계약을 따른다. 서버가 미지 필드를 거부하므로
+   * 여기서 다른 이름을 쓰면 배치 전체가 400으로 떨어진다.
+   */
+  tsUnixMs: number;
 }
 
 /** 실패한 배치를 담아두는 저장소. */
@@ -57,6 +70,25 @@ export class MemoryEventOutbox implements EventOutbox {
   async size(): Promise<number> {
     return this.queue.length;
   }
+}
+
+/**
+ * 이벤트 식별자를 만든다.
+ *
+ * crypto.randomUUID는 보안 컨텍스트가 아니면 없을 수 있다.
+ * RN과 브라우저 양쪽에서 도는 SDK라 대체 경로를 둔다.
+ */
+function newEventID(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") {
+    return c.randomUUID();
+  }
+  if (c && typeof c.getRandomValues === "function") {
+    const bytes = c.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // 마지막 수단. 충돌하면 서버가 중복으로 보고 하나를 버린다.
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /** 한 번에 보낼 최대 이벤트 수. */
@@ -103,9 +135,10 @@ export class Events {
       return;
     }
     this.buffer.push({
+      eventId: newEventID(),
       name: event.name,
       params: normalizeParams(event.params ?? {}),
-      clientTimestamp: this.now(),
+      tsUnixMs: this.now(),
     });
 
     if (this.buffer.length >= MAX_BATCH) {
