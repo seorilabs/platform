@@ -21,11 +21,60 @@ go test -tags=market ./internal/iap/providers/ -v
 
 ## 2026-07-31 결과
 
-| 마켓 | 인증 | 에러 매핑 | 실결제 |
-|---|---|---|---|
-| App Store | **통과** | `4000006` → `purchase_invalid` 확인 | 미실시 |
-| Google Play | **통과** | 400 → `purchase_invalid` 확인 | 미실시 |
-| AppsInToss | **미확보** | — | — |
+| 마켓 | 인증 | 에러 매핑 | 실제 구매 검증 | shadow 대조 |
+|---|---|---|---|---|
+| App Store | **통과** | `4000006` → `purchase_invalid` | **통과** | **통과** |
+| Google Play | **통과** | 400 → `purchase_invalid` | 불가 (아래) | — |
+| AppsInToss | 미확보 | — | — | — |
+
+## shadow 대조 — App Store
+
+**가장 중요한 검증이다.** lizard-tycoon이 Firebase Functions(TypeScript)로
+운영하며 남긴 실제 샌드박스 구매를 우리 Go provider로 다시 검증했다.
+사람이 기기에서 실제로 결제한 거래다.
+
+```
+transactionId    2000001213754304
+productId        com.seorilabs.lizardtycoon.premium.galaxy_gecko
+canonicalId      2000001213754304  (originalTransactionId)
+state            active
+completion       apple_finish
+purchasedAt      2026-07-30T12:09:29Z
+orderKey         32de2fba...c5e598a7
+```
+
+`orderKey`가 **기존 구현이 Firestore 문서 ID로 쓴 값과 정확히 일치**했다.
+
+이게 왜 결정적인가. orderKey가 다르면 전환 시점에 같은 구매가 두 주문으로
+갈라진다. 멱등이 깨지고 이미 지급한 것을 다시 지급한다. 두 구현이
+`sha256("{platform}:{canonicalId}")`를 같은 입력으로 계산한다는 것을
+실제 데이터로 확인했다.
+
+함께 확인된 것
+
+- 실제 Apple JWS를 파싱하고 인증서 체인을 검증한다
+- 불변식 1: canonicalId가 originalTransactionId다
+- 불변식 9: `NON_CONSUMABLE`이라 통과했다. 아니면 거부됐을 것이다
+- bundleId·환경 대조를 통과한다
+- `purchasedAt`이 원장 기록(`2026-07-30T12:09:29.000Z`)과 같다
+
+```bash
+export APPLE_REAL_TRANSACTION_ID=2000001213754304
+export APPLE_REAL_ORDER_KEY=32de2fba5b5f2bb536dfd396bb90edd8c3db25cb1fce89a2e396410bc5e598a7
+go test -tags=market ./internal/iap/providers/ -run TestAppleRealSandboxPurchase -v
+```
+
+### Play는 같은 방법을 쓸 수 없다
+
+purchaseToken을 원장에 저장하지 않기 때문이다. **PII 최소화 원칙이고
+우리도 같은 규칙을 따른다.** orderKey는 sha256이라 역산도 안 된다.
+
+원장에 남은 것은 `providerOrderId`(`GPA.3370-...`)뿐이고, Play API는
+orderId로 purchaseToken을 되찾는 경로를 주지 않는다.
+
+Play 재검증은 기기에서 새 구매를 만들어야 한다. 다만 orderKey 계산은
+두 마켓이 같은 `domain.OrderKey` 함수를 쓰므로 App Store에서 확인된
+알고리즘 일치가 Play에도 그대로 적용된다.
 
 ### App Store
 
@@ -54,15 +103,17 @@ publisher SA로 `purchases.productsv2`에 붙었다. 인증이 통했고 가짜
 인증서를 받기 전까지 AIT 검증기는 조립되지 않고, AIT 결제만
 `platform_unavailable`로 거부된다. 나머지 두 마켓은 정상 동작한다.
 
-## 아직 못 한 것 — 실결제
+## 아직 못 한 것 — 신규 실결제
 
-**샌드박스 실결제는 사람이 기기에서 해야 한다.** API 검증으로는
-대체할 수 없는 것이 남는다.
+기존 구매 재검증으로 상당 부분이 덮였지만, 새 결제를 해야만
+확인되는 것이 남는다.
 
-- 실제 구매 토큰의 형식과 응답 스키마
-- `originalTransactionId`가 복원 시에도 유지되는지
-- acknowledge / finishTransaction이 실제로 반영되는지
-- 환불 웹훅이 실제로 도착하는지
+- **Play 구매 검증** — purchaseToken이 원장에 없어 기존 거래로는 못 한다
+- **acknowledge / finishTransaction이 실제로 반영되는지** — 기존 거래는
+  이미 완료 처리되어 있어 다시 부를 수 없다
+- **환불 웹훅이 실제로 도착하는지** — Apple ASSN v2, Play RTDN 배선
+- **`originalTransactionId`가 복원 시에도 유지되는지** — 재구매·복원 흐름
+- **AppsInToss 전 경로** — mTLS 인증서부터 필요하다
 
 ### 절차
 
