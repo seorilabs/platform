@@ -13,12 +13,22 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 |---|---|---|---|
 | 마켓 인증 | ✅ | ✅ | ⏳ 인증서 |
 | 실제 구매 검증 | ✅ | ✅ | — |
-| shadow 대조 (orderKey 일치) | ✅ | — | — |
+| shadow 대조 (orderKey 일치) | ✅ | ✅ | — |
 | 웹훅 (실데이터) | ✅ | ✅ | 해당 없음 |
 | 완료 호출 경로 | ✅ | ✅ | 클라이언트 담당 |
 | 완료 **반영** 확인 | ✅ | ⏳ 활성 구매 | — |
-| RTDN 실연동 | 해당 없음 | ⏳ 콘솔 등록 | — |
+| RTDN 실연동 | 해당 없음 | ✅ | — |
 | mTLS 배선 | — | — | ✅ |
+
+**RTDN은 실연동까지 확인했다.** Google이 직접 보낸 알림을
+`platform-iap`이 받아 처리했다.
+
+```
+알림 반영  kind=one_time_product  state=revoked  known=false  → 200
+```
+
+`known=false`는 아직 shadow 단계라 우리 원장에 없는 주문이라는 뜻이다.
+불변식 10대로 신규 지급 없이 tombstone만 남겼다.
 
 검증 근거는 [market-verification.md](../07-qa/market-verification.md)에 있다.
 
@@ -226,6 +236,27 @@ Play 항목은 acknowledge **호출 성공**만 보지 않고 마켓에 다시 �
 않으면 3일 뒤 자동 환불된다.
 
 ## 4. 전환 — 위 셋이 끝난 뒤
+
+### 4.0 이미지 태그를 맞춘다
+
+네 서비스가 서로 다른 태그로 돌고 있었다 — `platform-api`는 `p3`,
+`platform-ingest`는 `p2`. 오래된 코드가 결제 경로 옆에서 돈다.
+
+```bash
+gcloud run services list --project=seorilabs-platform \
+  --region=asia-northeast3 \
+  --format="table(metadata.name, spec.template.spec.containers[0].image)"
+```
+
+이미지만 바꾸면 환경변수는 유지된다.
+
+```bash
+TAG="asia-northeast3-docker.pkg.dev/seorilabs-platform/platform/platform:<태그>"
+for s in platform-api platform-iap platform-ingest platform-admin; do
+  gcloud run deploy "$s" --project=seorilabs-platform \
+    --region=asia-northeast3 --image="$TAG" --quiet
+done
+```
 
 ### 4.1 서비스 배포
 
