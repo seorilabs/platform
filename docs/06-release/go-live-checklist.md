@@ -129,6 +129,28 @@ gcloud run services update platform-iap \
 
 ---
 
+## 자동 검증
+
+셋을 조작한 뒤 한 번에 확인한다.
+
+```bash
+PLAY_ACTIVE_TOKEN="<기기에서 얻은 토큰>" scripts/verify_go_live.sh
+
+# 일부만
+scripts/verify_go_live.sh rtdn
+scripts/verify_go_live.sh ait
+```
+
+| exit | 뜻 |
+|---|---|
+| 0 | 전부 통과. 전환으로 넘어간다 |
+| 1 | 실패한 항목이 있다 |
+| 2 | 아직 조작하지 않은 항목이 있다 |
+
+Play 항목은 acknowledge **호출 성공**만 보지 않고 마켓에 다시 물어
+`ACKNOWLEDGED`로 바뀌었는지 확인한다. 호출이 성공해도 반영되지
+않으면 3일 뒤 자동 환불된다.
+
 ## 4. 전환 — 위 셋이 끝난 뒤
 
 ### 4.1 서비스 배포
