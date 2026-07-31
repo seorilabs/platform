@@ -276,14 +276,42 @@ Play는 3일 뒤 자동 환불하고, Apple도 거래를 미완료로 본다.
 go test -tags=market ./internal/iap/worker/ -v
 ```
 
+### Play acknowledge 경로
+
+환불된 구매에 호출해 경로를 확인했다. Play가 거래를 거절하지만
+자격증명 오류와 구분되는 응답이 오므로 요청이 Play에 닿는다.
+
+```
+acknowledge 응답: purchase_invalid
+Play가 거래를 거절했다 — 인증은 통했고 경로는 살아 있다
+```
+
+완전한 검증은 완료하지 않은 **활성** 구매가 필요하다.
+
+## Play API에 없는 것 — 확인된 사실
+
+추측이 아니라 API discovery로 확인했다.
+
+```bash
+curl "https://androidpublisher.googleapis.com/\$discovery/rest?version=v3"
+```
+
+| 필요한 것 | API |
+|---|---|
+| orderId로 purchaseToken 조회 | **없다.** `orders.refund`만 있고 `orders.get`이 없다 |
+| 활성 구매 목록 | **없다.** `voidedpurchases.list`는 환불된 것만 준다 |
+| RTDN topic 등록 | **없다.** Play Console UI 전용 |
+
+그래서 아래 둘은 콘솔이나 기기가 있어야 한다.
+
 ## 아직 못 한 것 — 신규 실결제
 
 기존 구매 재검증으로 상당 부분이 덮였지만, 새 결제를 해야만
 확인되는 것이 남는다.
 
-- **Play acknowledge** — 완료하지 않은 활성 구매가 필요하다.
-  `voidedpurchases`가 주는 것은 전부 환불된 구매라 acknowledge 대상이
-  아니고, 활성 구매의 토큰을 얻는 API 경로는 없다
+- **Play acknowledge 완전 검증** — 호출 경로는 확인했지만 실제로
+  반영되는지는 완료하지 않은 활성 구매가 필요하다. 그 토큰을 얻는
+  API 경로가 없다(위 표 참고)
 - **`originalTransactionId`가 복원 시에도 유지되는지** — 재구매·복원 흐름
 - **RTDN 실연동** — 현재 검증은 우리가 Pub/Sub에 직접 넣은 것이다.
   Play Console에서 이 topic을 RTDN 대상으로 등록해야 Google이 직접 보낸다.
