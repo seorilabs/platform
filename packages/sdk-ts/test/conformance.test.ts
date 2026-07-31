@@ -144,9 +144,32 @@ describe("응답 envelope", () => {
     cases: Array<{
       name: string;
       http_status: number;
-      body: unknown;
+      /** JSON 본문. raw_body와 배타적이다. */
+      body?: unknown;
+      /** 파싱 전 원문. JSON이 아닌 응답을 표현한다. */
+      raw_body?: string;
       expect: { valid: boolean; ok?: boolean; code?: string; local_code?: string };
     }>;
+  }
+
+  /**
+   * 케이스에서 파싱 대상 본문을 얻는다.
+   *
+   * raw_body는 서버가 JSON이 아닌 것을 보낸 상황이다.
+   * Transport가 하는 것과 같은 파싱을 여기서 재현한다.
+   */
+  function caseBody(c: EnvelopeVector["cases"][number]): unknown {
+    if (c.raw_body === undefined) {
+      return c.body;
+    }
+    if (c.raw_body === "") {
+      return null;
+    }
+    try {
+      return JSON.parse(c.raw_body);
+    } catch {
+      return null;
+    }
   }
 
   const vector = loadVector<EnvelopeVector>("envelope.json");
@@ -155,9 +178,19 @@ describe("응답 envelope", () => {
     assert.ok(vector.cases.length > 0);
   });
 
+  it("body와 raw_body 중 하나는 있다", () => {
+    // 둘 다 없으면 undefined를 파싱해 우연히 통과한다
+    for (const c of vector.cases) {
+      assert.ok(
+        "body" in c || "raw_body" in c,
+        `케이스 '${c.name}'에 본문이 없다`,
+      );
+    }
+  });
+
   for (const c of vector.cases) {
     it(c.name, () => {
-      const got = parseEnvelope(c.http_status, c.body);
+      const got = parseEnvelope(c.http_status, caseBody(c));
 
       assert.equal(got.valid, c.expect.valid, "유효성 판정이 다르다");
 

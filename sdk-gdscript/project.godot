@@ -1,0 +1,16 @@
+; SDK 검증 전용 Godot 프로젝트.
+;
+; 실제 앱은 addons/seorilabs_platform만 가져다 쓴다.
+; 이 프로젝트는 conformance probe를 헤드리스로 돌리기 위한 껍데기다.
+
+config_version=5
+
+[application]
+
+config/name="Seorilabs Platform SDK"
+config/features=PackedStringArray("4.3")
+
+[debug]
+
+gdscript/warnings/enable=true
+gdscript/warnings/untyped_declaration=1
