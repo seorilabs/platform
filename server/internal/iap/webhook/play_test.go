@@ -159,6 +159,39 @@ func TestPlayPartialRefundRejected(t *testing.T) {
 	}
 }
 
+// 구독 환불 알림은 무시한다.
+//
+// productType은 1이 구독, 2가 일회성이다. 순서가 직관과 반대라
+// 틀리기 쉽고, 실제로 1을 보내 기존 Functions가 조용히 무시하는
+// 것을 본 뒤에야 우리 쪽에 이 검사가 없다는 것을 알았다.
+//
+// 처리하면 원장에 없는 주문이라 tombstone만 쌓이고, 나중에 구독을
+// 도입할 때 그 tombstone이 신규 지급을 막는다.
+func TestPlayVoidedSubscriptionIgnored(t *testing.T) {
+	dn := voidedNotification()
+	dn["voidedPurchaseNotification"].(map[string]any)["productType"] = productTypeSubscription
+
+	v := &fakeValidator{email: "pubsub@x.iam.gserviceaccount.com"}
+	ver := &fakeVerifier{}
+	h, ev, rc := newPlayHandler(t, v, ver)
+
+	w := servePlay(t, h, pushBody(t, "msg-sub-void", dn), "Bearer tok")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if ver.call != 0 {
+		t.Error("구독 환불인데 마켓을 불렀다")
+	}
+	if rc.call != 0 {
+		t.Error("구독 환불을 원장에 반영했다")
+	}
+	// 무시하되 점유는 한다. 그러지 않으면 Pub/Sub이 계속 보낸다.
+	if len(ev.completed) != 1 {
+		t.Errorf("완료로 남기지 않았다: %v", ev.completed)
+	}
+}
+
 func TestPlayOneTimeProduct(t *testing.T) {
 	dn := map[string]any{
 		"packageName":     testPackageName,

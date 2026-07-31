@@ -33,6 +33,15 @@ const (
 	refundTypePartial = 2
 )
 
+// Play 환불 알림의 상품 종류다. 1이 구독, 2가 일회성이다.
+//
+// 순서를 뒤집어 기억하기 쉬운 자리다. 실제로 그렇게 틀린 알림을
+// 만들어 보냈다가 기존 Functions가 조용히 무시하는 것을 보고 알았다.
+const (
+	productTypeSubscription = 1
+	productTypeOneTime      = 2
+)
+
 // TokenValidator는 Pub/Sub OIDC 토큰을 검증한다.
 //
 // 소비자인 이 패키지가 인터페이스를 정의한다.
@@ -269,6 +278,16 @@ func (h *PlayHandler) parse(raw []byte) (notification, error) {
 	case dn.VoidedPurchaseNotification != nil:
 		v := dn.VoidedPurchaseNotification
 		n.Kind = "voided_purchase"
+
+		// 우리는 일회성 비소비성 상품만 다룬다. 구독 환불 알림을
+		// 처리하면 원장에 없는 주문이라 tombstone만 쌓이고, 나중에
+		// 구독을 도입할 때 그 tombstone이 신규 지급을 막는다.
+		//
+		// 기존 Functions도 여기서 무시한다. 대조를 유지한다.
+		if v.ProductType != productTypeOneTime {
+			n.Kind = "ignored"
+			return n, nil
+		}
 
 		// 부분 환불은 수량 기반이라 비소비성 entitlement에 대응되지 않는다.
 		// 일부만 회수한다는 개념이 없어서 조용히 전부 회수하면 안 된다.
