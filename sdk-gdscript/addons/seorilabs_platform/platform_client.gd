@@ -14,8 +14,10 @@
 class_name SeoriPlatformClient
 extends Node
 
-const HttpTransport := preload("res://addons/seorilabs_platform/core/http_transport.gd")
-const Normalizer := preload("res://addons/seorilabs_platform/core/param_normalizer.gd")
+# 상대 경로로 preload한다. 애드온이 어느 경로에 vendoring되든 동작해야 한다.
+# res:// 절대 경로를 쓰면 소비자가 game/addons/ 아래에 두는 순간 깨진다.
+const HttpTransport := preload("core/http_transport.gd")
+const Normalizer := preload("core/param_normalizer.gd")
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)

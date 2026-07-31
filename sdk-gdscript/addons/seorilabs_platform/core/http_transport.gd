@@ -9,8 +9,8 @@
 class_name SeoriHttpTransport
 extends Node
 
-const Backoff := preload("res://addons/seorilabs_platform/core/backoff.gd")
-const Envelope := preload("res://addons/seorilabs_platform/core/envelope.gd")
+const Backoff := preload("backoff.gd")
+const Envelope := preload("envelope.gd")
 
 ## 응답 크기 상한. 마켓 응답이 이상하게 커도 메모리를 다 쓰지 않게 한다.
 const MAX_RESPONSE_BYTES := 256 * 1024
