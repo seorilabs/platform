@@ -185,3 +185,36 @@ func mapAPIError(ctx context.Context, err error) error {
 			"App Store 응답을 처리하지 못했어요")
 	}
 }
+
+// ParseNotification은 App Store 알림 JWS를 검증하고 해석한다.
+//
+// 이 검증이 알림 엔드포인트의 인증이다. 별도 토큰이 없다.
+// Apple 인증서 체인으로 서명된 페이로드만 통과한다.
+func (c *Client) ParseNotification(signedPayload string) (*appstore.NotificationPayload, error) {
+	if signedPayload == "" {
+		return nil, platformerr.New(platformerr.CodeProviderResponseInvalid,
+			"App Store 알림이 비어 있어요")
+	}
+
+	payload, err := c.store.ParseNotificationV2Payload(signedPayload)
+	if err != nil {
+		return nil, platformerr.Wrap(err, platformerr.CodeProviderResponseInvalid,
+			"App Store 알림 서명을 확인하지 못했어요")
+	}
+	return payload, nil
+}
+
+// ParseTransaction은 알림에 실린 거래 JWS를 검증하고 해석한다.
+func (c *Client) ParseTransaction(signedTransactionInfo string) (*appstore.JWSTransaction, error) {
+	if signedTransactionInfo == "" {
+		return nil, platformerr.New(platformerr.CodeProviderResponseInvalid,
+			"App Store 거래 정보가 비어 있어요")
+	}
+
+	tx, err := c.store.ParseNotificationV2TransactionInfo(signedTransactionInfo)
+	if err != nil {
+		return nil, platformerr.Wrap(err, platformerr.CodeProviderResponseInvalid,
+			"App Store 거래 서명을 확인하지 못했어요")
+	}
+	return tx, nil
+}

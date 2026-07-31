@@ -89,7 +89,9 @@ func (v *Verifier) Verify(ctx context.Context, proof domain.Proof) (domain.Verif
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodePlatformMismatch,
 			"App Store 검증기에 다른 마켓 증명이 왔어요")
 	}
-	if proof.Token == "" || proof.ProductID == "" {
+	// productId는 없어도 된다. 조회는 transactionId만으로 하고
+	// 상품은 응답에서 온다. 알림 재검증 경로가 이 형태를 쓴다.
+	if proof.Token == "" {
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProofInvalid,
 			"구매 정보가 비어 있어요")
 	}
@@ -133,7 +135,8 @@ func (v *Verifier) mapTransaction(
 			"%s 환경 구매는 처리하지 않아요", tx.Environment)
 	}
 
-	if tx.ProductID != proof.ProductID {
+	// 요청이 상품을 지정했으면 대조한다. 지정하지 않았으면 응답을 따른다.
+	if proof.ProductID != "" && tx.ProductID != proof.ProductID {
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProductMismatch,
 			"구매한 상품이 요청과 달라요")
 	}

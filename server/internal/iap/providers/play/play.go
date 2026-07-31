@@ -115,7 +115,9 @@ func (v *Verifier) Verify(ctx context.Context, proof domain.Proof) (domain.Verif
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodePlatformMismatch,
 			"Play 검증기에 다른 마켓 증명이 왔어요")
 	}
-	if proof.Token == "" || proof.ProductID == "" {
+	// productId는 없어도 된다. 조회는 토큰만으로 하고 상품은 응답에서 온다.
+	// 환불 알림에는 sku가 실려오지 않아 이 경로가 필요하다.
+	if proof.Token == "" {
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProofInvalid,
 			"구매 정보가 비어 있어요")
 	}
@@ -138,7 +140,8 @@ func (v *Verifier) Verify(ctx context.Context, proof domain.Proof) (domain.Verif
 	}
 
 	item := resp.ProductLineItem[0]
-	if item.ProductID != proof.ProductID {
+	// 요청이 상품을 지정했으면 대조한다. 지정하지 않았으면 응답을 따른다.
+	if proof.ProductID != "" && item.ProductID != proof.ProductID {
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProductMismatch,
 			"구매한 상품이 요청과 달라요")
 	}

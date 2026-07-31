@@ -27,6 +27,16 @@ import (
 // 우리는 자체 HTTP 클라이언트를 쓰므로 생성 코드 전체가 필요 없다.
 const playScope = "https://www.googleapis.com/auth/androidpublisher"
 
+// iapParts는 결제 조립 결과다.
+//
+// 웹훅과 워커가 검증기와 원장을 직접 써야 해서 함께 돌려준다.
+type iapParts struct {
+	service   *verify.Service
+	ledger    *ledger.Ledger
+	verifiers map[domain.Platform]verify.Verifier
+	enabled   []domain.Platform
+}
+
 // newIAPService는 결제 유스케이스를 조립한다.
 //
 // 자격증명이 없는 마켓은 조용히 빠진다. 그 마켓 결제만
@@ -37,7 +47,7 @@ func newIAPService(
 	cfg config.Config,
 	st *store.Client,
 	col *events.Collector,
-) (*verify.Service, error) {
+) (*iapParts, error) {
 	ic := cfg.IAP
 
 	env := domain.EnvProduction
@@ -65,14 +75,22 @@ func newIAPService(
 		return nil, err
 	}
 
+	led := ledger.New(st, env)
+
+	byPlatform := make(map[domain.Platform]verify.Verifier, len(verifiers))
+	for _, v := range verifiers {
+		byPlatform[v.Platform()] = v
+	}
+
 	svc, err := verify.New(verify.Config{
 		Verifiers: verifiers,
-		Ledger:    ledger.New(st, env),
+		Ledger:    led,
 		Catalog:   cat,
 		Keyring:   keyring,
 		Auditor:   auditAdapter{col: col},
-		// TODO(P6): outbox를 붙인다. 그때까지 완료 실패는
-		// retry_server_completion 지시만 나가고 워커가 집지 않는다.
+		// 완료 호출이 실패해도 지급은 롤백하지 않는다. 불변식 7이다.
+		// 대신 여기 쌓아두고 워커가 다시 시도한다.
+		Outbox: led,
 	})
 	if err != nil {
 		return nil, err
@@ -83,7 +101,12 @@ func newIAPService(
 		"markets", enabled,
 		"entitlements", len(cat.IDs()),
 	)
-	return svc, nil
+	return &iapParts{
+		service:   svc,
+		ledger:    led,
+		verifiers: byPlatform,
+		enabled:   enabled,
+	}, nil
 }
 
 // newVerifiers는 자격증명이 있는 마켓의 검증기를 만든다.

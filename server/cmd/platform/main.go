@@ -26,7 +26,6 @@ import (
 	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/iap"
-	"github.com/seorilabs/platform/server/internal/iap/verify"
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/remoteconfig"
@@ -87,7 +86,7 @@ type deps struct {
 	keys     *identity.KeyCache
 	events   *events.Collector
 	config   *remoteconfig.Service
-	iap      *verify.Service
+	iap      *iapParts
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
@@ -136,9 +135,10 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		d.events = col
 	}
 
-	// 마켓 자격증명은 iap role에만 마운트된다. R3다.
+	// 마켓 자격증명은 iap와 worker role에만 마운트된다. R3다.
+	// 워커도 완료 재시도 때 마켓을 호출하므로 검증기가 필요하다.
 	// 다른 role에서 조립을 시도하면 없는 비밀을 찾다가 부팅이 실패한다.
-	if cfg.Role == config.RoleIAP {
+	if cfg.Role == config.RoleIAP || cfg.Role == config.RoleWorker {
 		svc, err := newIAPService(ctx, cfg, st, d.events)
 		if err != nil {
 			st.Close()
@@ -219,8 +219,13 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		if d.iap == nil {
 			return nil, errors.New("iap role에 결제 서비스가 필요하다")
 		}
-		iap.NewHandler(d.iap, d.identity).Register(mux)
-		// TODO(P6): 웹훅 라우트
+		iap.NewHandler(d.iap.service, d.identity).Register(mux)
+
+		// 웹훅은 마켓별로 자격증명이 있을 때만 연다.
+		// 없는 마켓의 엔드포인트를 열면 인증도 못 하고 알림만 쌓인다.
+		if err := registerWebhooks(mux, cfg, d); err != nil {
+			return nil, err
+		}
 
 	case config.RoleIngest:
 		if d.events == nil {
@@ -288,12 +293,5 @@ func serve(ctx context.Context, cfg config.Config, handler http.Handler) error {
 		return fmt.Errorf("graceful shutdown 실패: %w", err)
 	}
 	slog.Info("정상 종료")
-	return nil
-}
-
-// runWorker는 완료 outbox 재시도 워커다. Cloud Run Job으로 돈다.
-func runWorker(_ context.Context, cfg config.Config) error {
-	// TODO(P6): outbox claim → 마켓 완료 → backoff → dead-letter
-	slog.Info("워커는 아직 구현되지 않았다", "role", cfg.Role)
 	return nil
 }
