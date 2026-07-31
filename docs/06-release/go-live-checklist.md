@@ -34,15 +34,46 @@ Play는 3일 안에 acknowledge하지 않으면 자동 환불한다. 이 경로�
 없다. `androidpublisher` v3 discovery로 확인했다 — `orders.get`이
 없고 `voidedpurchases.list`는 환불된 것만 준다.
 
+### 먼저 — sideload 빌드로는 구매할 수 없다
+
+기기에 `adb install`로 올린 빌드는 상품 조회가 되지 않는다.
+BillingClient 연결은 성공하고(`response=0`) 상품만 비어서 온다.
+
+```
+[iap] product query: response=0 details=0 unfetched_statuses=[4]
+```
+
+`4`는 `ITEM_UNAVAILABLE`이다. Play Console 쪽이 멀쩡해도 이렇게 된다 —
+실제로 확인했을 때 상품은 둘 다 `ACTIVE` / `KR AVAILABLE` / 3,300원이었고
+internal 트랙에 같은 versionCode가 `completed`로 올라가 있었다.
+
+원인은 설치 경로다.
+
+```bash
+adb shell dumpsys package com.seorilabs.lizardtycoon | grep installer
+# installerPackageName=null   ← Play Store를 거치지 않았다
+```
+
+**Play Store 내부 테스트 링크로 설치해야 한다.** 그래야
+`installerPackageName=com.android.vending`이 되고 Billing이 상품을 준다.
+
+앱을 지우고 다시 받으면 저장 데이터가 날아가므로 먼저 백업한다.
+
+```bash
+adb shell run-as com.seorilabs.lizardtycoon \
+  cat files/save.json > save_backup.json
+```
+
 ### 절차
 
 1. lizard-tycoon을 Play 내부 테스트 트랙에 올린다
-2. 라이선스 테스터 계정으로 `sp_galaxy_gecko`를 구매한다
-3. **acknowledge하지 않은 상태로** 토큰을 확보한다
+2. 라이선스 테스터 계정으로 **Play Store 내부 테스트 링크를 통해** 설치한다
+3. `sp_galaxy_gecko`를 구매한다
+4. **acknowledge하지 않은 상태로** 토큰을 확보한다
    - 앱이 자동으로 acknowledge하면 검증 대상이 사라진다
    - `seori-platform.config.json`의 `enabled`가 `false`인 빌드로
      구매하면 기존 Functions가 처리하므로, 그 전에 토큰을 로그로 뽑는다
-4. 토큰을 넘겨주면 아래를 확인한다
+5. 토큰을 넘겨주면 아래를 확인한다
 
 ```bash
 export PLAY_REAL_PURCHASE_TOKEN="<토큰>"
