@@ -32,4 +32,10 @@
 
 ## 기록
 
-아직 없음. P0부터 채운다.
+| 문서 | 단계 | 한 줄 |
+|---|---|---|
+| [cmd/fs 사용법](01-cmd-fs-guide.md) | P0 | Firestore 조회 CLI |
+| [flag 파싱 함정](02-flag-parsing-trap.md) | P0 | 표준 `flag`는 첫 비플래그 인자에서 멈춘다 — 안전 상한이 조용히 무시됐다 |
+| [httptest 교착](03-httptest-close-deadlock.md) | P5 | 응답하지 않는 핸들러가 `srv.Close()`를 영원히 붙잡는다. `t.Cleanup`은 LIFO |
+
+둘 다 **테스트가 아니라 실제로 돌려봐야** 드러났다는 공통점이 있다.

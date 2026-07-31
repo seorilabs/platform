@@ -150,13 +150,37 @@ func OrderKey(p Platform, canonicalID string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// AllPlatforms는 알려진 모든 마켓이다. 테스트와 검증에 쓴다.
+// AllPlatforms는 원장에 source로 들어올 수 있는 모든 값이다.
+// 운영자 지급을 포함한다.
 func AllPlatforms() []Platform {
 	return []Platform{
 		PlatformGooglePlay,
 		PlatformAppStore,
 		PlatformAppsInToss,
 		PlatformOperator,
+	}
+}
+
+// MarketPlatforms는 외부 마켓 검증이 필요한 것들이다.
+//
+// AllPlatforms와 다르다. 운영자 지급은 백오피스가 근거를 갖고
+// 원장에 직접 쓰므로 마켓에 물어볼 것이 없다.
+// 검증기 조립과 카탈로그 검사는 이쪽을 기준으로 삼는다.
+func MarketPlatforms() []Platform {
+	return []Platform{
+		PlatformGooglePlay,
+		PlatformAppStore,
+		PlatformAppsInToss,
+	}
+}
+
+// IsMarket은 외부 마켓 검증이 필요한 값인지 본다.
+func (p Platform) IsMarket() bool {
+	switch p {
+	case PlatformGooglePlay, PlatformAppStore, PlatformAppsInToss:
+		return true
+	default:
+		return false
 	}
 }
 
