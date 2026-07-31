@@ -20,9 +20,11 @@
 - [x] 실측 2 — Firestore ✅
 - [x] 실측 6 — DRS ✅ 막힘 확인, `--no-invoker-iam-check` 우회
 - [x] 실측 7 — 콜드스타트 ⚠️ **425ms, 목표 초과** → **warm-up ping 도입 확정**
+- [x] **`cmd/fs` 구현 완료** — 실제 Firestore 연결·prefix 적용까지 검증
 - [ ] 실측 3·4·5 — AIT. 실제 `.ait` 빌드와 심사 제출이 필요해 별도 사이클
-- [ ] `cmd/fs` 구현 — **직접 작성 대기**
 - [ ] WIF — P1에서 CI와 함께
+
+`cmd/fs` 검증 결과: 빈 컬렉션 조회, gRPC `NotFound` 판정, `--prefix`가 첫 세그먼트에만 적용, 이중 적용 차단. 구현 중 표준 `flag`의 파싱 중단 함정을 밟아 `09-knowledge/go/02-flag-parsing-trap.md`에 남겼다.
 
 ### P0에서 바뀐 판단
 

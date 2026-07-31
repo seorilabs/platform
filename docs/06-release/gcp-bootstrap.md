@@ -20,6 +20,18 @@ export CLOUDSDK_CONFIG=$HOME/.config/seorilabs/gcloud-provisioner
 export CLOUDSDK_CORE_PROJECT=seorilabs-platform
 ```
 
+### 애플리케이션 자격증명
+
+Go SDK와 `cmd/fs`는 gcloud 로그인이 아니라 **ADC**를 본다. 이 환경에는 provisioner SA 키가 이미 있고 환경변수도 설정되어 있다.
+
+```
+GOOGLE_APPLICATION_CREDENTIALS=$HOME/.config/seorilabs/firebase/seorilabs-firebase-automation.json
+```
+
+**`gcloud auth application-default login`이 필요 없다.** 이 키로 `seorilabs-platform` Firestore에 접근된다.
+
+> gcloud SA 로그인(`CLOUDSDK_CONFIG`)과 ADC는 **별개 경로**다. gcloud로 SA에 로그인해도 Go SDK는 그걸 쓰지 않는다. 키 파일이나 ADC 파일이 따로 있어야 한다.
+
 ## 절차
 
 ### 1. 프로젝트 생성과 과금 연결
