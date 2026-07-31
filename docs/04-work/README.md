@@ -23,8 +23,6 @@
 
 ### P0 완료
 
-### P0 진행
-
 - [x] GCP 프로젝트 생성 + 과금 연결 + **Billing budget** (70,000 KRW, 40%/100%)
 - [x] API 14종 활성화
 - [x] **Firestore Native `(default)`** — `asia-northeast3`, `freeTier: true`, 삭제 보호 활성화
