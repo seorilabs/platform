@@ -198,6 +198,44 @@ gcloud pubsub topics publish play-iap-rtdn --message="$(cat notification.json)"
 이것이 계획서가 "Pub/Sub retry 시맨틱 재설계 필요"로 남겨둔 항목이다.
 실제로 붙여보고서야 정확한 규칙을 알았다.
 
+## 완료 처리와 워커 — 실서버 E2E
+
+### finishTransaction
+
+이미 완료된 거래에 다시 호출해 경로를 확인했다. Apple이 멱등하게
+받아준다.
+
+```
+finishTransaction 성공 — 완료 처리 경로가 동작한다
+```
+
+이 경로가 막히면 지급은 했는데 마켓은 모르는 상태가 된다.
+Play는 3일 뒤 자동 환불하고, Apple도 거래를 미완료로 본다.
+
+### 재시도 워커
+
+실제 Firestore(`stg_` + sandbox)와 실제 Apple API로 전 구간을 돌렸다.
+
+```
+대기열에 적재: 32de2fba...c5e598a7
+워커 결과: claimed=1 completed=1 failed=0
+대기열에서 제거됨
+```
+
+| 검증 | 결과 |
+|---|---|
+| `(platform, status, nextAttemptAt)` 복합 인덱스로 claim | **통과** |
+| lease 점유 | **통과** |
+| 실제 마켓 완료 호출 | **통과** |
+| 성공 시 대기열에서 삭제 | **통과** |
+
+원장에서 문서를 지우는 유일한 경우다. 불변식 5의 예외이고,
+실제로 지워지는 것을 확인했다.
+
+```bash
+go test -tags=market ./internal/iap/worker/ -v
+```
+
 ## 아직 못 한 것 — 신규 실결제
 
 기존 구매 재검증으로 상당 부분이 덮였지만, 새 결제를 해야만
