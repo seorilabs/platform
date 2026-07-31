@@ -131,13 +131,44 @@ func (c *Collector) Close() error { return c.client.Close() }
 // 부팅 시 한 번 부른다. 스키마리스가 아니라 스키마가 필요하므로
 // 마이그레이션 대신 이 방식을 쓴다. 이미 있으면 아무것도 하지 않는다.
 func (c *Collector) EnsureTables(ctx context.Context) error {
-	if err := c.ensureTable(ctx, EventsTable, eventsSchema); err != nil {
+	if err := c.ensureTable(ctx, EventsTable, eventsSchema, eventsLayout); err != nil {
 		return err
 	}
-	return c.ensureTable(ctx, AuditTable, auditSchema)
+	return c.ensureTable(ctx, AuditTable, auditSchema, auditLayout)
 }
 
-func (c *Collector) ensureTable(ctx context.Context, name string, schema bigquery.Schema) error {
+// tableLayout은 테이블의 파티션·클러스터링 필드다.
+//
+// 두 테이블이 같은 값을 쓸 수 없다. audit에는 received_at도
+// event_name도 없어서, 공용으로 두면 audit 생성이 통째로 실패한다.
+// 실제로 그렇게 돌고 있었고 감사 원장이 한 줄도 쌓이지 않았다.
+type tableLayout struct {
+	partitionField string
+	clusterFields  []string
+}
+
+var (
+	// received_at 기준으로 파티션한다.
+	// event_ts로 하면 지각 이벤트가 과거 파티션을 건드려
+	// 프루닝이 불안정해진다.
+	eventsLayout = tableLayout{
+		partitionField: "received_at",
+		clusterFields:  []string{"app_id", "event_name"},
+	}
+	// 감사 기록은 서버가 시각을 찍으므로 지각 문제가 없다.
+	// 조회는 "무슨 작업을" "어느 앱에서"로 들어온다.
+	auditLayout = tableLayout{
+		partitionField: "ts",
+		clusterFields:  []string{"action", "app_id"},
+	}
+)
+
+func (c *Collector) ensureTable(
+	ctx context.Context,
+	name string,
+	schema bigquery.Schema,
+	layout tableLayout,
+) error {
 	t := c.client.Dataset(c.dataset).Table(name)
 
 	if _, err := t.Metadata(ctx); err == nil {
@@ -146,16 +177,13 @@ func (c *Collector) ensureTable(ctx context.Context, name string, schema bigquer
 
 	meta := &bigquery.TableMetadata{
 		Schema: schema,
-		// received_at 기준으로 파티션한다.
-		// event_ts로 하면 지각 이벤트가 과거 파티션을 건드려
-		// 프루닝이 불안정해진다.
 		TimePartitioning: &bigquery.TimePartitioning{
-			Field:      "received_at",
+			Field:      layout.partitionField,
 			Type:       bigquery.DayPartitioningType,
 			Expiration: 400 * 24 * time.Hour,
 		},
 		Clustering: &bigquery.Clustering{
-			Fields: []string{"app_id", "event_name"},
+			Fields: layout.clusterFields,
 		},
 	}
 
