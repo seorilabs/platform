@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/config"
+	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/registry"
@@ -81,6 +82,7 @@ type deps struct {
 	registry *registry.Registry
 	identity *identity.Handler
 	keys     *identity.KeyCache
+	events   *events.Collector
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
@@ -113,10 +115,27 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		d.keys = keys
 	}
 
+	// 이벤트를 다루는 role만 BigQuery에 붙는다.
+	// api는 감사 원장을 남겨야 하므로 함께 연다.
+	if cfg.Role == config.RoleIngest || cfg.Role == config.RoleAPI ||
+		cfg.Role == config.RoleIAP || cfg.Role == config.RoleAdmin {
+		col, err := events.NewCollector(ctx, cfg.ProjectID, cfg.BigQueryDataset)
+		if err != nil {
+			st.Close()
+			return nil, err
+		}
+		d.events = col
+	}
+
 	return d, nil
 }
 
 func (d *deps) Close() {
+	if d.events != nil {
+		if err := d.events.Close(); err != nil {
+			slog.Error("BigQuery 종료 실패", "err", err)
+		}
+	}
 	if d.store != nil {
 		if err := d.store.Close(); err != nil {
 			slog.Error("store 종료 실패", "err", err)
@@ -136,6 +155,12 @@ func (d *deps) warm(ctx context.Context) {
 	}
 	if err := d.registry.Reload(ctx); err != nil {
 		slog.WarnContext(ctx, "레지스트리 예열 실패", "err", err)
+	}
+	// 테이블이 없으면 만든다. 이미 있으면 아무것도 하지 않는다.
+	if d.events != nil {
+		if err := d.events.EnsureTables(ctx); err != nil {
+			slog.WarnContext(ctx, "BigQuery 테이블 준비 실패", "err", err)
+		}
 	}
 }
 
@@ -175,7 +200,15 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		// TODO(P6): 웹훅 라우트
 
 	case config.RoleIngest:
-		// TODO(P2): 이벤트 수집 라우트
+		if d.events == nil {
+			return nil, errors.New("ingest role에 BigQuery가 필요하다")
+		}
+		// 세션은 선택이다. identity가 없어도 익명 수집이 동작한다.
+		var sessions events.SessionResolver
+		if d.identity != nil {
+			sessions = d.identity
+		}
+		events.NewHandler(d.events, d.registry, sessions).Register(mux)
 
 	case config.RoleAdmin:
 		// TODO(P7): 백오피스 Admin API
