@@ -2,7 +2,8 @@
 # ARC arm64 러너에서도 QEMU 없이 amd64 바이너리를 만든다.
 # 그래서 이 Dockerfile은 빌드 플랫폼과 무관하게 동작한다.
 
-FROM golang:1.24 AS build
+# go.mod의 go 지시어와 맞춘다. 낮으면 빌드가 거부된다.
+FROM golang:1.25 AS build
 
 WORKDIR /src
 
