@@ -25,6 +25,8 @@ import (
 	"github.com/seorilabs/platform/server/internal/config"
 	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/httpx"
+	"github.com/seorilabs/platform/server/internal/iap"
+	"github.com/seorilabs/platform/server/internal/iap/verify"
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/remoteconfig"
@@ -85,6 +87,7 @@ type deps struct {
 	keys     *identity.KeyCache
 	events   *events.Collector
 	config   *remoteconfig.Service
+	iap      *verify.Service
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
@@ -131,6 +134,17 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			return nil, err
 		}
 		d.events = col
+	}
+
+	// 마켓 자격증명은 iap role에만 마운트된다. R3다.
+	// 다른 role에서 조립을 시도하면 없는 비밀을 찾다가 부팅이 실패한다.
+	if cfg.Role == config.RoleIAP {
+		svc, err := newIAPService(ctx, cfg, st, d.events)
+		if err != nil {
+			st.Close()
+			return nil, err
+		}
+		d.iap = svc
 	}
 
 	return d, nil
@@ -202,7 +216,10 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		if d.identity == nil {
 			return nil, errors.New("iap role에 identity가 필요하다")
 		}
-		// TODO(P5): 마켓 검증 라우트
+		if d.iap == nil {
+			return nil, errors.New("iap role에 결제 서비스가 필요하다")
+		}
+		iap.NewHandler(d.iap, d.identity).Register(mux)
 		// TODO(P6): 웹훅 라우트
 
 	case config.RoleIngest:

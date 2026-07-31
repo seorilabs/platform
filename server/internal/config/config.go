@@ -41,6 +41,11 @@ type Config struct {
 
 	// BigQueryDataset은 이벤트와 감사 원장이 들어갈 데이터셋이다.
 	BigQueryDataset string
+
+	// IAP는 결제 설정이다. iap와 worker role에서만 채워진다.
+	//
+	// 마켓 자격증명은 platform-iap 서비스에만 마운트된다. R3다.
+	IAP IAPConfig
 }
 
 // Load는 환경변수에서 설정을 읽는다.
@@ -82,6 +87,16 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("config: PLATFORM_SESSION_TTL 해석 실패: %w", err)
 		}
 		c.SessionTTL = d
+	}
+
+	// 결제를 다루는 role만 마켓 설정을 읽는다.
+	// worker는 완료 재시도 때 마켓을 호출하므로 함께 필요하다.
+	if role == RoleIAP || role == RoleWorker {
+		iap, err := loadIAP()
+		if err != nil {
+			return Config{}, err
+		}
+		c.IAP = iap
 	}
 
 	return c, nil
