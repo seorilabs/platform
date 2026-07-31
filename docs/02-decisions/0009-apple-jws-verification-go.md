@@ -2,7 +2,7 @@
 
 ## Status
 
-**Proposed** — P0에서 라이브러리 실측 후 Accepted로 전환한다.
+**Accepted** — 2026-07-31. P0에서 `richzw/appstore` v1.41.0 소스를 직접 읽어 확정했다.
 
 ## Context
 
@@ -43,26 +43,53 @@ interface AppleTransactionVerifier {
 
 ### 라이브러리 평가 — 1차
 
-| | JWS 검증 | Root CA 체인 | **OCSP** | 재시도 구분 | `getTransactionInfo` | `finishTransaction` |
-|---|---|---|---|---|---|---|
-| `richzw/appstore` | O | `CertPool` 있음 — **체인 검증 실제 수행 여부 확인 필요** | **X** | O — 단 API 에러용이지 JWS 검증용 아님 | **O** | **O** |
-| `awa/go-iap/appstore` | O | **`ExtractPublicKeyFromToken` — x5c[0]에서 공개키만 추출하는 것으로 보임** | X | — | **X** | **X** |
-| 자체 구현 | 직접 | `crypto/x509` | `x/crypto/ocsp` | 직접 | 직접 | 직접 |
+| | JWS 검증 | Root CA 체인 | **OCSP** | `getTransactionInfo` | `finishTransaction` |
+|---|---|---|---|---|---|
+| **`richzw/appstore` v1.41.0** | O | **O — 실측 확인** | **X** | **O** | **O** |
+| `awa/go-iap/appstore` | O | 공개키 추출 위주 | X | **X** | **X** |
+| 자체 구현 | 직접 | `crypto/x509` | `x/crypto/ocsp` | 직접 | 직접 |
 
-**`awa/go-iap`는 부적합하다.** App Store Server API가 없어 `getTransactionInfo`와 `finishTransaction`을 쓸 수 없다. 게다가 x5c[0]에서 공개키만 뽑는다면 **공격자가 자기 인증서를 x5c에 넣고 서명한 위조 알림이 통과**한다. 체인 검증 없는 JWS 검증은 검증이 아니다.
+**`awa/go-iap`는 부적합하다.** App Store Server API가 없어 `getTransactionInfo`와 `finishTransaction`을 쓸 수 없다.
+
+### 실측 결과 — `richzw/appstore` v1.41.0 소스 확인
+
+`cert.go` 104줄을 직접 읽었다.
+
+| 확인 사항 | 결과 |
+|---|---|
+| x509 체인 검증 | **실제로 수행한다.** `leafCert.Verify(opts)` — 표준 라이브러리 |
+| Apple Root CA 앵커 | **G3를 PEM으로 하드코딩** + `newCert(pool)`로 커스텀 주입 가능 |
+| 중간 인증서 | x5c[1:]을 `opts.Intermediates`로 구성 |
+| 인증서 유효기간 | `Certificate.Verify()`가 자동 검증 |
+| 적용 범위 | `extractPublicKeyFromToken` 호출 지점 4곳 — **모든 JWS 파싱 경로가 같은 검증을 거친다** |
+| **OCSP** | **코드 없음** |
+
+저장소 상태: 스타 188, MIT, 최근 push 2026-05-07, 아카이브 아님, 미해결 이슈 4건.
+
+**체인 검증이 제대로 되므로 자체 구현할 이유가 사라졌다.** 남은 갭은 OCSP 하나뿐이고, 그것만 독립적으로 덧붙이면 된다.
 
 ## Decision
 
-`확정 필요` — 아래 선택지 중 P0 실측 후 확정한다. **현재 유력안은 B다.**
+**A안을 채택한다 — `richzw/appstore`를 쓰고 OCSP만 자체 추가한다.**
 
-### A. `richzw/appstore` 전체 사용 + OCSP 별도 추가
+소스를 직접 읽어 **체인 검증 우려가 해소**됐기 때문이다. 보안 민감 코드를 직접 쓰지 않아도 되면 그게 낫다.
 
-API 클라이언트와 JWS 검증을 라이브러리에 맡기고, 검증 후 x5c 체인을 따로 파싱해 OCSP를 덧붙인다.
+```go
+// AppleTransactionVerifier 구현 = 라이브러리 검증 + OCSP 추가 확인
+// AppleAppStoreApiClient 구현 = 라이브러리 StoreClient 위임
+```
 
-- 장점: 구현량 최소
-- 단점: 라이브러리가 체인 검증을 어떻게 하는지 **신뢰해야 한다.** 그리고 OCSP를 사후에 붙이면 검증 순서가 원본과 달라진다
+아래는 검토한 네 안이며 A를 고른 근거는 실측 결과 절에 있다.
 
-### B. API 클라이언트는 `richzw/appstore`, **JWS 검증은 자체 구현** ← 유력
+### A. `richzw/appstore` 전체 사용 + OCSP 별도 추가 ← **채택**
+
+API 클라이언트와 JWS 검증을 라이브러리에 맡기고, x5c를 따로 파싱해 OCSP만 덧붙인다.
+
+- **장점: 보안 민감 코드를 직접 쓰지 않는다.** 체인 검증이 표준 라이브러리 기반으로 이미 올바르다
+- 구현량 최소. OCSP 추가분이 30~50줄
+- 단점: x5c를 두 번 파싱한다. 라이브러리가 내부에서 한 번, 우리가 OCSP용으로 한 번. **낭비지만 검증 로직을 재작성하는 것보다 훨씬 싸다**
+
+### B. API 클라이언트는 `richzw/appstore`, **JWS 검증은 자체 구현**
 
 - API 클라이언트는 라이브러리가 잘 커버한다. ES256 JWT 인증, 에러 타입, 백오프가 이미 있다
 - **JWS 검증은 어차피 OCSP 때문에 손봐야 하므로 자체 구현이 더 명확하다**
@@ -84,15 +111,37 @@ Play와 AppsInToss는 Go 플랫폼으로 가고 Apple 검증만 기존 Firebase 
 - 단점: 원장이 두 곳으로 갈라진다. **불변식 3(stale 억제)과 5(원장 삭제 금지)를 두 시스템이 함께 지켜야 해서 위험이 크다**
 - **최후 수단이며 기본 선택지가 아니다**
 
-## P0 확인 항목
+## OCSP 추가 설계 — P5에서 구현
 
-| # | 확인할 것 | 방법 |
-|---|---|---|
-| 1 | `richzw/appstore`가 **실제로 x509 체인 검증**을 하는가, x5c[0] 공개키만 쓰는가 | `cert.go`, `pool.go` 소스 확인 |
-| 2 | Apple Root CA를 신뢰 앵커로 명시 주입할 수 있는가 | `CertPool.Init()` 시그니처 |
-| 3 | 라이브러리 활성도 — 최근 커밋, 미해결 이슈, 라이선스 | GitHub |
-| 4 | `x/crypto/ocsp`로 Apple 중간 인증서의 OCSP 응답을 검증할 수 있는가 | 실제 인증서로 시험 |
-| 5 | sandbox에서 OCSP 실패를 어떤 에러로 구분할 수 있는가 | `RETRYABLE_VERIFICATION_FAILURE` 대응물 설계 |
+라이브러리가 채워주지 않는 유일한 갭이다.
+
+```
+1. 라이브러리로 JWS 검증  → 체인·서명·유효기간 확인 완료
+2. 같은 토큰의 x5c 를 파싱 → leaf 와 issuer 인증서 획득
+3. x/crypto/ocsp 로 폐기 확인
+   - ocsp.CreateRequest(leaf, issuer, nil)
+   - leaf.OCSPServer[0] 로 POST
+   - ocsp.ParseResponse 로 검증
+4. Good 이 아니면 거부. 네트워크 실패는 환경별로 다르게 처리
+```
+
+**환경별 실패 처리가 원본 정책의 핵심이다.**
+
+| 환경 | OCSP 네트워크 실패 시 |
+|---|---|
+| production | **거부.** `provider_unavailable` 503으로 매핑한다. 폐기 확인을 우회하지 않는다 |
+| sandbox | **통과.** 체인·서명·유효기간은 이미 검증됐으므로 OCSP만 건너뛴다 |
+
+이게 원본의 `RETRYABLE_VERIFICATION_FAILURE` 오프라인 fallback에 대응한다. 원본은 라이브러리가 그 상태를 알려줬지만, 우리는 **OCSP를 직접 부르므로 네트워크 실패를 그대로 구분할 수 있다.** 오히려 더 명확하다.
+
+### P5 확인 항목
+
+| # | 확인할 것 |
+|---|---|
+| 1 | Apple 서명 인증서에 `OCSPServer` 필드가 실제로 있는가 |
+| 2 | `x/crypto/ocsp`로 Apple 응답을 파싱·검증할 수 있는가 — 실제 인증서로 시험 |
+| 3 | OCSP 응답 캐싱 — `NextUpdate`까지 캐시해 매 웹훅마다 왕복하지 않게 한다 |
+| 4 | 라이브러리 `VerifyOptions`의 `KeyUsages` 기본값이 Apple EKU와 맞는가 |
 
 ## Consequences
 

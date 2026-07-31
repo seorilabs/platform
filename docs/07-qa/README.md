@@ -4,7 +4,7 @@
 
 | # | 항목 | 상태 |
 |---|---|---|
-| 1 | **Apple JWS 검증 Go 방안 결정** ← 최우선 | **진행 중** — ADR 0009 Proposed |
+| 1 | **Apple JWS 검증 Go 방안 결정** ← 최우선 | **✅ 확정 — ADR 0009 Accepted** |
 | 2 | Firebase 미등록 GCP 프로젝트에서 Firestore 생성 | **✅ 검증됨** |
 | 3 | AIT 웹 프레임워크가 `Storage`/`getAnonymousKey`/`appLogin`을 노출하는가 | 대기 |
 | 4 | Godot HTML shell에 추가 script를 넣은 `.ait`가 심사를 통과하는가 | 대기 |
@@ -39,11 +39,21 @@ org policy `constraints/iam.allowedPolicyMemberDomains`가 seorilabs 디렉토�
 
 **부수 검증**: arm64 Mac에서 `GOOS=linux GOARCH=amd64`로 정적 바이너리가 QEMU 없이 빌드됐다. ADR 0006의 CI 근거가 확인됐다.
 
-### 1번 판정 기준
+### 결과 — 1번: Apple JWS ✅
 
-① x5c 체인 + Apple Root CA 검증 ② **OCSP online check** ③ `RETRYABLE_VERIFICATION_FAILURE` 구분 ④ App Store Server API 지원.
+**`richzw/appstore` v1.41.0 채택 + OCSP 자체 추가.**
 
-원본 코드 확인 결과 **production의 OCSP는 의도적 보안 결정**이며 생략하면 기존 보안 수준을 낮춘다. ADR 0009 참고.
+`cert.go` 104줄을 직접 읽어 확인했다.
+
+- **x509 체인 검증을 실제로 수행한다** — `leafCert.Verify(opts)` 표준 라이브러리
+- Apple Root CA G3를 하드코딩하고 커스텀 pool 주입도 가능
+- **JWS 파싱 경로 4곳 전부가 같은 검증을 거친다**
+- `getTransactionInfo`·`finishTransaction` 제공
+- **OCSP만 없다** → 30~50줄로 자체 추가
+
+체인 검증이 올바르므로 자체 구현할 이유가 사라졌다. **보안 민감 코드를 직접 쓰지 않는 쪽을 골랐다.**
+
+원본 코드 확인 결과 **production의 OCSP는 의도적 보안 결정**이며 생략하면 기존 보안 수준을 낮춘다. 환경별 실패 처리(production 거부 / sandbox 통과)를 P5에서 구현한다.
 
 ## 검증 체크리스트
 
