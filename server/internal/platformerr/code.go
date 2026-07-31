@@ -21,8 +21,13 @@ const (
 
 // 인증과 세션
 const (
-	CodeAuthRequired        Code = "auth_required"
-	CodeAuthInvalid         Code = "auth_invalid"
+	CodeAuthRequired Code = "auth_required"
+	CodeAuthInvalid  Code = "auth_invalid"
+	// CodeAuthForbidden은 신원은 확인됐지만 권한이 없을 때다.
+	//
+	// auth_invalid와 나눈다. 백오피스가 "토큰이 잘못됐다"와
+	// "이 계정은 못 부른다"를 구분해 대응해야 한다.
+	CodeAuthForbidden       Code = "auth_forbidden"
 	CodeSessionInvalid      Code = "session_invalid"
 	CodeSessionExpired      Code = "session_expired"
 	CodeRefreshInvalid      Code = "refresh_invalid"
@@ -146,6 +151,7 @@ var statusByCode = map[Code]int{
 	// 인증과 세션
 	CodeAuthRequired:        http.StatusUnauthorized,
 	CodeAuthInvalid:         http.StatusUnauthorized,
+	CodeAuthForbidden:       http.StatusForbidden,
 	CodeSessionInvalid:      http.StatusUnauthorized,
 	CodeSessionExpired:      http.StatusUnauthorized,
 	CodeRefreshInvalid:      http.StatusUnauthorized,

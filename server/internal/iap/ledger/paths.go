@@ -96,13 +96,28 @@ func (b pathBuilder) refundReview(tokenHash string) (fspath.Path, error) {
 	return b.parse(refundReviews + "/" + tokenHash)
 }
 
-// operatorGrant는 운영자 지급 감사 원장이다.
+// operatorGrant는 운영자 지급 감사 원장이다. 영구 보존한다.
 //
-// 영구 보존한다. production 루트에 둔다.
+// 다른 원장과 같이 환경 prefix를 붙인다. 한때 환경과 무관하게
+// 한 곳에 모으려 했지만 그러면 requestId 멱등이 환경을 가로지른다.
+// sandbox에서 테스트로 쓴 requestId를 production에서 재사용하면
+// 감사 기록이 이미 있다는 이유로 실제 보상이 건너뛰어진다.
+// 사용자는 받아야 할 것을 못 받고, 로그에는 "이미 처리됨"만 남는다.
 func (b pathBuilder) operatorGrant(requestID string) (fspath.Path, error) {
-	return fspath.Parse(operatorGrants + "/" + requestID)
+	return b.parse(operatorGrants + "/" + requestID)
 }
 
 func (b pathBuilder) operatorRevocation(requestID string) (fspath.Path, error) {
-	return fspath.Parse(operatorRevocations + "/" + requestID)
+	return b.parse(operatorRevocations + "/" + requestID)
+}
+
+// operatorRecord는 컬렉션 이름으로 감사 원장 경로를 만든다.
+//
+// 지급과 회수가 같은 흐름을 타므로 컬렉션만 갈아끼운다.
+func (b pathBuilder) operatorRecord(collection, requestID string) (fspath.Path, error) {
+	return b.parse(collection + "/" + requestID)
+}
+
+func (b pathBuilder) operatorCollection(collection string) (fspath.Path, error) {
+	return b.parse(collection)
 }

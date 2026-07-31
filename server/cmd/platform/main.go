@@ -239,7 +239,12 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		events.NewHandler(d.events, d.registry, sessions).Register(mux)
 
 	case config.RoleAdmin:
-		// TODO(P7): 백오피스 Admin API
+		if d.iap == nil {
+			return nil, errors.New("admin role에 결제 설정이 필요하다")
+		}
+		if err := registerAdmin(mux, d); err != nil {
+			return nil, err
+		}
 
 	default:
 		return nil, fmt.Errorf("HTTP를 열지 않는 role이다: %s", cfg.Role)
