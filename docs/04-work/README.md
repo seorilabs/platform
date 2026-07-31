@@ -16,12 +16,21 @@
 - [x] Artifact Registry `platform`
 - [x] `cmd/platform` 최소 서버 + Dockerfile — distroless static
 - [x] Cloud Run `platform-api` 배포 + 공개 접근
-- [x] 실측 2 — Firestore ✅ / 실측 6 — DRS ✅
-- [ ] 실측 7 — 콜드스타트 (warm 확보, 콜드 측정 중)
-- [ ] 실측 1 — Apple JWS Go 방안 (ADR 0009 Proposed)
-- [ ] 실측 3·4·5 — AIT 관련
+- [x] 실측 1 — Apple JWS ✅ **ADR 0009 Accepted**. `richzw/appstore` + OCSP 자체 추가
+- [x] 실측 2 — Firestore ✅
+- [x] 실측 6 — DRS ✅ 막힘 확인, `--no-invoker-iam-check` 우회
+- [x] 실측 7 — 콜드스타트 ⚠️ **425ms, 목표 초과** → **warm-up ping 도입 확정**
+- [ ] 실측 3·4·5 — AIT. 실제 `.ait` 빌드와 심사 제출이 필요해 별도 사이클
 - [ ] `cmd/fs` 구현 — **직접 작성 대기**
 - [ ] WIF — P1에서 CI와 함께
+
+### P0에서 바뀐 판단
+
+| 항목 | 계획 | 실측 후 |
+|---|---|---|
+| Apple JWS | 자체 구현이 유력. 최악엔 하이브리드 | **라이브러리 채택.** 체인 검증이 올바름을 확인해 자체 구현 이유가 사라졌다 |
+| warm-up ping | 콜드 300ms 이하면 불필요 | **도입 확정.** 425ms이고 의존성이 붙으면 더 늘어난다 |
+| 하이브리드 대비책 | Apple만 기존 Functions 유지 | **불필요해졌다** |
 
 절차와 함정은 `../06-release/gcp-bootstrap.md`에 남겼다.
 
