@@ -1,46 +1,41 @@
-# Agent local overrides
-AGENTS.local.md
-AGENT.local.md
+
+!.env.example
+!*.tfvars.example
 .claude/settings.local.json
-
-# Go
-/server/bin/
-*.test
-*.out
-coverage.*
-
-# Secrets — 절대 커밋 금지
-*.p8
-*.pem
-*.key
-*-key.json
-*-sa.json
-service-account*.json
+.DS_Store
 .env
 .env.*
-!.env.example
-
-# Firestore 에뮬레이터
-firebase-debug.log
-firestore-debug.log
-ui-debug.log
-/.emulator-data/
-
-# Terraform
+.idea/
+.pnpm-store/
 .terraform/
+.vscode/
+*-key.json
+*-sa.json
+*.key
+*.out
+*.p8
+*.pem
+*.swp
+*.test
 *.tfstate
 *.tfstate.*
 *.tfvars
-!*.tfvars.example
-
+/.emulator-data/
+/server/bin/
+# Agent local overrides
+# Firestore 에뮬레이터
+# Go
 # Node (SDK / 레퍼런스 앱)
-node_modules/
-dist/
-build/
-.pnpm-store/
-
 # OS / 에디터
-.DS_Store
-*.swp
-.idea/
-.vscode/
+# Secrets — 절대 커밋 금지
+# Terraform
+AGENT.local.md
+AGENTS.local.md
+build/
+coverage.*
+dist/
+firebase-debug.log
+firestore-debug.log
+node_modules/
+service-account*.json
+ui-debug.log

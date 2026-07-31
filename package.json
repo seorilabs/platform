@@ -1,0 +1,15 @@
+{
+  "name": "seorilabs-platform",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Seorilabs 수평 공통 플랫폼 모노레포",
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  }
+}

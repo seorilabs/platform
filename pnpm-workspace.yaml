@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+  - "examples/*"
+
+# esbuild는 설치 시 플랫폼별 바이너리를 준비한다.
+# tsx가 의존하므로 허용해야 테스트가 돈다.
+allowBuilds:
+  esbuild: true
