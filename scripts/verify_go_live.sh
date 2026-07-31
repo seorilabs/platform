@@ -121,6 +121,17 @@ verify_rtdn() {
     no "push 엔드포인트가 이상하다: $endpoint"
   fi
 
+  # 콘솔 등록과 별개로 Google이 topic에 publish할 수 있어야 한다.
+  # 이 권한이 없으면 콘솔에 무엇을 적었든 알림은 한 건도 오지 않고,
+  # 콘솔은 그 실패를 알려주지 않는다. org policy에 막히는 자리다.
+  local publisher="google-play-developer-notifications@system.gserviceaccount.com"
+  if gcloud pubsub topics get-iam-policy play-iap-rtdn --project="$PROJECT" \
+      --format="value(bindings.members)" 2>/dev/null | grep -q "$publisher"; then
+    ok "Play 시스템 계정에 publisher 권한이 있다"
+  else
+    no "topic에 publisher 권한이 없다 — Play가 보낼 수 없다 (체크리스트 2장)"
+  fi
+
   # Play Console에서 "테스트 알림 보내기"를 누른 뒤 실행하면
   # Google이 직접 보낸 메시지가 로그에 남는다.
   echo "  최근 10분 웹훅 수신 기록을 본다..."

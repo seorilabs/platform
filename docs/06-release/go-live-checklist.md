@@ -77,6 +77,49 @@ topic은 이미 만들어져 있고 push subscription도 걸려 있다.
 > 온다. 전환 시점에 하는 것이 맞고, 그전에 하면 기존 시스템이
 > 환불 알림을 못 받는다.
 
+### 콘솔 등록만으로는 오지 않는다 — org policy
+
+Play Console에 topic을 적어도 **Google이 그 topic에 publish할 권한이
+없으면 알림은 한 건도 오지 않는다.** 콘솔은 이 실패를 알려주지 않는다.
+
+```bash
+gcloud pubsub topics add-iam-policy-binding play-iap-rtdn \
+  --project=seorilabs-platform \
+  --member="serviceAccount:google-play-developer-notifications@system.gserviceaccount.com" \
+  --role="roles/pubsub.publisher"
+```
+
+이 부여가 조직 정책에 막힌다.
+
+```
+constraints/iam.allowedPolicyMemberDomains
+  is not in permitted organization
+```
+
+디렉토리 `C02f93h8p`(seorilabs.com)만 허용하는데 Google 소유 시스템
+계정은 거기 속하지 않는다. 프로젝트 수준에서 예외를 둬야 한다.
+
+```bash
+cat > /tmp/policy.yaml <<'EOF'
+name: projects/seorilabs-platform/policies/iam.allowedPolicyMemberDomains
+spec:
+  inheritFromParent: false
+  rules:
+  - allowAll: true
+EOF
+gcloud org-policies set-policy /tmp/policy.yaml --project=seorilabs-platform
+```
+
+기존 `lizard-tycoon` 프로젝트 topic에는 이 권한이 있다. 정책이
+적용되기 전에 설정됐기 때문이고, 그래서 지금까지 동작했다.
+
+**등록 여부는 topic IAM으로 확인한다.** 비어 있으면 콘솔에 무엇을
+적었든 알림은 오지 않는다.
+
+```bash
+gcloud pubsub topics get-iam-policy play-iap-rtdn --project=seorilabs-platform
+```
+
 등록 후 "테스트 알림 보내기"를 누르면 확인할 수 있다.
 
 ```bash
