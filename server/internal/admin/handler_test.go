@@ -71,6 +71,23 @@ func (f *fakeLedger) CountDeadLetters(context.Context) (int, error) {
 }
 func (f *fakeLedger) Environment() domain.Environment { return domain.EnvSandbox }
 
+// fakeConfig는 RemoteConfig 조작을 대신한다.
+type fakeConfig struct {
+	calls []maintenanceCall
+	err   error
+}
+
+type maintenanceCall struct {
+	appID   string
+	minutes int
+	actor   string
+}
+
+func (f *fakeConfig) SetMaintenance(_ context.Context, appID string, minutes int, actor string) error {
+	f.calls = append(f.calls, maintenanceCall{appID, minutes, actor})
+	return f.err
+}
+
 // fakeAuditor는 감사 기록을 모은다.
 type fakeAuditor struct {
 	records []auditRecord
@@ -94,7 +111,7 @@ func newHandler(t *testing.T, l *fakeLedger, v *fakeValidator, a *fakeAuditor, a
 	if err != nil {
 		t.Fatalf("인증기 생성 실패: %v", err)
 	}
-	h, err := NewHandler(l, auth, a)
+	h, err := NewHandler(l, &fakeConfig{}, auth, a)
 	if err != nil {
 		t.Fatalf("핸들러 생성 실패: %v", err)
 	}
@@ -153,6 +170,7 @@ func TestAllRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/v1/admin/health", ""},
 		{http.MethodPost, "/v1/admin/entitlements/grant", `{}`},
 		{http.MethodPost, "/v1/admin/entitlements/revoke", `{}`},
+		{http.MethodPost, "/v1/admin/config/maintenance", `{}`},
 	}
 
 	for _, rt := range routes {
@@ -399,13 +417,107 @@ func TestRevokeRoutesToRevoke(t *testing.T) {
 func TestNewValidation(t *testing.T) {
 	auth, _ := NewAuthenticator(&fakeValidator{}, nil)
 
-	if _, err := NewHandler(nil, auth, nil); err == nil {
+	if _, err := NewHandler(nil, &fakeConfig{}, auth, nil); err == nil {
 		t.Error("원장 없이 통과시켰다")
 	}
-	if _, err := NewHandler(&fakeLedger{}, nil, nil); err == nil {
+	if _, err := NewHandler(&fakeLedger{}, &fakeConfig{}, nil, nil); err == nil {
 		t.Error("인증기 없이 통과시켰다")
 	}
 	if _, err := NewAuthenticator(nil, nil); err == nil {
 		t.Error("검증기 없이 통과시켰다")
 	}
+}
+
+// break-glass의 핵심 경로다. 백오피스가 죽어도 이건 돼야 한다.
+func TestMaintenanceToggle(t *testing.T) {
+	newWithConfig := func(t *testing.T, cfg *fakeConfig, a *fakeAuditor) *Handler {
+		t.Helper()
+		auth, err := NewAuthenticator(&fakeValidator{email: backofficeSA}, nil)
+		if err != nil {
+			t.Fatalf("인증기 생성 실패: %v", err)
+		}
+		h, err := NewHandler(&fakeLedger{}, cfg, auth, a)
+		if err != nil {
+			t.Fatalf("핸들러 생성 실패: %v", err)
+		}
+		return h
+	}
+
+	t.Run("점검 모드를 켠다", func(t *testing.T) {
+		cfg := &fakeConfig{}
+		a := &fakeAuditor{}
+		h := newWithConfig(t, cfg, a)
+
+		body := `{"appId":"lizard-tycoon","minutes":30}`
+		w := serve(t, h, http.MethodPost, "/v1/admin/config/maintenance", body, "tok", "syous")
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+		if len(cfg.calls) != 1 {
+			t.Fatalf("호출 %d회", len(cfg.calls))
+		}
+		got := cfg.calls[0]
+		if got.appID != "lizard-tycoon" || got.minutes != 30 {
+			t.Errorf("호출 = %+v", got)
+		}
+		// 누가 켰는지 남아야 한다
+		if got.actor != "syous" {
+			t.Errorf("actor = %q", got.actor)
+		}
+		if len(a.records) != 1 || a.records[0].outcome != "on" {
+			t.Errorf("감사 기록 = %+v", a.records)
+		}
+	})
+
+	t.Run("0분이면 끈다", func(t *testing.T) {
+		cfg := &fakeConfig{}
+		a := &fakeAuditor{}
+		h := newWithConfig(t, cfg, a)
+
+		body := `{"appId":"lizard-tycoon","minutes":0}`
+		w := serve(t, h, http.MethodPost, "/v1/admin/config/maintenance", body, "tok", "syous")
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		_, result, _ := decodeEnvelope(t, w)
+		if result["active"] != false {
+			t.Errorf("active = %v, want false", result["active"])
+		}
+		if a.records[0].outcome != "off" {
+			t.Errorf("outcome = %q", a.records[0].outcome)
+		}
+	})
+
+	t.Run("앱 식별자가 없으면 거부", func(t *testing.T) {
+		cfg := &fakeConfig{}
+		h := newWithConfig(t, cfg, &fakeAuditor{})
+
+		w := serve(t, h, http.MethodPost, "/v1/admin/config/maintenance", `{"minutes":30}`, "tok", "")
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+		if len(cfg.calls) != 0 {
+			t.Error("앱 없이 점검 모드를 건드렸다")
+		}
+	})
+
+	// 본문 텍스트를 받지 않는다. 장애 중에 자유 텍스트 입력에
+	// 의존하면 안 되고, 문구는 서버가 갖고 있다.
+	t.Run("메시지 필드를 거부한다", func(t *testing.T) {
+		cfg := &fakeConfig{}
+		h := newWithConfig(t, cfg, &fakeAuditor{})
+
+		body := `{"appId":"lizard-tycoon","minutes":30,"message":"임의 문구"}`
+		w := serve(t, h, http.MethodPost, "/v1/admin/config/maintenance", body, "tok", "")
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+		if len(cfg.calls) != 0 {
+			t.Error("임의 문구가 통과했다")
+		}
+	})
 }

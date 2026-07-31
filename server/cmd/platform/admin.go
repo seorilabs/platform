@@ -39,7 +39,8 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		return err
 	}
 
-	handler, err := admin.NewHandler(d.iap.ledger, auth, auditAdapter{col: d.events})
+	// RemoteConfig도 함께 넘긴다. break-glass의 점검 모드가 여기로 온다.
+	handler, err := admin.NewHandler(d.iap.ledger, d.config, auth, auditAdapter{col: d.events})
 	if err != nil {
 		return err
 	}

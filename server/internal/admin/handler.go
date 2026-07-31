@@ -35,16 +35,17 @@ type Auditor interface {
 // Handler는 백오피스 전용 API다.
 type Handler struct {
 	ledger  Ledger
+	config  Config
 	auditor Auditor
 	auth    *Authenticator
 }
 
-func NewHandler(l Ledger, auth *Authenticator, auditor Auditor) (*Handler, error) {
+func NewHandler(l Ledger, cfg Config, auth *Authenticator, auditor Auditor) (*Handler, error) {
 	if l == nil || auth == nil {
 		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid,
 			"Admin API 설정이 올바르지 않아요")
 	}
-	return &Handler{ledger: l, auth: auth, auditor: auditor}, nil
+	return &Handler{ledger: l, config: cfg, auth: auth, auditor: auditor}, nil
 }
 
 // Register는 라우트를 등록한다.
@@ -62,6 +63,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		// 조작 — 등급 C. reason과 requestId가 필수다
 		"POST /v1/admin/entitlements/grant":  h.grantEntitlement,
 		"POST /v1/admin/entitlements/revoke": h.revokeEntitlement,
+
+		// break-glass. 백오피스가 죽어도 점검 모드는 켤 수 있어야 한다
+		"POST /v1/admin/config/maintenance": h.setMaintenance,
 	}
 
 	for pattern, handler := range routes {
@@ -235,4 +239,63 @@ func parseLimit(r *http.Request) int {
 		return 0
 	}
 	return n
+}
+
+// Config는 RemoteConfig 조작이다.
+//
+// break-glass 절차가 부르는 경로다. 백오피스가 죽어도 점검 모드는
+// 켤 수 있어야 한다 — 그게 R1의 실질이다.
+type Config interface {
+	SetMaintenance(ctx context.Context, appID string, minutes int, actor string) error
+}
+
+// maintenanceRequest는 점검 모드 요청이다.
+//
+// 본문 텍스트를 받지 않는다. 시간과 앱만 받고 문구는 서버가 갖고 있다.
+// 장애 중에 자유 텍스트 입력이나 외부 LLM 호출에 의존하면 안 된다.
+type maintenanceRequest struct {
+	AppID string `json:"appId"`
+	// Minutes가 0 이하면 점검 모드를 끈다.
+	Minutes int `json:"minutes"`
+}
+
+func (h *Handler) setMaintenance(w http.ResponseWriter, r *http.Request) error {
+	if h.config == nil {
+		return platformerr.New(platformerr.CodeRuntimeConfigInvalid,
+			"설정 서비스가 준비되지 않았어요")
+	}
+
+	var req maintenanceRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if req.AppID == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid, "앱 식별자가 필요해요")
+	}
+
+	actor := ActorFrom(r.Context())
+	login := actor.Login
+	if login == "" {
+		login = actor.Email
+	}
+
+	if err := h.config.SetMaintenance(r.Context(), req.AppID, req.Minutes, login); err != nil {
+		return err
+	}
+
+	outcome := "off"
+	if req.Minutes > 0 {
+		outcome = "on"
+	}
+	if h.auditor != nil {
+		h.auditor.Record(r.Context(), "config.maintenance", req.AppID, "", outcome,
+			map[string]any{"minutes": req.Minutes, "actor": login})
+	}
+
+	httpx.WriteOK(w, http.StatusOK, map[string]any{
+		"appId":   req.AppID,
+		"active":  req.Minutes > 0,
+		"minutes": req.Minutes,
+	})
+	return nil
 }
