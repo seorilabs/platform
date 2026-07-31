@@ -4,89 +4,86 @@
 
 ## 현재 단계
 
-**P1 완료.** 실제 Cloud Run 배포에서 E2E 통과. 다음은 P2 지표 수집.
+**P4 진행 중.** P0~P3 완료, P4는 도메인·원장·카탈로그·바인딩까지.
 
-### P1 완료 (identity + 계약)
-
-- [x] `platformerr` — Code 60여 개 + statusByCode. **AST 파싱으로 누락 자동 검출**
-- [x] `store` — Firestore 접근 독점. `fs` 미노출 + `fspath.Path`만 수용
-- [x] `httpx` — envelope, 미들웨어, `DisallowUnknownFields`로 불변식 8 강제
-- [x] `registry` — 앱 레지스트리 + 캐시. 항목 하나가 깨져도 나머지 유지
-- [x] `identity` — Firebase 토큰 검증, 세션 발급/회전, platform_user
-- [x] **골든 JWT 6종 거부** — 만료/aud/iss/alg(none·HS256)/kid/서명
-- [x] **100회 동시 호출 → `platform_user_id` 1개**
-- [x] `cmd/regsync` — 레지스트리 Firestore 동기화
-- [x] Cloud Run 배포 + Secret Manager 세션 키
-- [x] 배포 E2E — 세션 발급·갱신·삭제, 불변식 8, 미등록 앱 403
-
-배포: `https://platform-api-306278488979.asia-northeast3.run.app`
-
-### P0 완료
-
-- [x] GCP 프로젝트 생성 + 과금 연결 + **Billing budget** (70,000 KRW, 40%/100%)
-- [x] API 14종 활성화
-- [x] **Firestore Native `(default)`** — `asia-northeast3`, `freeTier: true`, 삭제 보호 활성화
-- [x] BigQuery `platform` / `platform_stg` — 동일 리전
-- [x] 서비스 계정 7개 + IAM 최소권한
-- [x] Artifact Registry `platform`
-- [x] `cmd/platform` 최소 서버 + Dockerfile — distroless static
-- [x] Cloud Run `platform-api` 배포 + 공개 접근
-- [x] 실측 1 — Apple JWS ✅ **ADR 0009 Accepted**. `richzw/appstore` + OCSP 자체 추가
-- [x] 실측 2 — Firestore ✅
-- [x] 실측 6 — DRS ✅ 막힘 확인, `--no-invoker-iam-check` 우회
-- [x] 실측 7 — 콜드스타트 ⚠️ **425ms, 목표 초과** → **warm-up ping 도입 확정**
-- [x] **`cmd/fs` 구현 완료** — 실제 Firestore 연결·prefix 적용까지 검증
-- [ ] 실측 3·4·5 — AIT. 실제 `.ait` 빌드와 심사 제출이 필요해 별도 사이클
-- [ ] WIF — P1에서 CI와 함께
-
-`cmd/fs` 검증 결과: 빈 컬렉션 조회, gRPC `NotFound` 판정, `--prefix`가 첫 세그먼트에만 적용, 이중 적용 차단. 구현 중 표준 `flag`의 파싱 중단 함정을 밟아 `09-knowledge/go/02-flag-parsing-trap.md`에 남겼다.
-
-### P0에서 바뀐 판단
-
-| 항목 | 계획 | 실측 후 |
+| 서비스 | URL | 담당 |
 |---|---|---|
-| Apple JWS | 자체 구현이 유력. 최악엔 하이브리드 | **라이브러리 채택.** 체인 검증이 올바름을 확인해 자체 구현 이유가 사라졌다 |
-| warm-up ping | 콜드 300ms 이하면 불필요 | **도입 확정.** 425ms이고 의존성이 붙으면 더 늘어난다 |
-| 하이브리드 대비책 | Apple만 기존 Functions 유지 | **불필요해졌다** |
+| `platform-api` | `https://platform-api-306278488979.asia-northeast3.run.app` | identity + RemoteConfig |
+| `platform-ingest` | `https://platform-ingest-306278488979.asia-northeast3.run.app` | 이벤트 수집 |
 
-절차와 함정은 `../06-release/gcp-bootstrap.md`에 남겼다.
+테스트 75개, 패키지 10개. `go test ./...` 통과.
 
-## D0 진행
+---
 
-- [x] Obsidian 노트 3건 — `프로젝트/개인/공통 플랫폼/`
-- [x] 저장소 골격 + org 표준 docs 구조
-- [x] ADR 0001~0008
-- [x] `spec/openapi.yaml` 초안 — redocly lint 통과, 경고 0
-- [x] `spec/conformance/*.json` 벡터 3종
-- [x] `spec/events.md` 이벤트 사전
-- [x] GitHub private repo push
+## 완료
 
-## P0 착수 전 확인
+### D0 문서화
 
-ADR 0006(Go 채택)과 0008(원장 소유자 키)이 P4 이후를 좌우하므로 코드 전에 확정했다.
+Obsidian 노트 3건, 저장소 골격, ADR 0001~0009, `spec/openapi.yaml`(lint 경고 0), conformance 벡터 3종.
 
-**P0의 첫 작업은 Apple JWS 검증 Go 방안 결정**이다. 이 결과가 ADR 0009가 되고, 실패하면 Apple만 기존 Cloud Functions를 유지하는 하이브리드로 간다.
+### P0 실측과 부트스트랩
 
-## 미확정 항목 추적
+GCP 프로젝트 + **Billing budget 70,000 KRW**(40%/100%) · Firestore `(default)` `asia-northeast3` **`freeTier: true`** 삭제 보호 · BigQuery 2종 · SA 7개 · Artifact Registry · `cmd/fs` 조회 CLI.
 
-여기 있는 것들은 **해당 단계 전에 반드시 채워야** 한다.
+| # | 실측 | 결과 |
+|---|---|---|
+| 1 | Apple JWS Go 방안 | ✅ `richzw/appstore` + OCSP 자체 추가 (ADR 0009) |
+| 2 | Firebase 미등록 Firestore | ✅ 생성됨, `freeTier: true` |
+| 6 | Cloud Run DRS | ✅ 막힘 확인, `--no-invoker-iam-check` 우회 |
+| 7 | 콜드스타트 | ⚠️ **425ms** — 목표 300ms 초과 → **warm-up ping 도입 확정** |
+| 3·4·5 | AIT 관련 | 미착수. 실제 `.ait` 빌드와 심사 필요 |
+
+### P1 identity
+
+`platformerr`(Code 60여 개, **AST 파싱으로 누락 자동 검출**) · `store`(Firestore 접근 독점) · `httpx` · `registry` · `identity` · `cmd/regsync`.
+
+**필수 게이트 통과**: 골든 JWT 6종 거부 · 100회 동시 호출 → `platform_user_id` 1개.
+
+배포 E2E: 세션 발급·갱신·삭제, 불변식 8(미지 필드 400), 미등록 앱 403.
+
+### P2 이벤트 수집
+
+conformance 벡터 28케이스 통과. 배포 E2E에서 `is_first: true` → `1`, `email` 제거, 중첩 객체 제거, allowlist 밖 제외 확인.
+
+**남음**: TS SDK, GDScript SDK, 레퍼런스 앱 2개.
+
+### P3 RemoteConfig
+
+타겟팅 3축(플랫폼·앱버전·로케일), ETag 304, kill switch 3종. 배포 E2E 통과.
+
+### P4 IAP (진행 중)
+
+- `domain` — 불변식 1·2·3·6·9를 테스트로 고정
+- `ledger` — **실제 Firestore 트랜잭션**에서 불변식 2·3·4·6·10 검증 (통합 테스트 7개)
+- `catalog` — 마켓별 단계적 출시, placeholder·중복 거부
+- `binding` — HMAC keyring 회전, 상수시간 비교 (불변식 11)
+
+---
+
+## 남은 작업과 제약
+
+| 단계 | 상태 | 제약 |
+|---|---|---|
+| P4 나머지 | verify 유스케이스, 검증 핸들러 | 없음 |
+| **P5 마켓 provider** | 미착수 | **Play SA 권한·Apple `.p8`·AIT mTLS 전부 미확보.** 코드는 쓸 수 있으나 **E2E 검증 불가** |
+| P6 웹훅·워커 | 미착수 | 마켓 자격증명 필요. 워커 로직 자체는 검증 가능 |
+| P2 SDK | 미착수 | 없음. TS·GDScript 2벌 + 레퍼런스 앱 |
+| P7 백오피스 | 미착수 | **`seorilabs-backoffice` 저장소** 작업 |
+| P8 lizard-tycoon | 미착수 | **`lizard-tycoon` 저장소** + 실기기 마켓 샌드박스 |
+| P9 마감 | 미착수 | 장애 리허설 포함 |
+
+## 미확정 항목
+
+**해당 단계 전에 반드시 채워야 한다.**
 
 | 항목 | 필요 시점 | 위치 |
 |---|---|---|
-| Apple JWS 검증 Go 방안 | **P0** | ADR 0009 |
-| ~~GCP `ORG_ID`, 과금 계정~~ | ~~P0~~ | **확보 — `06-release/gcp-bootstrap.md`** |
-| Cloud Run URL — iap/ingest/admin | P2·P5·P7 | `08-ops/BREAK-GLASS.md` |
-| Firestore PITR 활성화 여부 | 실데이터 축적 시 | `06-release/gcp-bootstrap.md` |
-| support code 파생 규칙 | P1 | `03-architecture/identity.md` |
-| 앱별 현행 이벤트 이름 매핑 | P2 | `spec/events.md` |
 | IAP rate limit·재시도 파라미터 | **P4** | `03-architecture/iap.md` |
 | dead-letter 보존기간·alert 채널 | **P4** | `03-architecture/iap.md` |
-| Play 런타임 SA + Console 권한 | P5 | `05-markets/README.md` |
-| Apple issuer ID·key ID·`.p8` | P5 | `05-markets/README.md` |
-| **AIT mTLS 인증서·상품 ID·claim 발급 경로** | P5 | `05-markets/README.md` |
+| Play 런타임 SA + Console 권한 | **P5** | `05-markets/README.md` |
+| Apple issuer ID·key ID·`.p8` | **P5** | `05-markets/README.md` |
+| **AIT mTLS 인증서·상품 ID·claim 발급 경로** | **P5** | `05-markets/README.md` |
+| 앱별 현행 이벤트 이름 매핑 | P2 SDK | `spec/events.md` |
+| Firestore PITR 활성화 여부 | 실데이터 축적 시 | `06-release/gcp-bootstrap.md` |
 
 AIT 항목 3건은 **lizard-tycoon에서도 미해결**이다. 확보하지 못하면 AIT provider는 스텁으로 두고 Play·App Store만 먼저 간다.
-
-## P0에서 답을 얻어야 하는 것
-
-`../07-qa/README.md`의 실측 항목 7가지. 그중 **Apple JWS 검증 Go 방안**이 최우선이며, 실패 시 Apple만 기존 Cloud Functions를 유지하는 하이브리드로 간다.
