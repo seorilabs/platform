@@ -45,6 +45,23 @@ type Maintenance struct {
 	Until   time.Time `json:"until,omitempty" firestore:"until"`
 }
 
+// MarshalJSON은 종료 시각이 없으면 필드를 생략한다.
+//
+// time.Time은 구조체라 omitempty가 동작하지 않는다. 그냥 두면
+// 응답에 "until":"0001-01-01T00:00:00Z"가 나가고, 클라이언트가 이걸
+// 유효한 시각으로 읽으면 점검이 이미 끝난 것으로 오해한다.
+func (m Maintenance) MarshalJSON() ([]byte, error) {
+	if m.Until.IsZero() {
+		return json.Marshal(struct {
+			Active  bool   `json:"active"`
+			Message string `json:"message,omitempty"`
+		}{m.Active, m.Message})
+	}
+	// alias로 감싸지 않으면 이 메서드가 다시 불려 무한 재귀가 된다.
+	type alias Maintenance
+	return json.Marshal(alias(m))
+}
+
 // Rule은 조건부 오버라이드다.
 //
 // 조건이 맞는 규칙의 값이 기본값 위에 덮인다. 순서대로 적용하므로

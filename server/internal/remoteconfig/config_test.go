@@ -1,6 +1,8 @@
 package remoteconfig
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -245,5 +247,27 @@ func TestETag(t *testing.T) {
 	doc.Version = 2
 	if got := doc.ETag(Target{Platform: "android", AppVersion: "1.0.0", Locale: "ko"}); got == base {
 		t.Error("버전이 올라갔는데 ETag가 같다. 클라이언트가 새 값을 못 본다")
+	}
+}
+
+// time.Time은 구조체라 omitempty가 동작하지 않는다.
+// 그냥 두면 "until":"0001-01-01T00:00:00Z"가 응답에 나가고
+// 클라이언트가 이걸 유효한 시각으로 읽으면 점검이 끝난 것으로 오해한다.
+func TestMaintenanceMarshalOmitsZeroTime(t *testing.T) {
+	b, err := json.Marshal(Maintenance{Active: false})
+	if err != nil {
+		t.Fatalf("마샬 실패: %v", err)
+	}
+	if strings.Contains(string(b), "until") {
+		t.Errorf("종료 시각이 없는데 until이 나갔다: %s", b)
+	}
+
+	until := time.Now().Add(time.Hour)
+	b, err = json.Marshal(Maintenance{Active: true, Until: until})
+	if err != nil {
+		t.Fatalf("마샬 실패: %v", err)
+	}
+	if !strings.Contains(string(b), "until") {
+		t.Errorf("종료 시각이 있는데 until이 빠졌다: %s", b)
 	}
 }
