@@ -5,6 +5,7 @@
 | 문서 | 내용 |
 |---|---|
 | [overview.md](overview.md) | 배치도, 서비스 분리 근거, 저장소 선택 |
+| **[server-layout.md](server-layout.md)** | **Go 패키지 배치, 의존성 규칙, 에러 모델, store 계층** |
 | [identity.md](identity.md) | 세션 교환, 토큰 검증, anonymous 한계, PII 정책 |
 | [events.md](events.md) | GA4와의 역할 분담, sink 구성, 직렬화 규약 |
 | [iap.md](iap.md) | **불변식 12개**, 데이터 모델, 3마켓, 웹훅, 재시도 |

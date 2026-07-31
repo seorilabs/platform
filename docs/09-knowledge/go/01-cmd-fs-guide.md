@@ -1,33 +1,19 @@
-# cmd/fs 구현 가이드
+# Go 관용구 참고 — cmd/fs 기준
 
-P0의 Go 워밍업 과제. **실제로 계속 쓸 도구**를 만들면서 Go 기본기를 익힌다.
+`cmd/fs`와 `internal/fspath`에 쓰인 Go 관용구 모음. **코드를 리뷰할 때 참고한다.**
 
-## 왜 이걸 먼저 만드는가
+## cmd/fs가 왜 있는가
 
 `gcloud`에는 **Firestore 문서 조회 명령이 없다.** export/import/bulk-delete/indexes만 있다. 운영 중 상태를 확인하려면 콘솔을 열거나 이 도구를 쓰는 수밖에 없다.
 
-그리고 학습 대상이 적당하다 — 플래그 파싱, 에러 처리, `context`, 외부 클라이언트 lifecycle이 한 번에 나온다. 도메인 로직이 없어 Go 문법에 집중할 수 있다.
+조회 전용이다. 쓰기 명령을 만들지 않는다 — 지급이나 회수는 감사 원장을 남기며 백오피스를 통해야 한다.
 
-## 순서
-
-### 1. `internal/fspath` 부터
-
-`path_test.go`가 **완성된 상태**로 있다. `path.go`의 TODO를 채워 통과시킨다.
+## 실행
 
 ```bash
 cd server
-go test ./internal/fspath/
-```
+go test ./internal/fspath/     # 순수 함수라 Firestore 불필요
 
-처음에는 전부 실패한다. 정상이다.
-
-순수 함수라 Firestore 없이 테스트된다. **이걸 먼저 하는 이유가 그것**이다 — 네트워크나 자격증명 없이 Go 문법에만 집중할 수 있다.
-
-### 2. `cmd/fs` 채우기
-
-`main.go`의 `runGet`과 `runList` TODO를 채운다.
-
-```bash
 export GOOGLE_CLOUD_PROJECT=demo-platform
 export FIRESTORE_EMULATOR_HOST=localhost:8080
 go run ./cmd/fs get users/pu_test
