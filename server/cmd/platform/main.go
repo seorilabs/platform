@@ -27,6 +27,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/registry"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 	"github.com/seorilabs/platform/server/internal/store"
 )
 
@@ -83,6 +84,7 @@ type deps struct {
 	identity *identity.Handler
 	keys     *identity.KeyCache
 	events   *events.Collector
+	config   *remoteconfig.Service
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
@@ -93,7 +95,11 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 
 	reg := registry.New(registry.NewStoreSource(st))
 
-	d := &deps{store: st, registry: reg}
+	d := &deps{
+		store:    st,
+		registry: reg,
+		config:   remoteconfig.NewService(st),
+	}
 
 	// 세션 비밀키가 있는 role만 identity를 조립한다.
 	// ingest는 익명 수집을 허용하므로 세션이 필요 없다.
@@ -189,7 +195,7 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 			return nil, errors.New("api role에 identity가 필요하다")
 		}
 		d.identity.Register(mux)
-		// TODO(P3): RemoteConfig 라우트
+		remoteconfig.NewHandler(d.config, d.registry).Register(mux)
 		// TODO(P4): entitlement 조회 라우트
 
 	case config.RoleIAP:

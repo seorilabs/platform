@@ -62,7 +62,13 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 func writeJSON(w http.ResponseWriter, status int, body envelope) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	// 불변식 12. 결제 응답이 중간 캐시에 남으면 안 된다.
-	w.Header().Set("Cache-Control", "no-store")
+	//
+	// 기본은 no-store이고, 핸들러가 미리 설정했으면 그걸 존중한다.
+	// RemoteConfig처럼 캐시가 이득인 경로만 명시적으로 바꾼다.
+	// 기본값이 안전한 쪽이므로 깜빡해도 사고가 나지 않는다.
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.WriteHeader(status)
 
 	if err := json.NewEncoder(w).Encode(body); err != nil {
