@@ -47,6 +47,16 @@ type IAPConfig struct {
 // 런타임 SA에 Play Console 권한을 부여하는 방식이다.
 type PlayConfig struct {
 	PackageName string
+
+	// ServiceAccountJSON은 Play 전용 자격증명이다.
+	//
+	// 비어 있으면 ADC를 쓴다. 런타임 SA에 Play Console 권한을
+	// 부여하는 것이 원칙이지만, Play publisher 계정이 다른 조직에
+	// 있으면 그럴 수 없다. 그 경우에만 이 값을 준다.
+	//
+	// 주의: ADC로 쓰면 Firestore 접근까지 이 SA로 바뀐다.
+	// 그래서 Play 호출에만 쓰고 전역 자격증명으로 두지 않는다.
+	ServiceAccountJSON []byte
 }
 
 // Enabled는 Play 검증기를 조립할 수 있는지 본다.
@@ -133,7 +143,10 @@ func loadIAP(requireMarket bool) (IAPConfig, error) {
 	}
 	c.BindingKeys = keys
 
-	c.Play = PlayConfig{PackageName: os.Getenv("IAP_PLAY_PACKAGE_NAME")}
+	c.Play = PlayConfig{
+		PackageName:        os.Getenv("IAP_PLAY_PACKAGE_NAME"),
+		ServiceAccountJSON: decodeMaybeBase64(os.Getenv("IAP_PLAY_SA_JSON")),
+	}
 
 	c.Apple = AppleConfig{
 		KeyContent: decodeMaybeBase64(os.Getenv("IAP_APPLE_KEY")),

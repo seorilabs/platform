@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/http"
 
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
 	"github.com/seorilabs/platform/server/internal/config"
@@ -138,11 +140,9 @@ func newVerifiers(ctx context.Context, ic config.IAPConfig) ([]verify.Verifier, 
 	)
 
 	if ic.Play.Enabled() {
-		// ADC를 쓴다. SA JSON 키를 배포하지 않는다는 조직 원칙이다.
-		// 런타임 SA에 Play Console 권한을 부여하는 방식이다.
-		httpClient, err := google.DefaultClient(ctx, playScope)
+		httpClient, err := newPlayHTTPClient(ctx, ic.Play)
 		if err != nil {
-			return nil, nil, fmt.Errorf("iap: Play 자격증명을 얻지 못했다: %w", err)
+			return nil, nil, err
 		}
 		v, err := play.New(ic.Play.PackageName, httpClient)
 		if err != nil {
@@ -194,6 +194,30 @@ func newVerifiers(ctx context.Context, ic config.IAPConfig) ([]verify.Verifier, 
 	}
 
 	return verifiers, enabled, nil
+}
+
+// newPlayHTTPClient는 Play Developer API용 클라이언트를 만든다.
+//
+// 기본은 ADC다. SA JSON 키를 배포하지 않는다는 조직 원칙이고,
+// 런타임 SA에 Play Console 권한을 부여하는 방식이다.
+//
+// Play publisher 계정이 다른 조직에 있으면 그 방식이 안 된다.
+// 그때만 전용 자격증명을 준다. 전역 ADC로 두면 Firestore 접근까지
+// 그 SA로 바뀌어 다른 프로젝트를 못 읽는다.
+func newPlayHTTPClient(ctx context.Context, cfg config.PlayConfig) (*http.Client, error) {
+	if len(cfg.ServiceAccountJSON) == 0 {
+		client, err := google.DefaultClient(ctx, playScope)
+		if err != nil {
+			return nil, fmt.Errorf("iap: Play 자격증명을 얻지 못했다: %w", err)
+		}
+		return client, nil
+	}
+
+	creds, err := google.CredentialsFromJSON(ctx, cfg.ServiceAccountJSON, playScope)
+	if err != nil {
+		return nil, fmt.Errorf("iap: Play 전용 자격증명을 읽지 못했다: %w", err)
+	}
+	return oauth2.NewClient(ctx, creds.TokenSource), nil
 }
 
 // auditAdapter는 verify.Auditor를 events.Collector에 잇는다.

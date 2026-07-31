@@ -21,11 +21,54 @@ go test -tags=market ./internal/iap/providers/ -v
 
 ## 2026-07-31 결과
 
-| 마켓 | 인증 | 에러 매핑 | 실제 구매 검증 | shadow 대조 |
-|---|---|---|---|---|
-| App Store | **통과** | `4000006` → `purchase_invalid` | **통과** | **통과** |
-| Google Play | **통과** | 400 → `purchase_invalid` | 불가 (아래) | — |
-| AppsInToss | 미확보 | — | — | — |
+| 마켓 | 인증 | 에러 매핑 | 실제 구매 검증 | shadow 대조 | 웹훅 |
+|---|---|---|---|---|---|
+| App Store | **통과** | `4000006` | **통과** | **통과** | **통과** |
+| Google Play | **통과** | 400 | **통과** | — | **통과** |
+| AppsInToss | 미확보 | — | — | — | — |
+
+## Play 실제 구매 검증 — 토큰을 얻는 법
+
+원장에는 `purchaseToken`을 저장하지 않는다(PII 최소화). 하지만
+**Play API `purchases.voidedpurchases.list`가 환불된 구매의 토큰을 준다.**
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PKG/purchases/voidedpurchases?maxResults=5"
+```
+
+이 토큰으로 실제 검증을 돌렸다.
+
+```
+productId       sp_galaxy_gecko
+canonicalId     hlffalpebliemceanhakmcml... (purchaseToken)
+providerOrderId GPA.3309-0275-2077-97107
+state           revoked
+completion      none
+purchasedAt     2026-07-19T08:42:09Z
+orderKey        73a88841...37f968b8
+```
+
+- 불변식 1: canonicalId가 purchaseToken이다
+- 환불된 구매를 `revoked`로 판정한다
+- 환불된 구매에 완료 처리를 요구하지 않는다 (`completion: none`)
+
+### 환불 알림 전 경로 — 실데이터
+
+같은 토큰으로 RTDN 환불 알림을 Pub/Sub에 넣었다.
+
+| 단계 | 결과 |
+|---|---|
+| Pub/Sub push + OIDC | 200 |
+| 알림 파싱 | `voided_purchase` |
+| **실제 Play API 재검증** | `state: revoked` |
+| 원장 반영 | `known: false` |
+| **tombstone 생성** | `tombstone: true` |
+
+`known: false`가 정확한 동작이다. 이 구매는 lizard-tycoon의 Firebase
+원장에 있고 플랫폼 원장에는 없다. **불변식 10에 따라 알림만으로
+신규 지급을 하지 않고, 환불이므로 tombstone만 남긴다.** 나중에 그
+구매가 검증되면 stale 억제가 재지급을 막는다.
 
 ## shadow 대조 — App Store
 
@@ -64,17 +107,14 @@ export APPLE_REAL_ORDER_KEY=32de2fba5b5f2bb536dfd396bb90edd8c3db25cb1fce89a2e396
 go test -tags=market ./internal/iap/providers/ -run TestAppleRealSandboxPurchase -v
 ```
 
-### Play는 같은 방법을 쓸 수 없다
+### Play는 orderKey 대조를 할 수 없다
 
-purchaseToken을 원장에 저장하지 않기 때문이다. **PII 최소화 원칙이고
-우리도 같은 규칙을 따른다.** orderKey는 sha256이라 역산도 안 된다.
+기존 Play 주문의 `purchaseToken`을 원장에 저장하지 않았기 때문에,
+그 주문의 orderKey를 다시 계산할 수 없다. `voidedpurchases`로 얻은
+토큰은 다른 구매의 것이다.
 
-원장에 남은 것은 `providerOrderId`(`GPA.3370-...`)뿐이고, Play API는
-orderId로 purchaseToken을 되찾는 경로를 주지 않는다.
-
-Play 재검증은 기기에서 새 구매를 만들어야 한다. 다만 orderKey 계산은
-두 마켓이 같은 `domain.OrderKey` 함수를 쓰므로 App Store에서 확인된
-알고리즘 일치가 Play에도 그대로 적용된다.
+다만 orderKey 계산은 두 마켓이 같은 `domain.OrderKey` 함수를 쓰므로
+App Store에서 확인된 알고리즘 일치가 Play에도 그대로 적용된다.
 
 ### App Store
 
@@ -241,11 +281,13 @@ go test -tags=market ./internal/iap/worker/ -v
 기존 구매 재검증으로 상당 부분이 덮였지만, 새 결제를 해야만
 확인되는 것이 남는다.
 
-- **Play 구매 검증** — purchaseToken이 원장에 없어 기존 거래로는 못 한다
-- **acknowledge / finishTransaction이 실제로 반영되는지** — 기존 거래는
-  이미 완료 처리되어 있어 다시 부를 수 없다
-- **환불 웹훅이 실제로 도착하는지** — Apple ASSN v2, Play RTDN 배선
+- **Play acknowledge** — 완료하지 않은 활성 구매가 필요하다.
+  `voidedpurchases`가 주는 것은 전부 환불된 구매라 acknowledge 대상이
+  아니고, 활성 구매의 토큰을 얻는 API 경로는 없다
 - **`originalTransactionId`가 복원 시에도 유지되는지** — 재구매·복원 흐름
+- **RTDN 실연동** — 현재 검증은 우리가 Pub/Sub에 직접 넣은 것이다.
+  Play Console에서 이 topic을 RTDN 대상으로 등록해야 Google이 직접 보낸다.
+  `androidpublisher` API에 해당 설정 경로가 없어 콘솔 UI로만 가능하다
 - **AppsInToss 전 경로** — mTLS 인증서부터 필요하다
 
 ### 절차
