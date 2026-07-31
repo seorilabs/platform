@@ -4,7 +4,26 @@
 
 ## 현재 단계
 
-**D0 완료.** 다음은 P0 — 실측과 부트스트랩.
+**P0 진행 중.** 인프라 부트스트랩 완료, 실측 7건 중 3건 확인.
+
+### P0 진행
+
+- [x] GCP 프로젝트 생성 + 과금 연결 + **Billing budget** (70,000 KRW, 40%/100%)
+- [x] API 14종 활성화
+- [x] **Firestore Native `(default)`** — `asia-northeast3`, `freeTier: true`, 삭제 보호 활성화
+- [x] BigQuery `platform` / `platform_stg` — 동일 리전
+- [x] 서비스 계정 7개 + IAM 최소권한
+- [x] Artifact Registry `platform`
+- [x] `cmd/platform` 최소 서버 + Dockerfile — distroless static
+- [x] Cloud Run `platform-api` 배포 + 공개 접근
+- [x] 실측 2 — Firestore ✅ / 실측 6 — DRS ✅
+- [ ] 실측 7 — 콜드스타트 (warm 확보, 콜드 측정 중)
+- [ ] 실측 1 — Apple JWS Go 방안 (ADR 0009 Proposed)
+- [ ] 실측 3·4·5 — AIT 관련
+- [ ] `cmd/fs` 구현 — **직접 작성 대기**
+- [ ] WIF — P1에서 CI와 함께
+
+절차와 함정은 `../06-release/gcp-bootstrap.md`에 남겼다.
 
 ## D0 진행
 
@@ -29,8 +48,9 @@ ADR 0006(Go 채택)과 0008(원장 소유자 키)이 P4 이후를 좌우하므�
 | 항목 | 필요 시점 | 위치 |
 |---|---|---|
 | Apple JWS 검증 Go 방안 | **P0** | ADR 0009 |
-| GCP `ORG_ID`, `PROVISIONER_BILLING_ID` | P0 | `AGENTS.local.md` |
-| Cloud Run 실제 URL 3종 | P0 | `AGENTS.local.md`, `08-ops/BREAK-GLASS.md` |
+| ~~GCP `ORG_ID`, 과금 계정~~ | ~~P0~~ | **확보 — `06-release/gcp-bootstrap.md`** |
+| Cloud Run URL — iap/ingest/admin | P2·P5·P7 | `08-ops/BREAK-GLASS.md` |
+| Firestore PITR 활성화 여부 | 실데이터 축적 시 | `06-release/gcp-bootstrap.md` |
 | support code 파생 규칙 | P1 | `03-architecture/identity.md` |
 | 앱별 현행 이벤트 이름 매핑 | P2 | `spec/events.md` |
 | IAP rate limit·재시도 파라미터 | **P4** | `03-architecture/iap.md` |

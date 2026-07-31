@@ -23,7 +23,16 @@ gcloud run services add-iam-policy-binding platform-admin \
   --project=seorilabs-platform
 ```
 
-`확정 필요` — `platform-admin`의 실제 URL을 P0 배포 후 여기 적는다.
+> 이 조직은 org policy `iam.allowedPolicyMemberDomains`가 seorilabs 디렉토리만 허용한다. **사람 계정 바인딩은 같은 디렉토리 소속이므로 통과하지만 `allUsers`는 막힌다.**
+
+### 서비스 URL
+
+| 서비스 | URL |
+|---|---|
+| `platform-api` | `https://platform-api-306278488979.asia-northeast3.run.app` |
+| `platform-admin` | `확정 필요` — P7 배포 후 채운다 |
+
+프로젝트 번호는 `306278488979`, 리전은 `asia-northeast3`다.
 
 ## 절차
 

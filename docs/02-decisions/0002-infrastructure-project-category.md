@@ -42,7 +42,21 @@ Accepted
 
 - **`seorilabs-game-provisioning` 스킬 문서에 이 예외를 한 줄 추가한다.** 안 그러면 6개월 뒤 같은 질문이 반복되고 그때는 이유를 기억하지 못한다
 - Firebase 콘솔에 이 프로젝트가 나타나지 않는다. 관리는 GCP 콘솔에서 한다
-- **P0에서 실측이 필요하다**: Firebase 미등록 GCP 프로젝트에서 `gcloud firestore databases create --type=firestore-native`가 되는지, GCP 콘솔 Firestore Studio로 조회가 되는지. 콘솔이 Firebase 등록을 강제한다면 (a) 등록하되 앱을 0개로 두거나 (b) 저장소를 재검토해야 한다
+
+### P0 실측 결과 — **검증됨** (2026-07-31)
+
+`firestore.googleapis.com`만 활성화한 순수 GCP 프로젝트에서 Firestore Native 데이터베이스가 **정상 생성됐다.** Firebase 프로젝트 등록도, 앱 등록도 하지 않았다.
+
+```
+name:       projects/seorilabs-platform/databases/(default)
+type:       FIRESTORE_NATIVE
+locationId: asia-northeast3
+freeTier:   true
+```
+
+`firestore.googleapis.com`을 켜면 `firebaserules.googleapis.com`과 `datastore.googleapis.com`이 의존성으로 함께 활성화된다. **이는 API 의존성이지 Firebase 프로젝트 등록이 아니다.**
+
+절차와 함정은 `../06-release/gcp-bootstrap.md`에 있다.
 - 앞으로 인프라성 GCP 프로젝트가 더 필요해지면 같은 범주로 추가한다. 다만 **조직당 소수**로 유지한다
 
 ## Alternatives Considered

@@ -33,6 +33,8 @@ Accepted
 | 트래픽 0일 때 | **월 10~25달러 고정** | **0원** |
 | 무료 한도 | 없음 | 일 5만 read / 2만 write / 1GiB |
 
+**P0에서 실측 확인**: 생성된 데이터베이스가 `freeTier: true`를 반환했다. `(default)` 데이터베이스이므로 무료 할당량이 적용된다. named database를 만들지 않고 컬렉션 prefix로 staging을 나누는 결정의 근거가 이것이다.
+
 `min-instances=0` 전제와 Cloud SQL의 고정비는 정면 충돌한다. Cloud Run scale-to-zero와 커넥션 풀의 궁합도 나쁘다.
 
 ### IAP 원장을 Firestore로 두는 근거

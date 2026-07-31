@@ -1,18 +1,49 @@
 # QA
 
-## P0 실측 항목 — 답을 얻어야 진행 가능
+## P0 실측 항목
 
-| # | 항목 | 실패 시 |
+| # | 항목 | 상태 |
 |---|---|---|
-| 1 | **Apple JWS 검증 Go 방안 결정** ← 최우선 | Apple만 기존 Cloud Functions 유지하는 하이브리드 |
-| 2 | Firebase 미등록 GCP 프로젝트에서 Firestore 생성·콘솔 조회 | 등록하되 앱 0개로 두거나 저장소 재검토 |
-| 3 | AIT 웹 프레임워크가 `Storage`/`getAnonymousKey`/`appLogin`을 노출하는가 | Godot Web은 신원 없는 이벤트 전용으로 축소 |
-| 4 | Godot HTML shell에 추가 script를 넣은 `.ait`가 심사를 통과하는가 | React shell 방식으로 전환. 비용 증가 |
-| 5 | `appLogin` 토큰의 서버 검증 API 존재 여부 | AIT 결제만 후속으로 분리 |
-| 6 | Cloud Run `allUsers` 바인딩이 조직 DRS 정책에 막히는가 | 배포 후 스크립트로 해제 — lizard-tycoon 선례 |
-| 7 | Go 콜드스타트 실측 | 목표 초과 시 warm-up ping 도입 |
+| 1 | **Apple JWS 검증 Go 방안 결정** ← 최우선 | **진행 중** — ADR 0009 Proposed |
+| 2 | Firebase 미등록 GCP 프로젝트에서 Firestore 생성 | **✅ 검증됨** |
+| 3 | AIT 웹 프레임워크가 `Storage`/`getAnonymousKey`/`appLogin`을 노출하는가 | 대기 |
+| 4 | Godot HTML shell에 추가 script를 넣은 `.ait`가 심사를 통과하는가 | 대기 |
+| 5 | `appLogin` 토큰의 서버 검증 API 존재 여부 | 대기 |
+| 6 | Cloud Run `allUsers`가 조직 DRS 정책에 막히는가 | **✅ 확인됨 — 막힌다. 우회 방법 확보** |
+| 7 | Go 콜드스타트 실측 | **진행 중** — warm 확보, 콜드 측정 중 |
 
-1번 판정 기준: ① x5c 체인 + Apple Root CA 검증 ② **OCSP online check** ③ `RETRYABLE_VERIFICATION_FAILURE` 구분 가능성 ④ App Store Server API 지원. 후보는 커뮤니티 라이브러리 3종과 **자체 구현**(`crypto/x509` + `golang.org/x/crypto/ocsp`).
+### 결과 — 2번: Firestore ✅
+
+`firestore.googleapis.com`만 켠 순수 GCP 프로젝트에서 Native DB가 생성됐다. `freeTier: true`, `locationId: asia-northeast3`, `(default)` 데이터베이스.
+
+**ADR 0002와 0003의 전제가 실측으로 검증됐다.**
+
+### 결과 — 6번: DRS ✅ (막힌다)
+
+org policy `constraints/iam.allowedPolicyMemberDomains`가 seorilabs 디렉토리(`C02f93h8p`)만 허용해 `allUsers` 바인딩이 실패한다. lizard-tycoon이 겪은 것과 동일하다.
+
+**우회 방법**: `gcloud run services update --no-invoker-iam-check`. invoker IAM 검사 자체를 끈다.
+
+> **`platform-admin`에는 절대 쓰지 않는다.** private을 유지해야 Cloud Run 인프라가 앱 코드 진입 전에 거부한다.
+
+### 결과 — 7번: 콜드스타트 (진행 중)
+
+| 구분 | 측정값 |
+|---|---|
+| warm p50 | **59ms** |
+| warm p90 | 62ms |
+| warm max | 64ms |
+| 콜드 | 측정 중 — 유휴 16분 후 |
+
+서울 리전이고 네트워크 왕복을 포함한 수치다. 목표는 콜드 300ms 이하, warm 50ms 이하였다.
+
+**부수 검증**: arm64 Mac에서 `GOOS=linux GOARCH=amd64`로 정적 바이너리가 QEMU 없이 빌드됐다. ADR 0006의 CI 근거가 확인됐다.
+
+### 1번 판정 기준
+
+① x5c 체인 + Apple Root CA 검증 ② **OCSP online check** ③ `RETRYABLE_VERIFICATION_FAILURE` 구분 ④ App Store Server API 지원.
+
+원본 코드 확인 결과 **production의 OCSP는 의도적 보안 결정**이며 생략하면 기존 보안 수준을 낮춘다. ADR 0009 참고.
 
 ## 검증 체크리스트
 
