@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "description": "응답 envelope 파싱. SDK가 서버 응답을 어떻게 해석해야 하는지 고정한다.",
+  "rules": [
+    "성공은 HTTP 2xx이고 ok가 true다",
+    "실패는 HTTP 4xx/5xx이고 ok가 false이며 error.code와 error.message가 있다",
+    "HTTP status와 ok 값이 불일치하면 응답을 무효로 본다",
+    "필수 필드가 없으면 무효로 본다",
+    "**미지 필드는 무시한다. 키 개수를 검사하지 않는다**",
+    "error.message로 분기하지 않는다. error.code로만 분기한다"
+  ],
+  "critical_note": [
+    "lizard-tycoon의 기존 IAP 클라이언트는 응답 키 개수까지 정확히 일치를 요구한다.",
+    "즉 서버가 필드를 하나 추가하면 기존 클라이언트가 깨진다.",
+    "이 상태로는 '/v1은 영구히 깨지지 않는다'는 규칙이 성립하지 않는다.",
+    "P8에서 반드시 완화한다. 론칭 후에는 구버전이 마켓에 2~3년 남아 손댈 수 없다."
+  ],
+  "cases": [
+    {
+      "name": "정상 성공",
+      "http_status": 200,
+      "body": { "ok": true, "result": { "platformUserId": "pu_01JXYZ" } },
+      "expect": { "valid": true, "ok": true }
+    },
+    {
+      "name": "미지 필드가 있어도 유효하다",
+      "http_status": 200,
+      "body": {
+        "ok": true,
+        "result": { "platformUserId": "pu_01JXYZ", "futureField": "무시" },
+        "futureTopLevel": 1
+      },
+      "expect": { "valid": true, "ok": true }
+    },
+    {
+      "name": "정상 실패",
+      "http_status": 409,
+      "body": {
+        "ok": false,
+        "error": { "code": "purchase_owned_by_another_user", "message": "다른 계정의 구매예요" }
+      },
+      "expect": { "valid": true, "ok": false, "code": "purchase_owned_by_another_user" }
+    },
+    {
+      "name": "2xx인데 ok가 false면 무효",
+      "http_status": 200,
+      "body": { "ok": false, "error": { "code": "x", "message": "y" } },
+      "expect": { "valid": false, "local_code": "iap_response_invalid" }
+    },
+    {
+      "name": "4xx인데 ok가 true면 무효",
+      "http_status": 400,
+      "body": { "ok": true, "result": {} },
+      "expect": { "valid": false, "local_code": "iap_response_invalid" }
+    },
+    {
+      "name": "ok 필드가 없으면 무효",
+      "http_status": 200,
+      "body": { "result": {} },
+      "expect": { "valid": false, "local_code": "iap_response_invalid" }
+    },
+    {
+      "name": "실패인데 error가 없으면 무효",
+      "http_status": 500,
+      "body": { "ok": false },
+      "expect": { "valid": false, "local_code": "iap_response_invalid" }
+    },
+    {
+      "name": "error.code가 없으면 무효",
+      "http_status": 422,
+      "body": { "ok": false, "error": { "message": "설명만 있음" } },
+      "expect": { "valid": false, "local_code": "iap_response_invalid" }
+    },
+    {
+      "name": "JSON이 아니면 무효",
+      "http_status": 502,
+      "raw_body": "<html>Bad Gateway</html>",
+      "expect": { "valid": false, "local_code": "iap_response_invalid" }
+    },
+    {
+      "name": "빈 본문은 무효",
+      "http_status": 200,
+      "raw_body": "",
+      "expect": { "valid": false, "local_code": "iap_response_invalid" }
+    }
+  ],
+  "local_error_codes": {
+    "description": "서버가 보내지 않고 SDK가 자체 생성하는 코드. 서버 코드와 충돌하지 않아야 한다.",
+    "codes": [
+      "transport_failed",
+      "response_invalid",
+      "endpoint_unconfigured",
+      "auth_unavailable",
+      "session_expired",
+      "offline"
+    ]
+  }
+}

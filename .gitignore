@@ -1,0 +1,46 @@
+# Agent local overrides
+AGENTS.local.md
+AGENT.local.md
+.claude/settings.local.json
+
+# Go
+/server/bin/
+*.test
+*.out
+coverage.*
+
+# Secrets — 절대 커밋 금지
+*.p8
+*.pem
+*.key
+*-key.json
+*-sa.json
+service-account*.json
+.env
+.env.*
+!.env.example
+
+# Firestore 에뮬레이터
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+/.emulator-data/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# Node (SDK / 레퍼런스 앱)
+node_modules/
+dist/
+build/
+.pnpm-store/
+
+# OS / 에디터
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "description": "클라이언트 SDK 재시도 백오프. 무한 재시도 루프는 비용 사고의 1순위 원인이므로 CI에서 고정한다.",
+  "policy": {
+    "base_ms": 1000,
+    "factor": 2,
+    "max_ms": 60000,
+    "jitter_ratio": 0.2,
+    "reset_on_success": true
+  },
+  "rules": [
+    "attempt는 1부터 시작한다",
+    "delay = min(base_ms * factor^(attempt-1), max_ms)",
+    "실제 대기는 delay에 ±jitter_ratio 범위의 무작위 편차를 적용한다",
+    "5xx와 네트워크 오류만 재시도한다",
+    "4xx는 즉시 폐기한다. 재시도해도 결과가 같다",
+    "429는 Retry-After 헤더가 있으면 그 값을 우선한다",
+    "성공하면 attempt를 1로 리셋한다"
+  ],
+  "schedule": [
+    { "attempt": 1, "delay_ms": 1000 },
+    { "attempt": 2, "delay_ms": 2000 },
+    { "attempt": 3, "delay_ms": 4000 },
+    { "attempt": 4, "delay_ms": 8000 },
+    { "attempt": 5, "delay_ms": 16000 },
+    { "attempt": 6, "delay_ms": 32000 },
+    { "attempt": 7, "delay_ms": 60000 },
+    { "attempt": 8, "delay_ms": 60000 },
+    { "attempt": 99, "delay_ms": 60000 }
+  ],
+  "retryable_cases": [
+    { "status": 0, "note": "네트워크 오류 또는 타임아웃", "retry": true },
+    { "status": 400, "retry": false },
+    { "status": 401, "retry": false, "note": "토큰 1회 갱신 후 원 요청 1회만 재시도. 그 뒤 401이면 실패" },
+    { "status": 403, "retry": false },
+    { "status": 404, "retry": false },
+    { "status": 409, "retry": false },
+    { "status": 422, "retry": false },
+    { "status": 429, "retry": true, "note": "Retry-After 우선" },
+    { "status": 500, "retry": true },
+    { "status": 502, "retry": true },
+    { "status": 503, "retry": true },
+    { "status": 504, "retry": true }
+  ],
+  "outbox": {
+    "description": "오프라인 이벤트 큐. 게임은 오프라인 플레이가 잦다.",
+    "max_events": 500,
+    "max_bytes": 262144,
+    "max_age_ms": 86400000,
+    "flush_triggers": [
+      "이벤트 25건 도달",
+      "1초 debounce",
+      "앱 백그라운드 전환",
+      "SDK start 직후"
+    ],
+    "overflow_policy": "가장 오래된 것부터 폐기한다",
+    "notes": [
+      "전송 성공 후에 삭제한다. at-least-once이므로 중복이 발생할 수 있다",
+      "24시간을 넘은 이벤트는 전송하지 않는다. GA4 MP가 72시간 이전 이벤트를 무시한다"
+    ]
+  }
+}

@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "description": "이벤트 파라미터 정규화. TS SDK와 GDScript SDK가 동일한 출력을 내야 한다.",
+  "sentinels": {
+    "__nan__": "NaN으로 치환한 뒤 입력한다",
+    "__pos_inf__": "+Infinity로 치환한다",
+    "__neg_inf__": "-Infinity로 치환한다",
+    "__null__": "null 또는 언어별 nil/undefined로 치환한다"
+  },
+  "rules": [
+    "boolean은 1 또는 0으로 변환한다",
+    "유한한 숫자는 그대로 둔다",
+    "NaN과 Infinity는 0으로 변환한다",
+    "null과 undefined는 파라미터 자체를 제거한다",
+    "문자열은 100자로 자른다",
+    "파라미터 이름이 40자를 넘으면 제거한다",
+    "객체와 배열은 제거한다. 조용히 문자열로 바꾸지 않는다",
+    "PII 키 이름은 제거한다",
+    "파라미터가 25개를 넘으면 초과분을 제거한다. 키 오름차순으로 앞의 25개를 남긴다"
+  ],
+  "pii_keys": [
+    "email",
+    "e_mail",
+    "mail",
+    "phone",
+    "phone_number",
+    "tel",
+    "mobile",
+    "name",
+    "full_name",
+    "first_name",
+    "last_name",
+    "real_name",
+    "address",
+    "addr",
+    "zipcode",
+    "postal_code",
+    "birth",
+    "birthday",
+    "birthdate",
+    "ssn",
+    "passport",
+    "card_number",
+    "credit_card",
+    "ip",
+    "ip_address"
+  ],
+  "cases": [
+    {
+      "name": "boolean true는 1이 된다",
+      "in": { "is_new": true },
+      "out": { "is_new": 1 }
+    },
+    {
+      "name": "boolean false는 0이 된다. 제거하지 않는다",
+      "in": { "is_new": false },
+      "out": { "is_new": 0 }
+    },
+    {
+      "name": "정수는 그대로",
+      "in": { "level": 42 },
+      "out": { "level": 42 }
+    },
+    {
+      "name": "실수는 그대로",
+      "in": { "ratio": 0.75 },
+      "out": { "ratio": 0.75 }
+    },
+    {
+      "name": "0은 유효한 값이다. 제거하지 않는다",
+      "in": { "score": 0 },
+      "out": { "score": 0 }
+    },
+    {
+      "name": "음수는 그대로",
+      "in": { "delta": -3 },
+      "out": { "delta": -3 }
+    },
+    {
+      "name": "NaN은 0이 된다",
+      "in": { "ratio": "__nan__" },
+      "out": { "ratio": 0 }
+    },
+    {
+      "name": "양의 무한대는 0이 된다",
+      "in": { "ratio": "__pos_inf__" },
+      "out": { "ratio": 0 }
+    },
+    {
+      "name": "음의 무한대는 0이 된다",
+      "in": { "ratio": "__neg_inf__" },
+      "out": { "ratio": 0 }
+    },
+    {
+      "name": "null은 파라미터 자체가 제거된다",
+      "in": { "score": "__null__", "keep": 1 },
+      "out": { "keep": 1 }
+    },
+    {
+      "name": "빈 문자열은 유효한 값이다",
+      "in": { "note": "" },
+      "out": { "note": "" }
+    },
+    {
+      "name": "짧은 문자열은 그대로",
+      "in": { "species": "leopard_gecko" },
+      "out": { "species": "leopard_gecko" }
+    },
+    {
+      "name": "100자를 넘는 문자열은 100자로 자른다",
+      "in": {
+        "note": "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhhiiiiiiiiiijjjjjjjjjjTRUNCATED"
+      },
+      "out": {
+        "note": "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhhiiiiiiiiiijjjjjjjjjj"
+      }
+    },
+    {
+      "name": "이모지가 포함된 문자열도 자르되 깨진 서로게이트를 남기지 않는다",
+      "in": { "emoji": "🦎" },
+      "out": { "emoji": "🦎" }
+    },
+    {
+      "name": "파라미터 이름이 40자면 유지한다",
+      "in": { "a234567890b234567890c234567890d234567890": 1 },
+      "out": { "a234567890b234567890c234567890d234567890": 1 }
+    },
+    {
+      "name": "파라미터 이름이 41자면 제거한다",
+      "in": { "a234567890b234567890c234567890d2345678901": 1, "keep": 2 },
+      "out": { "keep": 2 }
+    },
+    {
+      "name": "객체는 제거한다. 문자열로 바꾸지 않는다",
+      "in": { "meta": { "a": 1 }, "keep": 1 },
+      "out": { "keep": 1 }
+    },
+    {
+      "name": "배열은 제거한다",
+      "in": { "items": [1, 2, 3], "keep": 1 },
+      "out": { "keep": 1 }
+    },
+    {
+      "name": "빈 객체도 제거한다",
+      "in": { "meta": {}, "keep": 1 },
+      "out": { "keep": 1 }
+    },
+    {
+      "name": "PII 키 email은 제거한다",
+      "in": { "email": "a@b.com", "keep": 1 },
+      "out": { "keep": 1 }
+    },
+    {
+      "name": "PII 키는 대소문자를 구분하지 않는다",
+      "in": { "Email": "a@b.com", "PHONE": "010", "keep": 1 },
+      "out": { "keep": 1 }
+    },
+    {
+      "name": "PII 키가 아닌 유사한 이름은 유지한다",
+      "in": { "email_verified": 1, "name_length": 5 },
+      "out": { "email_verified": 1, "name_length": 5 }
+    },
+    {
+      "name": "빈 파라미터는 빈 결과",
+      "in": {},
+      "out": {}
+    },
+    {
+      "name": "25개는 전부 유지한다",
+      "in": {
+        "k01": 1, "k02": 2, "k03": 3, "k04": 4, "k05": 5,
+        "k06": 6, "k07": 7, "k08": 8, "k09": 9, "k10": 10,
+        "k11": 11, "k12": 12, "k13": 13, "k14": 14, "k15": 15,
+        "k16": 16, "k17": 17, "k18": 18, "k19": 19, "k20": 20,
+        "k21": 21, "k22": 22, "k23": 23, "k24": 24, "k25": 25
+      },
+      "out": {
+        "k01": 1, "k02": 2, "k03": 3, "k04": 4, "k05": 5,
+        "k06": 6, "k07": 7, "k08": 8, "k09": 9, "k10": 10,
+        "k11": 11, "k12": 12, "k13": 13, "k14": 14, "k15": 15,
+        "k16": 16, "k17": 17, "k18": 18, "k19": 19, "k20": 20,
+        "k21": 21, "k22": 22, "k23": 23, "k24": 24, "k25": 25
+      }
+    },
+    {
+      "name": "26개면 키 오름차순 앞 25개만 남긴다",
+      "in": {
+        "k01": 1, "k02": 2, "k03": 3, "k04": 4, "k05": 5,
+        "k06": 6, "k07": 7, "k08": 8, "k09": 9, "k10": 10,
+        "k11": 11, "k12": 12, "k13": 13, "k14": 14, "k15": 15,
+        "k16": 16, "k17": 17, "k18": 18, "k19": 19, "k20": 20,
+        "k21": 21, "k22": 22, "k23": 23, "k24": 24, "k25": 25,
+        "k26": 26
+      },
+      "out": {
+        "k01": 1, "k02": 2, "k03": 3, "k04": 4, "k05": 5,
+        "k06": 6, "k07": 7, "k08": 8, "k09": 9, "k10": 10,
+        "k11": 11, "k12": 12, "k13": 13, "k14": 14, "k15": 15,
+        "k16": 16, "k17": 17, "k18": 18, "k19": 19, "k20": 20,
+        "k21": 21, "k22": 22, "k23": 23, "k24": 24, "k25": 25
+      }
+    },
+    {
+      "name": "제거 대상은 25개 상한 계산 전에 먼저 빠진다",
+      "in": {
+        "email": "a@b.com",
+        "meta": { "x": 1 },
+        "k01": 1, "k02": 2, "k03": 3, "k04": 4, "k05": 5,
+        "k06": 6, "k07": 7, "k08": 8, "k09": 9, "k10": 10,
+        "k11": 11, "k12": 12, "k13": 13, "k14": 14, "k15": 15,
+        "k16": 16, "k17": 17, "k18": 18, "k19": 19, "k20": 20,
+        "k21": 21, "k22": 22, "k23": 23, "k24": 24, "k25": 25
+      },
+      "out": {
+        "k01": 1, "k02": 2, "k03": 3, "k04": 4, "k05": 5,
+        "k06": 6, "k07": 7, "k08": 8, "k09": 9, "k10": 10,
+        "k11": 11, "k12": 12, "k13": 13, "k14": 14, "k15": 15,
+        "k16": 16, "k17": 17, "k18": 18, "k19": 19, "k20": 20,
+        "k21": 21, "k22": 22, "k23": 23, "k24": 24, "k25": 25
+      }
+    },
+    {
+      "name": "혼합 케이스",
+      "in": {
+        "is_first": true,
+        "is_paid": false,
+        "count": 7,
+        "ratio": "__nan__",
+        "skipped": "__null__",
+        "meta": { "a": 1 },
+        "email": "a@b.com",
+        "species": "leopard_gecko"
+      },
+      "out": {
+        "is_first": 1,
+        "is_paid": 0,
+        "count": 7,
+        "ratio": 0,
+        "species": "leopard_gecko"
+      }
+    }
+  ]
+}

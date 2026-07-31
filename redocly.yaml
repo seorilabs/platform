@@ -1,0 +1,19 @@
+apis:
+  platform:
+    root: spec/openapi.yaml
+
+extends:
+  - recommended
+
+rules:
+  # private 저장소이므로 라이선스 블록을 두지 않는다
+  info-license: off
+
+  # 계약 규칙을 CI에서 강제한다
+  operation-operationId: error        # oapi-codegen이 함수 이름을 여기서 만든다
+  operation-operationId-unique: error
+  operation-summary: error
+  no-unused-components: error         # 미사용 스키마가 쌓이면 계약이 흐려진다
+  path-parameters-defined: error
+  no-invalid-media-type-examples: error
+  struct: error                      # 구 이름은 spec. recommended에도 있지만 명시한다
