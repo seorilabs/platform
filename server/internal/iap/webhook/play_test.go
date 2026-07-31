@@ -142,12 +142,14 @@ func TestPlayPartialRefundRejected(t *testing.T) {
 
 	w := servePlay(t, h, pushBody(t, "msg-partial", dn), "Bearer tok")
 
-	// 재전송해도 결과가 같다. 4xx로 끊어야 Pub/Sub이 멈춘다.
-	if w.Code < 400 || w.Code >= 500 {
-		t.Errorf("status = %d, want 4xx", w.Code)
+	// Pub/Sub은 2xx가 아니면 무조건 재전송한다. 4xx로 "버려라"를
+	// 표현할 수 없어서, 처리할 수 없는 알림에도 200을 준다.
+	// 실제로 422를 줬다가 같은 메시지가 무한 재전송됐다.
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (Pub/Sub은 2xx만 멈춘다)", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), string(platformerr.CodePartialRefundUnsupported)) {
-		t.Errorf("body = %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "dropped") {
+		t.Errorf("버렸다는 표시가 없다: %s", w.Body.String())
 	}
 	if rc.call != 0 {
 		t.Error("부분 환불을 원장에 반영했다")
@@ -253,8 +255,9 @@ func TestPlayRejectsOtherPackage(t *testing.T) {
 
 	w := servePlay(t, h, pushBody(t, "msg-other", dn), "Bearer t")
 
-	if w.Code < 400 || w.Code >= 500 {
-		t.Errorf("status = %d, want 4xx", w.Code)
+	// 재전송해도 결과가 같으므로 200으로 끊는다.
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
 	}
 	if rc.call != 0 {
 		t.Error("다른 앱 알림을 반영했다")
@@ -323,8 +326,10 @@ func TestPlayRejectsMalformedPush(t *testing.T) {
 
 			w := servePlay(t, h, tt.body, "Bearer t")
 
-			if w.Code < 400 || w.Code >= 500 {
-				t.Errorf("status = %d, want 4xx", w.Code)
+			// 깨진 메시지를 재전송해도 계속 깨져 있다.
+			// 200으로 끊지 않으면 Pub/Sub이 영원히 밀어넣는다.
+			if w.Code != http.StatusOK {
+				t.Errorf("status = %d, want 200", w.Code)
 			}
 			if rc.call != 0 {
 				t.Error("깨진 알림을 반영했다")
@@ -389,6 +394,59 @@ func TestNewPlayHandlerValidation(t *testing.T) {
 		cfg.PackageName = ""
 		if _, err := NewPlayHandler(cfg); err == nil {
 			t.Error("패키지 이름 없이 통과시켰다")
+		}
+	})
+}
+
+// Pub/Sub은 2xx가 아니면 무조건 재전송한다.
+//
+// Apple은 4xx를 받으면 멈추지만 Pub/Sub은 그렇지 않다. 이 차이를
+// 놓쳐서 부분 환불 알림 하나가 무한 재전송됐다.
+func TestPubSubRetrySemantics(t *testing.T) {
+	t.Run("재시도 불가는 200으로 끊는다", func(t *testing.T) {
+		v := &fakeValidator{email: "pubsub@x.com"}
+		ver := &fakeVerifier{
+			err: platformerr.New(platformerr.CodeProductTypeMismatch, "구독이에요"),
+		}
+		h, _, _ := newPlayHandler(t, v, ver)
+
+		w := servePlay(t, h, pushBody(t, "m-perm", voidedNotification()), "Bearer t")
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d — 2xx가 아니면 Pub/Sub이 영원히 재전송한다", w.Code)
+		}
+	})
+
+	t.Run("재시도 가능은 5xx로 다시 받는다", func(t *testing.T) {
+		v := &fakeValidator{email: "pubsub@x.com"}
+		ver := &fakeVerifier{
+			err: platformerr.New(platformerr.CodeProviderUnavailable, "Play 장애"),
+		}
+		h, _, _ := newPlayHandler(t, v, ver)
+
+		w := servePlay(t, h, pushBody(t, "m-retry", voidedNotification()), "Bearer t")
+
+		if w.Code < 500 {
+			t.Errorf("status = %d, want 5xx", w.Code)
+		}
+	})
+
+	// 자격증명 문제는 운영자가 고치면 처리할 수 있다.
+	// 버리면 그동안 온 환불 알림을 전부 잃는다.
+	t.Run("자격증명 실패는 버리지 않는다", func(t *testing.T) {
+		v := &fakeValidator{email: "pubsub@x.com"}
+		ver := &fakeVerifier{
+			err: platformerr.New(platformerr.CodeProviderAuthFailed, "권한 없음"),
+		}
+		h, ev, _ := newPlayHandler(t, v, ver)
+
+		w := servePlay(t, h, pushBody(t, "m-auth", voidedNotification()), "Bearer t")
+
+		if w.Code < 500 {
+			t.Errorf("status = %d — 자격증명을 고치면 처리할 수 있다", w.Code)
+		}
+		if len(ev.completed) != 0 {
+			t.Error("자격증명 실패를 완료로 남겼다. 알림이 유실된다")
 		}
 	})
 }

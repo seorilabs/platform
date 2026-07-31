@@ -203,6 +203,15 @@ func isPermanent(err error) bool {
 	if !errors.As(err, &pe) {
 		return false
 	}
+
+	// 자격증명 문제는 검증 경로에서는 재시도 무의미다 — 사용자를
+	// 기다리게 할 이유가 없다. 하지만 알림 경로에서는 다르다.
+	// 운영자가 설정을 고치면 처리할 수 있는데, 완료로 남기면
+	// 그동안 온 알림을 전부 잃는다. 환불이 반영되지 않는다.
+	if platformerr.CodeOf(err) == platformerr.CodeProviderAuthFailed {
+		return false
+	}
+
 	return !platformerr.IsRetryableErr(err)
 }
 

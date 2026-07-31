@@ -149,6 +149,55 @@ curl -X POST -H 'Content-Type: application/json' \
 > 우리가 직접 우리 웹훅에 넣는 방식이라 URL 등록과 무관하게 동작한다.
 > 실제 전환 시에는 App Store Connect에서 URL을 바꿔야 한다.
 
+## Play RTDN E2E — Pub/Sub push로 검증
+
+Play는 Apple과 달리 테스트 알림을 API로 요청할 수 없다. 대신 **RTDN이
+Pub/Sub push이므로 우리가 직접 topic에 publish하면 그 뒤 경로가 전부
+실제로 동작한다** — Pub/Sub이 OIDC 토큰을 붙여 우리 웹훅에 밀어준다.
+
+```bash
+gcloud pubsub topics create play-iap-rtdn --project=seorilabs-platform
+gcloud pubsub subscriptions create play-iap-rtdn-push \
+  --topic=play-iap-rtdn \
+  --push-endpoint="$IAP_URL/v1/iap/webhooks/play" \
+  --push-auth-service-account="pubsub-rtdn-pusher@..." \
+  --push-auth-token-audience="$IAP_URL"
+
+gcloud pubsub topics publish play-iap-rtdn --message="$(cat notification.json)"
+```
+
+| 검증 | 결과 |
+|---|---|
+| Pub/Sub push 도착 | **통과** |
+| OIDC 토큰 검증 | **통과** (인증 없이는 401) |
+| 발신 SA 허용 목록 | **통과** |
+| 알림 파싱 | **통과** |
+| 이벤트 원장 기록 (`messageId` 키) | `status: completed` |
+
+### 여기서 실제 결함을 찾았다 — Pub/Sub 재전송 시맨틱
+
+**Pub/Sub은 2xx가 아니면 무조건 재전송한다.** Apple은 4xx를 받으면
+멈추지만 Pub/Sub은 그렇지 않다. 4xx로 "이 메시지는 버려라"를
+표현할 수 없다.
+
+부분 환불 알림에 422를 줬더니 **같은 메시지가 무한 재전송됐다.**
+로그에 422가 계속 쌓였다.
+
+고친 것
+
+1. Play 웹훅은 재시도 가치가 없는 실패에 **200**을 준다. 버리기 전에
+   로그를 남긴다 — 조용히 삼키면 왜 반영되지 않았는지 알 수 없다
+2. `provider_auth_failed`는 웹훅에서 **재시도 가능**으로 본다.
+   검증 경로에서는 사용자를 기다리게 할 이유가 없어 재시도 불가가
+   맞지만, 알림 경로에서는 운영자가 설정을 고치면 처리할 수 있다.
+   완료로 남기면 그동안 온 환불 알림을 전부 잃는다
+
+수정 후 재확인: 부분 환불 알림에 200 + `partial_refund_unsupported`
+로그, 재전송 1회로 종료.
+
+이것이 계획서가 "Pub/Sub retry 시맨틱 재설계 필요"로 남겨둔 항목이다.
+실제로 붙여보고서야 정확한 규칙을 알았다.
+
 ## 아직 못 한 것 — 신규 실결제
 
 기존 구매 재검증으로 상당 부분이 덮였지만, 새 결제를 해야만

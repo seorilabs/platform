@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -153,16 +154,46 @@ func (h *PlayHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 	n, err := h.parse(raw)
 	if err != nil {
-		writeWebhookError(w, err)
+		writePubSubError(w, err)
 		return
 	}
 
 	if err := h.proc.process(ctx, "google_play", n, h.verifier); err != nil {
-		writeWebhookError(w, err)
+		writePubSubError(w, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// writePubSubError는 Pub/Sub이 이해하는 방식으로 실패를 알린다.
+//
+// Apple과 규칙이 다르다. Apple은 4xx를 받으면 재전송을 멈추지만
+// **Pub/Sub은 2xx가 아니면 무조건 재전송한다.** 4xx로 "이 메시지는
+// 버려라"를 표현할 수 없다.
+//
+// 그래서 재시도해도 소용없는 실패에 200을 준다. 부분 환불처럼
+// 우리가 처리할 수 없는 알림에 422를 주면 Pub/Sub이 영원히
+// 같은 메시지를 밀어넣는다. 실제로 그렇게 됐다.
+//
+// 버리기 전에 로그를 남긴다. 조용히 삼키면 왜 반영되지 않았는지
+// 나중에 알 수 없다.
+func writePubSubError(w http.ResponseWriter, err error) {
+	code := platformerr.CodeOf(err)
+
+	// isPermanent와 같은 판단을 쓴다. 여기만 다르게 보면
+	// 처리 계층은 "재시도하자"는데 응답은 "버려라"가 되어 어긋난다.
+	if isPermanent(err) {
+		slog.Error("Play 알림을 처리할 수 없어 버린다",
+			"code", string(code), "err", err)
+		// 200이어야 Pub/Sub이 멈춘다.
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"dropped":true}}`))
+		return
+	}
+
+	// 재시도 가치가 있다. 5xx를 줘서 Pub/Sub이 다시 보내게 한다.
+	http.Error(w, string(code), http.StatusServiceUnavailable)
 }
 
 // authenticate는 Pub/Sub이 붙인 OIDC 토큰을 검증한다.
