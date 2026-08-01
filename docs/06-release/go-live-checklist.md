@@ -233,6 +233,40 @@ topic은 이미 만들어져 있고 push subscription도 걸려 있다.
 > 온다. 전환 시점에 하는 것이 맞고, 그전에 하면 기존 시스템이
 > 환불 알림을 못 받는다.
 
+### 등록한 순간부터 기존 Functions는 RTDN을 못 받는다
+
+**이건 전환 스위치와 무관하다.** RTDN 수신처는 Play Console 설정이고,
+앱이 어느 서버를 부르는지(`seori-platform.config.json`의 `enabled`)와
+별개로 정해진다.
+
+우리 topic을 등록해 두고 `enabled: false`로 두면 이렇게 갈린다.
+
+```
+환불/구매 알림  →  seorilabs-platform  (우리 플랫폼이 받아 처리)
+앱의 검증 요청  →  lizard-tycoon Functions  (기존 원장을 본다)
+```
+
+기존 원장은 환불을 영영 모른다. 유저 화면에는 회수된 상품이 계속
+"보유 중"으로 남는다. 실제로 겪었다 — 게코 2건을 환불했는데 우리
+플랫폼은 4건을 받았고 lizard-tycoon Functions는 0건이었다.
+
+전환 전까지는 누락된 알림을 기존 topic으로 중계해야 한다.
+
+```bash
+# 환불된 주문의 purchaseToken을 얻어
+curl ... ".../purchases/voidedpurchases?maxResults=10"
+
+# 기존 topic으로 같은 형식의 알림을 넣는다
+#   productType: 2 (일회성), refundType: 1 (전액)
+curl -X POST -d @relay.json \
+  "https://pubsub.googleapis.com/v1/projects/lizard-tycoon/topics/play-iap-rtdn:publish"
+```
+
+**전환 순서를 정할 때 이 점을 고려한다.** RTDN 등록을 앱 전환보다
+먼저 하면 그 사이 환불이 기존 원장에 반영되지 않는다. 미론칭이라
+지금은 감당할 수 있지만, 실사용자가 있으면 순서를 뒤집거나 중계를
+자동화해야 한다.
+
 ### 콘솔 등록만으로는 오지 않는다 — org policy
 
 Play Console에 topic을 적어도 **Google이 그 topic에 publish할 권한이
