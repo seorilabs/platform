@@ -125,6 +125,44 @@ transactionId를 조회해 Apple이 `4000006 Invalid transaction id`를 줬고,
 자격증명이 거부되면 `provider_auth_failed`가 온다. 둘이 구분되므로
 운영 중에 "키가 틀렸나 거래가 없나"를 판별할 수 있다.
 
+### 미결 — 샌드박스 초기화 뒤 재구매가 앱에서 거부된다
+
+**미해결로 남긴다. 프로덕션 영향은 없다고 판단했다.**
+
+샌드박스 구매 내역을 초기화한 뒤 같은 상품을 다시 사면 이렇게 된다.
+
+```
+Apple    구매 시트 없이 옛 트랜잭션을 그대로 복원
+서버     200 · {status: "revoked",
+                completion: {action: "app_store_sync_after_sandbox_reset"}}
+앱       iap_response_invalid 로 거부
+```
+
+서버 의도는 "이 거래를 finish했으니 다음엔 진짜 시트로 사라"인데, 앱이
+그 응답을 거부해 정리 신호가 전달되지 않는다. 그래서 몇 번을 눌러도
+같은 자리를 맴돈다 — 실기기에서 6회 시도했고 서버는 6회 다 200이었다.
+
+**프로덕션에 없는 경로다.** `completion`이 붙은 `revoked` 응답을 만드는
+곳은 `blockedBySandboxReset` 한 군데뿐이고, 프로덕션에는 샌드박스
+초기화라는 개념이 없다. 환불로 인한 `revoked`는 다른 분기로 나가며
+`completion` 없이 반환돼 앱이 정상 처리한다.
+
+**다만 실패 지점은 특정하지 못했다.** 코드상 검증 대상은 전부 유효하다
+— `entitlementId`는 `sp_shootingstar_tokay`, `entitlements`는
+`listActive(uid)` 결과, `completion.action`은 서버가 보내는 문자열과
+정확히 일치한다. 그런데도 거부됐다. 그래서 "샌드박스 전용일 가능성이
+높다"까지만 말할 수 있다.
+
+재발하면 진단 로그로 바로 잡힌다. 로깅은 이미 들어가 있다(build 14~).
+
+```bash
+# iOS 기기 로그는 root가 필요하다. 별도 터미널에서 실행한다.
+sudo log collect --device-udid <udid> --last 30m --output ~/ios-iap.logarchive
+log show ~/ios-iap.logarchive --predicate 'eventMessage CONTAINS "[iap]"'
+```
+
+Android는 그냥 `adb logcat | grep '\[iap\]'`로 보인다.
+
 ### Google Play
 
 publisher SA로 `purchases.productsv2`에 붙었다. 인증이 통했고 가짜
