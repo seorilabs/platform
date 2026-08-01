@@ -222,6 +222,17 @@ func (s *Service) grantAndComplete(
 		"already_granted": res.AlreadyGranted,
 	})
 
+	// 같은 마켓 계정의 다른 platform_user에게서 옮겨왔다.
+	// 되돌릴 수 없는 조작이라 별도 action으로 남긴다. iap.granted에
+	// 섞으면 나중에 "이 유저가 언제 무엇을 잃었나"를 찾을 수 없다.
+	if res.TransferredFrom != "" {
+		s.audit(ctx, "iap.transferred", appID, puid, "ok", map[string]any{
+			"platform":         string(in.Purchase.Platform),
+			"entitlement_id":   in.EntitlementID,
+			"transferred_from": res.TransferredFrom,
+		})
+	}
+
 	out := Outcome{
 		Status:        "verified",
 		EntitlementID: in.EntitlementID,

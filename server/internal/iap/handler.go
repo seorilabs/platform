@@ -104,7 +104,14 @@ func (h *Handler) verifyPurchase(w http.ResponseWriter, r *http.Request) error {
 // entitlementsResponse는 활성 entitlement 목록이다.
 //
 // 마켓 SDK 없이도 환불 반영을 확인할 수 있는 경로다.
+// status는 스펙에서 required다. 빼면 클라이언트가 응답을 통째로 거부하고
+// 복원이 매번 실패한다. 그러면 로컬 캐시가 서버 원장으로 교정되지 않아,
+// 환불된 유저가 상품을 계속 갖고 있는 것처럼 보인다.
+//
+// 계정 참조 필드명과 같은 종류의 실수다. 서버는 200을 주는데 앱만
+// 실패하므로 서버 로그로는 드러나지 않는다.
 type entitlementsResponse struct {
+	Status       string   `json:"status"`
 	Entitlements []string `json:"entitlements"`
 }
 
@@ -119,7 +126,10 @@ func (h *Handler) listEntitlements(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 
-	httpx.WriteOK(w, http.StatusOK, entitlementsResponse{Entitlements: list})
+	httpx.WriteOK(w, http.StatusOK, entitlementsResponse{
+		Status:       "verified",
+		Entitlements: list,
+	})
 	return nil
 }
 

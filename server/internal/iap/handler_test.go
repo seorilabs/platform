@@ -304,11 +304,18 @@ func TestListEntitlements(t *testing.T) {
 	var env struct {
 		OK     bool `json:"ok"`
 		Result struct {
+			Status       string   `json:"status"`
 			Entitlements []string `json:"entitlements"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("응답 해석 실패: %v", err)
+	}
+	// status는 스펙에서 required다. 빼면 클라이언트가 응답을 통째로
+	// 거부하고 복원이 매번 실패한다. 그러면 로컬 캐시가 서버 원장으로
+	// 교정되지 않아 환불된 유저가 상품을 계속 갖고 있는 것처럼 보인다.
+	if env.Result.Status != "verified" {
+		t.Errorf("status = %q, want verified", env.Result.Status)
 	}
 	if len(env.Result.Entitlements) != 1 || env.Result.Entitlements[0] != "sp_galaxy_gecko" {
 		t.Errorf("entitlements = %v", env.Result.Entitlements)
