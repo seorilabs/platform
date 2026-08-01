@@ -377,7 +377,31 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$ADMIN_URL/v1/admin/health"
 
 `deadLetterCount`가 0이 아니면 마켓에 완료를 알리지 못한 주문이 있다.
 
-워커를 Cloud Run Job으로 걸어둔다. 이게 멈추면 Play 자동 환불이 시작된다.
+### 워커
+
+`platform-worker` Job이 5분마다 완료 outbox를 처리한다.
+**이게 멈추면 Play가 3일 뒤부터 자동 환불을 시작한다.**
+
+```bash
+gcloud scheduler jobs describe platform-worker-5m \
+  --project=seorilabs-platform --location=asia-northeast3 \
+  --format="value(state,status.code,lastAttemptTime)"
+
+gcloud run jobs executions list --job=platform-worker \
+  --project=seorilabs-platform --region=asia-northeast3 --limit=5 \
+  --format="table(metadata.name, status.succeededCount, status.failedCount)"
+```
+
+`state=ENABLED`이고 실행이 계속 성공해야 한다. 로그에서 처리량을 본다.
+
+```
+완료 재시도 종료  claimed=0 completed=0 failed=0
+```
+
+Job은 `RunOnce`로 한 번 돌고 끝난다. 남은 항목은 다음 실행이 집으므로
+한 번에 다 처리되지 않아도 정상이다. Firebase의 `onSchedule`과 달리
+단일 실행이 인프라로 보장되지 않지만, lease 기반 claim이 있어
+동시에 여러 개가 돌아도 중복 완료는 나지 않는다.
 
 ## 관련
 

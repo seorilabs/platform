@@ -8,6 +8,7 @@
 #   1. Play 활성 구매      — 기기에서 샌드박스 결제
 #   2. Play RTDN 등록      — Play Console UI
 #   3. AppsInToss 인증서   — 파트너 콘솔 발급
+#   4. 완료 재시도 워커    — Job + Scheduler
 #
 # 사용법
 #
@@ -195,21 +196,61 @@ verify_ait() {
   fi
 }
 
+# ---------------------------------------------------------------- 4. 워커
+#
+# 완료 outbox를 처리하는 Job이 주기적으로 돌아야 한다. 멈추면
+# 마켓에 완료를 알리지 못하고, Play는 3일 뒤부터 자동 환불한다.
+# 유저는 산 물건을 잃고 우리는 매출을 잃는다.
+verify_worker() {
+  echo "== 4. 완료 재시도 워커 =="
+
+  if ! gcloud run jobs describe platform-worker --project="$PROJECT" \
+      --region="$REGION" >/dev/null 2>&1; then
+    no "platform-worker Job이 없다"
+    return
+  fi
+  ok "Job 존재"
+
+  local state
+  state="$(gcloud scheduler jobs describe platform-worker-5m --project="$PROJECT" \
+    --location="$REGION" --format='value(state)' 2>/dev/null)"
+  if [[ "$state" == "ENABLED" ]]; then
+    ok "스케줄러 활성"
+  else
+    no "스케줄러 상태가 $state 다"
+    return
+  fi
+
+  # 최근 실행이 성공했는지 본다. 스케줄만 걸려 있고 매번 실패하면
+  # 대기열은 그대로 쌓인다.
+  local failed
+  failed="$(gcloud run jobs executions list --job=platform-worker \
+    --project="$PROJECT" --region="$REGION" --limit=5 \
+    --format='value(status.failedCount)' 2>/dev/null | grep -c '[1-9]' || true)"
+  if [[ "${failed:-0}" -eq 0 ]]; then
+    ok "최근 실행에 실패 없음"
+  else
+    no "최근 실행 중 ${failed}건 실패"
+  fi
+}
+
 # ---------------------------------------------------------------- 실행
 
 target="${1:-all}"
 
 case "$target" in
-  play)  verify_play_purchase ;;
-  rtdn)  verify_rtdn ;;
-  ait)   verify_ait ;;
+  play)   verify_play_purchase ;;
+  rtdn)   verify_rtdn ;;
+  ait)    verify_ait ;;
+  worker) verify_worker ;;
   all)
     verify_play_purchase; echo
     verify_rtdn; echo
-    verify_ait
+    verify_ait; echo
+    verify_worker
     ;;
   *)
-    echo "사용법: $0 [all|play|rtdn|ait]" >&2
+    echo "사용법: $0 [all|play|rtdn|ait|worker]" >&2
     exit 2
     ;;
 esac
