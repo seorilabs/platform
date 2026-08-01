@@ -99,6 +99,31 @@ unzip -p assets.apk assets/firebase/iap-client.android.config.json
 
 `platform`, `app_check_mode`, `products`, `functions`가 다 있어야 한다.
 
+### 여기까지 다 정상인데도 "가격 확인 중"이면
+
+코드·설정 쪽에서 볼 수 있는 것은 전부 확인된 상태다. 실제로 아래를
+전부 통과하고도 상품이 오지 않는 상황을 겪었다.
+
+| 확인한 것 | 결과 |
+|---|---|
+| 상품 상태 (`oneTimeProducts` API) | `ACTIVE` · KR `AVAILABLE` · 3,300원 |
+| 트랙 배포 | internal에 `completed` |
+| 설치 경로 | `installerPackageName=com.android.vending` |
+| APK 내 IAP config | `platform`·`products`·`functions` 전부 정상 |
+| 앱→서버 호출 | `listIapEntitlements` 200 |
+| 어댑터 | `is_available()` 통과 ("준비 중"이 아님) |
+
+남은 것은 Play Console에서만 보이는 둘이다.
+
+1. **설정 → 라이선스 테스트**에 결제할 계정이 등록돼 있는가.
+   등록돼 있으면 실제 청구 없이 구매할 수 있다. 없어도 구매 자체는
+   되지만 실제 결제가 발생한다.
+2. **앱이 "unreviewed" 상태인가.** 스토어 등록정보·콘텐츠 등급 등이
+   미완성이면 Play가 인앱 상품을 앱에 매핑하지 않는 경우가 있다.
+
+릴리스를 방금 공개했다면 **전파를 기다리는 것도 방법이다.** Play가
+앱-상품 매핑을 갱신하는 데 몇 시간이 걸린다.
+
 앱을 지우고 다시 받으면 저장 데이터가 날아가므로 먼저 백업한다.
 
 ```bash
