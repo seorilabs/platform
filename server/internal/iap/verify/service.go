@@ -211,6 +211,10 @@ func (s *Service) grantAndComplete(
 		return Outcome{}, err
 	}
 
+	if res.BlockedBySandboxReset {
+		return s.completeSandboxReset(ctx, appID, puid, v, in, res)
+	}
+
 	s.audit(ctx, "iap.granted", appID, puid, "ok", map[string]any{
 		"platform":        string(in.Purchase.Platform),
 		"entitlement_id":  in.EntitlementID,
@@ -231,6 +235,47 @@ func (s *Service) grantAndComplete(
 	out.Completion = &action
 
 	return out, nil
+}
+
+// completeSandboxReset은 초기화 이전 거래를 기기에서 떼어낸다.
+//
+// sandbox 구매내역을 지워도 기기에 남은 미완료 비소모품 거래는 사라지지
+// 않는다. Product.purchase()가 구매 시트 없이 그 거래를 그대로 돌려주므로
+// 몇 번을 눌러도 같은 자리를 맴돈다.
+//
+// 원장은 이미 revoked로 확정됐다. 여기서 Apple 거래를 finish해 기기 쪽
+// 잔재를 정리하고, 클라이언트에게 sync 뒤 다시 사라고 알린다.
+// finish가 실패해도 회수를 되돌리지 않는다. 다음 검증에서 다시 시도한다.
+func (s *Service) completeSandboxReset(
+	ctx context.Context,
+	appID, puid string,
+	v Verifier,
+	in ledger.GrantInput,
+	res domain.GrantResult,
+) (Outcome, error) {
+	// 이 경로는 finish 가능한 App Store 거래에만 성립한다.
+	// 다른 마켓이 여기 오면 원장이나 provider가 어긋난 것이다.
+	if in.Purchase.Platform != domain.PlatformAppStore ||
+		in.Purchase.Completion != domain.CompletionAppleFinish {
+		return Outcome{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"초기화 차단을 적용할 수 없는 구매예요")
+	}
+
+	outcome := "ok"
+	if err := v.CompleteGrant(ctx, in.Purchase); err != nil {
+		outcome = string(platformerr.CodeOf(err))
+	}
+	s.audit(ctx, "iap.sandbox_reset_blocked", appID, puid, outcome, map[string]any{
+		"platform":       string(in.Purchase.Platform),
+		"entitlement_id": in.EntitlementID,
+	})
+
+	return Outcome{
+		Status:        "revoked",
+		EntitlementID: in.EntitlementID,
+		Entitlements:  orEmpty(res.Entitlements),
+		Completion:    &Action{Action: domain.ActionAppStoreSyncAfterSandboxReset},
+	}, nil
 }
 
 // completeGrant는 마켓에 완료를 알린다.

@@ -38,6 +38,11 @@ type fakeLedger struct {
 	grantCalls  []ledger.OperatorInput
 	revokeCalls []ledger.OperatorInput
 	applied     bool
+
+	resetKeys  []string
+	resetCalls []string
+	// env가 비어 있으면 sandbox로 본다. production 거부를 볼 때만 채운다.
+	env domain.Environment
 }
 
 func (f *fakeLedger) ListRecentOrders(context.Context, int) ([]ledger.OrderSummary, error) {
@@ -69,7 +74,20 @@ func (f *fakeLedger) OperatorRevoke(_ context.Context, in ledger.OperatorInput) 
 func (f *fakeLedger) CountDeadLetters(context.Context) (int, error) {
 	return f.deadLetters, f.err
 }
-func (f *fakeLedger) Environment() domain.Environment { return domain.EnvSandbox }
+func (f *fakeLedger) MarkSandboxReset(_ context.Context, _, requestID string) ([]string, error) {
+	f.resetCalls = append(f.resetCalls, requestID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.resetKeys, nil
+}
+
+func (f *fakeLedger) Environment() domain.Environment {
+	if f.env == "" {
+		return domain.EnvSandbox
+	}
+	return f.env
+}
 
 // fakeConfig는 RemoteConfig 조작을 대신한다.
 type fakeConfig struct {
@@ -170,6 +188,7 @@ func TestAllRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/v1/admin/health", ""},
 		{http.MethodPost, "/v1/admin/entitlements/grant", `{}`},
 		{http.MethodPost, "/v1/admin/entitlements/revoke", `{}`},
+		{http.MethodPost, "/v1/admin/iap/sandbox-reset", `{}`},
 		{http.MethodPost, "/v1/admin/config/maintenance", `{}`},
 	}
 
@@ -520,4 +539,114 @@ func TestMaintenanceToggle(t *testing.T) {
 			t.Error("임의 문구가 통과했다")
 		}
 	})
+}
+
+// sandbox 초기화는 production 원장에서 존재하지 않아야 한다.
+//
+// 실사용자 결제를 통째로 회수하는 경로가 되기 때문이다.
+func TestSandboxResetRejectsProduction(t *testing.T) {
+	l := &fakeLedger{env: domain.EnvProduction}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	body := `{"requestId":"r","platformUserId":"pu_1","reason":"테스트 초기화",` +
+		`"appId":"lizard-tycoon","appleClearedConfirmed":true}`
+	w := serve(t, h, http.MethodPost, "/v1/admin/iap/sandbox-reset", body, "tok", "syous")
+
+	if w.Code == http.StatusOK {
+		t.Fatal("production 원장에서 초기화가 통과했다")
+	}
+	if len(l.resetCalls) != 0 {
+		t.Error("거부했는데 원장을 건드렸다")
+	}
+}
+
+// Apple 쪽 삭제 확인 없이는 진행하지 않는다.
+//
+// 원장만 지우면 Apple에는 거래가 남아 다음 검증이 새 구매로 보고
+// 다시 지급한다. 초기화한 줄 알았던 테스터가 상품을 그대로 갖는다.
+func TestSandboxResetRequiresAppleConfirmation(t *testing.T) {
+	l := &fakeLedger{}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	body := `{"requestId":"r","platformUserId":"pu_1","reason":"테스트 초기화",` +
+		`"appId":"lizard-tycoon","appleClearedConfirmed":false}`
+	w := serve(t, h, http.MethodPost, "/v1/admin/iap/sandbox-reset", body, "tok", "syous")
+
+	if w.Code == http.StatusOK {
+		t.Fatal("Apple 삭제 확인 없이 통과했다")
+	}
+	if len(l.resetCalls) != 0 {
+		t.Error("거부했는데 원장을 건드렸다")
+	}
+}
+
+func TestSandboxResetMarksOrders(t *testing.T) {
+	a := &fakeAuditor{}
+	l := &fakeLedger{resetKeys: []string{"key-a", "key-b"}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, a)
+
+	body := `{"requestId":"req-1","platformUserId":"pu_1","reason":"샌드박스 재테스트",` +
+		`"appId":"lizard-tycoon","appleClearedConfirmed":true}`
+	w := serve(t, h, http.MethodPost, "/v1/admin/iap/sandbox-reset", body, "tok", "syous")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200. body=%s", w.Code, w.Body.String())
+	}
+	if len(l.resetCalls) != 1 || l.resetCalls[0] != "req-1" {
+		t.Errorf("초기화 호출 = %v", l.resetCalls)
+	}
+
+	_, result, _ := decodeEnvelope(t, w)
+	keys, ok := result["resetOrderKeys"].([]any)
+	if !ok || len(keys) != 2 {
+		t.Errorf("resetOrderKeys = %v", result["resetOrderKeys"])
+	}
+
+	// 되돌릴 수 없는 조작이므로 사유와 실행자가 반드시 남아야 한다.
+	if len(a.records) != 1 {
+		t.Fatalf("감사 기록 = %d건, want 1", len(a.records))
+	}
+	rec := a.records[0]
+	if rec.action != "iap.sandbox_reset" || rec.outcome != "ok" {
+		t.Errorf("record = %+v", rec)
+	}
+	if rec.detail["reason"] != "샌드박스 재테스트" || rec.detail["actor"] != "syous" {
+		t.Errorf("detail = %+v", rec.detail)
+	}
+}
+
+// requestId나 reason이 없으면 받지 않는다.
+func TestSandboxResetRequiresFields(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "requestId 없음",
+			body: `{"platformUserId":"pu_1","reason":"x","appleClearedConfirmed":true}`,
+		},
+		{
+			name: "platformUserId 없음",
+			body: `{"requestId":"r","reason":"x","appleClearedConfirmed":true}`,
+		},
+		{
+			name: "reason 없음",
+			body: `{"requestId":"r","platformUserId":"pu_1","appleClearedConfirmed":true}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := &fakeLedger{}
+			h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+			w := serve(t, h, http.MethodPost, "/v1/admin/iap/sandbox-reset", tt.body, "tok", "syous")
+
+			if w.Code == http.StatusOK {
+				t.Error("필수 항목 없이 통과했다")
+			}
+			if len(l.resetCalls) != 0 {
+				t.Error("거부했는데 원장을 건드렸다")
+			}
+		})
+	}
 }

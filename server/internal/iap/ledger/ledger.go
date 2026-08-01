@@ -31,8 +31,20 @@ type orderDoc struct {
 	// 마켓이 먼저 환불을 알렸는데 우리가 그 주문을 모를 때 만든다.
 	Tombstone bool `firestore:"tombstone"`
 
+	// SandboxReset은 운영자가 App Store sandbox 구매내역을 지웠다는 표식이다.
+	// 초기화 전에 산 거래는 Apple 쪽에는 없고 기기에만 남아 있다.
+	SandboxReset *sandboxResetMark `firestore:"sandboxReset,omitempty"`
+
 	CreatedAt time.Time `firestore:"createdAt"`
 	UpdatedAt time.Time `firestore:"updatedAt"`
+}
+
+// sandboxResetMark는 초기화 시점을 남긴다.
+//
+// RequestID는 어느 운영 작업이 지웠는지 되짚기 위한 것이다.
+type sandboxResetMark struct {
+	RequestID string    `firestore:"requestId"`
+	ResetAt   time.Time `firestore:"resetAt"`
 }
 
 // entitlementDoc은 내부 원장이다. sources를 들고 있다.
@@ -122,6 +134,7 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 		}
 
 		var order orderDoc
+		var sandboxResetAt time.Time
 		if exists {
 			if err := snap.DataTo(&order); err != nil {
 				return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid, "원장을 읽지 못했어요")
@@ -140,8 +153,20 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 				return err
 			}
 
+			// 초기화 차단은 불변식 3보다 먼저 본다.
+			//
+			// 한 번 차단해 revoked로 만든 주문에 같은 거래가 다시 오면
+			// revoked(rank 3) > active(rank 2)라 stale로 걸린다. 그러면
+			// alreadyGranted=true가 돌아가고, 앱은 받은 적 없는 상품을
+			// 가진 것으로 안다. 순서가 곧 정확성이다.
+			sandboxResetAt, err = blockingSandboxResetAt(l.env, order, in.Purchase)
+			if err != nil {
+				return err
+			}
+
 			// 불변식 3. 늦게 온 갱신은 무시한다.
-			if domain.IsStaleUpdate(order.State, in.Purchase.State, order.ObservedAt, in.Purchase.ObservedAt) {
+			if sandboxResetAt.IsZero() &&
+				domain.IsStaleUpdate(order.State, in.Purchase.State, order.ObservedAt, in.Purchase.ObservedAt) {
 				// 이미 반영된 상태를 그대로 돌려준다.
 				// 여기서 granted를 true로 주면 클라이언트가 중복 지급으로 오해한다.
 				result = domain.GrantResult{
@@ -160,6 +185,41 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 		ent, err := l.readEntitlement(tx, intPath, in.EntitlementID)
 		if err != nil {
 			return err
+		}
+
+		// 초기화 이전 거래다. 지급하지 않고 revoked로 확정한다.
+		//
+		// 여기서 그냥 거부하고 끝내면 기기의 미완료 거래가 그대로 남아
+		// 다음 구매도 같은 거래를 돌려받는다. revoked로 커밋해 두면
+		// 검증 서비스가 Apple finish를 부르고, 클라이언트는 sync 뒤
+		// 새 구매를 시작할 수 있다.
+		if !sandboxResetAt.IsZero() {
+			src := ent.Sources[orderKey]
+			src.Platform = in.Purchase.Platform
+			src.ProductID = in.Purchase.ProductID
+			src.State = domain.StateRevoked
+			src.PurchasedAt = in.Purchase.PurchasedAt
+			src.ObservedAt = sandboxResetAt
+			src.UpdatedAt = now
+			ent.Sources[orderKey] = src
+
+			if err := l.writeEntitlement(tx, in.PlatformUserID, ent, now); err != nil {
+				return err
+			}
+
+			order.State = domain.StateRevoked
+			order.ObservedAt = sandboxResetAt
+			order.UpdatedAt = now
+			if err := tx.Set(orderPath, order); err != nil {
+				return err
+			}
+
+			// 지급도 중복 지급도 아니다. 둘 다 false가 유일하게 맞다.
+			result = domain.GrantResult{
+				EntitlementID:         in.EntitlementID,
+				BlockedBySandboxReset: true,
+			}
+			return nil
 		}
 
 		prevSource, hadSource := ent.Sources[orderKey]
@@ -224,6 +284,155 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 			"지급 결과가 올바르지 않아요")
 	}
 	return result, nil
+}
+
+// blockingSandboxResetAt은 이 구매가 sandbox 초기화 이전 거래인지 본다.
+//
+// 차단해야 하면 초기화 시각을, 아니면 zero를 돌려준다.
+//
+// 세 겹으로 막는다. production 원장, App Store 아닌 마켓, 표식 없는 주문은
+// 이 판정에 들어오지 못한다. 초기화는 sandbox 테스트 도구이므로
+// 실사용자 결제 경로가 여기에 닿을 방법이 없어야 한다.
+func blockingSandboxResetAt(
+	env domain.Environment,
+	order orderDoc,
+	p domain.VerifiedPurchase,
+) (time.Time, error) {
+	if env != domain.EnvSandbox ||
+		p.Platform != domain.PlatformAppStore ||
+		order.SandboxReset == nil ||
+		order.SandboxReset.ResetAt.IsZero() {
+		return time.Time{}, nil
+	}
+
+	// 표식은 있는데 구매 시각을 모르면 판정할 수 없다.
+	// 모르는 채로 통과시키면 초기화한 거래를 다시 지급하게 된다.
+	if p.PurchasedAt.IsZero() {
+		return time.Time{}, platformerr.New(platformerr.CodeProviderResponseInvalid,
+			"구매 시각을 확인할 수 없어요")
+	}
+
+	// 초기화 시각 이후에 산 것은 진짜 새 구매다. 통과시킨다.
+	if p.PurchasedAt.After(order.SandboxReset.ResetAt) {
+		return time.Time{}, nil
+	}
+	return order.SandboxReset.ResetAt, nil
+}
+
+// maxSandboxResetOrders는 한 번에 초기화할 수 있는 주문 수다.
+//
+// 초기화는 테스터 한 명을 되돌리는 도구다. 수십 건이 잡히면 대상을
+// 잘못 지정한 것이므로 진행하지 않고 멈춘다.
+const maxSandboxResetOrders = 20
+
+// MarkSandboxReset은 App Store sandbox 구매내역 초기화를 원장에 남긴다.
+//
+// Apple 쪽 구매내역은 App Store Connect에서 사람이 지운다. 이 함수는
+// 그 뒤에 원장을 맞추는 일만 한다. 표식만 남기는 것이 아니라 주문과
+// entitlement를 revoked로 확정한다. 표식만 남기면 다음 검증까지
+// 유저가 갖고 있지도 않은 상품을 계속 보게 된다.
+//
+// 대상은 사용자 내부 원장의 sources에서 찾는다. 주문 컬렉션을
+// platformUserId로 조회하면 인덱스가 하나 더 필요하고, 그 인덱스는
+// 이 도구 하나를 위해 결제 경로의 쓰기 비용을 올린다.
+func (l *Ledger) MarkSandboxReset(
+	ctx context.Context,
+	puid, requestID string,
+) ([]string, error) {
+	// 불변식 9의 연장이다. production 원장에서는 존재하지 않는 기능이어야 한다.
+	if l.env != domain.EnvSandbox {
+		return nil, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"sandbox 원장에서만 초기화할 수 있어요")
+	}
+	if puid == "" || requestID == "" {
+		return nil, platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 요청이 올바르지 않아요")
+	}
+
+	list, err := l.ListUserEntitlements(ctx, puid)
+	if err != nil {
+		return nil, err
+	}
+
+	orderKeys := make([]string, 0, len(list))
+	for _, ent := range list {
+		for _, src := range ent.Sources {
+			if src.Platform == string(domain.PlatformAppStore) {
+				orderKeys = append(orderKeys, src.OrderKey)
+			}
+		}
+	}
+	if len(orderKeys) > maxSandboxResetOrders {
+		return nil, platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 대상이 너무 많아요")
+	}
+
+	sort.Strings(orderKeys)
+	for _, orderKey := range orderKeys {
+		if err := l.markOneSandboxReset(ctx, puid, requestID, orderKey); err != nil {
+			return nil, err
+		}
+	}
+	return orderKeys, nil
+}
+
+func (l *Ledger) markOneSandboxReset(ctx context.Context, puid, requestID, orderKey string) error {
+	return l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		now := l.now()
+
+		orderPath, err := l.paths.order(orderKey)
+		if err != nil {
+			return err
+		}
+		exists, snap, err := tx.Exists(orderPath)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return platformerr.New(platformerr.CodePurchaseNotFound, "주문을 찾을 수 없어요")
+		}
+
+		var order orderDoc
+		if err := snap.DataTo(&order); err != nil {
+			return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid, "원장을 읽지 못했어요")
+		}
+		if order.Platform != domain.PlatformAppStore {
+			return platformerr.New(platformerr.CodePlatformInvalid,
+				"App Store 주문만 초기화할 수 있어요")
+		}
+		if order.PlatformUserID != puid {
+			return platformerr.New(platformerr.CodePurchaseOwnedByAnotherUser,
+				"다른 계정의 주문이에요")
+		}
+
+		intPath, err := l.paths.internalEntitlement(puid, order.EntitlementID)
+		if err != nil {
+			return err
+		}
+		ent, err := l.readEntitlement(tx, intPath, order.EntitlementID)
+		if err != nil {
+			return err
+		}
+
+		src := ent.Sources[orderKey]
+		src.Platform = order.Platform
+		src.ProductID = order.ProductID
+		src.State = domain.StateRevoked
+		src.PurchasedAt = order.PurchasedAt
+		src.ObservedAt = now
+		src.UpdatedAt = now
+		ent.Sources[orderKey] = src
+
+		if err := l.writeEntitlement(tx, puid, ent, now); err != nil {
+			return err
+		}
+
+		order.State = domain.StateRevoked
+		order.ObservedAt = now
+		order.UpdatedAt = now
+		order.SandboxReset = &sandboxResetMark{RequestID: requestID, ResetAt: now}
+		return tx.Set(orderPath, order)
+	})
 }
 
 // checkReplay는 같은 주문 키에 다른 내용이 오는지 본다.

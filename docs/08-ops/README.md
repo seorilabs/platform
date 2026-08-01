@@ -77,3 +77,5 @@ Firestore는 조인·`LIKE`·집계가 안 되므로 **운영 질문은 BigQuery
 ## 런북
 
 - [BREAK-GLASS.md](BREAK-GLASS.md) — 백오피스 다운 시 긴급 조작
+
+- [logs.md](logs.md) — Cloud Run 서비스·Job 로그 보는 법. 명령은 전부 실제 실행으로 확인한 것이다.

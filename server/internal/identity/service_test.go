@@ -375,3 +375,64 @@ func TestNewSessionIssuerRejectsShortSecret(t *testing.T) {
 		t.Fatal("짧은 비밀키를 받아들였다")
 	}
 }
+
+// Firebase 익명 로그인은 결제를 막는 "익명"이 아니다.
+//
+// 이 플래그가 막는 것은 사칭 가능한 신원이지 계정이 없는 사용자가
+// 아니다. Firebase 익명 계정도 서명된 ID 토큰을 받고 우리가 서명·aud·
+// iss·exp를 전부 검증한다. 다른 사람의 uid를 주장할 수 없다.
+//
+// 둘을 묶으면 lizard-tycoon은 결제가 하나도 되지 않는다. 전 사용자가
+// Firebase 익명 계정이기 때문이다.
+func TestFirebaseAnonymousCanPay(t *testing.T) {
+	// fakeVerifier가 sign_in_provider를 anonymous로 준다.
+	svc := newTestService(t, fakeVerifier{}, newMemRepo())
+	ctx := context.Background()
+
+	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
+		Kind:  KindFirebaseIDToken,
+		Value: "firebase-uid-1",
+	})
+	if err != nil {
+		t.Fatalf("세션 생성 실패: %v", err)
+	}
+	if res.IsAnonymous {
+		t.Error("Firebase 익명 계정이 결제 차단 대상으로 표시됐다")
+	}
+
+	sess, err := svc.Authenticate(ctx, "lizard-tycoon", res.PlatformToken)
+	if err != nil {
+		t.Fatalf("세션 검증 실패: %v", err)
+	}
+	if err := sess.EnsureNotAnonymous(); err != nil {
+		t.Errorf("Firebase 익명 계정이 결제 경로에서 막혔다: %v", err)
+	}
+}
+
+// 반대편은 그대로 막혀 있어야 한다.
+//
+// getAnonymousKey 해시는 클라이언트가 아무 값이나 보낼 수 있어
+// 타인 사칭이 된다. 위 완화가 이쪽까지 번지면 안 된다.
+func TestAnonymousKeyStillCannotPay(t *testing.T) {
+	svc := newTestService(t, fakeVerifier{}, newMemRepo())
+	ctx := context.Background()
+
+	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
+		Kind:  KindAnonymous,
+		Value: "anon-key-hash",
+	})
+	if err != nil {
+		t.Fatalf("익명 세션 생성 실패: %v", err)
+	}
+	if !res.IsAnonymous {
+		t.Fatal("사칭 가능한 신원이 결제 가능으로 표시됐다")
+	}
+
+	sess, err := svc.Authenticate(ctx, "lizard-tycoon", res.PlatformToken)
+	if err != nil {
+		t.Fatalf("세션 검증 실패: %v", err)
+	}
+	if err := sess.EnsureNotAnonymous(); err == nil {
+		t.Error("사칭 가능한 신원이 결제 경로를 통과했다")
+	}
+}

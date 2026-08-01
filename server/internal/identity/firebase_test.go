@@ -210,13 +210,20 @@ func TestVerifyGoldenRejections(t *testing.T) {
 			name: "6-b. 서명 바이트 변조",
 			token: func() string {
 				s := f.sign(t, jwt.SigningMethodRS256, testKID, f.priv)
-				// 마지막 글자를 바꾼다.
-				last := s[len(s)-1]
+				// 서명 부분의 첫 글자를 바꾼다.
+				//
+				// 전에는 토큰의 마지막 글자를 바꿨는데, RS256 서명 256바이트를
+				// base64url로 적으면 마지막 글자에 의미 있는 비트가 2개뿐이라
+				// 다른 글자로 바꿔도 같은 바이트로 디코딩되는 일이 잦았다.
+				// 그러면 서명이 그대로라 검증을 통과하고, 테스트가 흔들린다.
+				// 6비트가 온전히 살아 있는 자리를 골라야 실제로 변조가 된다.
+				dot := strings.LastIndex(s, ".")
+				sig := s[dot+1:]
 				repl := byte('A')
-				if last == 'A' {
+				if sig[0] == 'A' {
 					repl = 'B'
 				}
-				return s[:len(s)-1] + string(repl)
+				return s[:dot+1] + string(repl) + sig[1:]
 			},
 			why: "서명 일부만 바뀌어도 거부해야 한다",
 		},

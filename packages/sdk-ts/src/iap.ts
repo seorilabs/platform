@@ -48,8 +48,8 @@ export interface VerifyOutcome {
  * 다른 사용자가 시작한 구매를 가로채지 못하게 한다.
  */
 export interface AccountReferences {
-  googlePlay: string;
-  appStore: string;
+  googlePlayObfuscatedAccountId: string;
+  appStoreAppAccountToken: string;
 }
 
 export interface IapOptions {

@@ -127,11 +127,15 @@ func (h *Handler) listEntitlements(w http.ResponseWriter, r *http.Request) error
 //
 // 마켓 결제 화면에 넣으면 마켓이 검증 응답에 그대로 돌려준다.
 // 그 값을 대조해 다른 사용자가 시작한 구매를 가로채지 못하게 한다.
+// 필드 이름은 spec/openapi.yaml이 정본이고 클라이언트가 그 이름을
+// 그대로 검사한다. 짧게 줄여 뒀더니 클라이언트가 응답을 통째로
+// 거부했다 — 서버는 200을 주는데 앱만 실패하는, 가장 알아채기
+// 어려운 형태였다.
 type accountReferencesResponse struct {
 	// GooglePlay는 obfuscatedExternalAccountId에 넣는다.
-	GooglePlay string `json:"googlePlay"`
+	GooglePlay string `json:"googlePlayObfuscatedAccountId"`
 	// AppStore는 appAccountToken에 넣는다. UUID 형식이다.
-	AppStore string `json:"appStore"`
+	AppStore string `json:"appStoreAppAccountToken"`
 }
 
 func (h *Handler) accountReferences(w http.ResponseWriter, r *http.Request) error {

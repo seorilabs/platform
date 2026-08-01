@@ -21,6 +21,7 @@ type Ledger interface {
 	ListOperatorRevocations(ctx context.Context, limit int) ([]ledger.OperatorRecord, error)
 	OperatorGrant(ctx context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error)
 	OperatorRevoke(ctx context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error)
+	MarkSandboxReset(ctx context.Context, puid, requestID string) ([]string, error)
 	CountDeadLetters(ctx context.Context) (int, error)
 	// Environment는 원장 환경이다. 운영자가 지금 어느 쪽을 보는지
 	// 화면에 띄워야 sandbox를 production으로 착각하지 않는다.
@@ -63,6 +64,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		// 조작 — 등급 C. reason과 requestId가 필수다
 		"POST /v1/admin/entitlements/grant":  h.grantEntitlement,
 		"POST /v1/admin/entitlements/revoke": h.revokeEntitlement,
+
+		// sandbox 원장에서만 동작한다. production에서는 거부한다
+		"POST /v1/admin/iap/sandbox-reset": h.resetAppStoreSandbox,
 
 		// break-glass. 백오피스가 죽어도 점검 모드는 켤 수 있어야 한다
 		"POST /v1/admin/config/maintenance": h.setMaintenance,
@@ -210,6 +214,84 @@ func (h *Handler) applyOperator(
 		"entitlements": res.Entitlements,
 	})
 	return nil
+}
+
+// sandboxResetRequest는 App Store sandbox 초기화 요청이다.
+//
+// AppleClearedConfirmed는 App Store Connect에서 구매내역을 실제로
+// 지웠다는 운영자 확인이다. 플랫폼은 App Store Connect API 자격증명을
+// 갖고 있지 않아 이걸 스스로 확인할 수 없다.
+//
+// 확인 없이 원장만 지우면 더 나쁜 상태가 된다. Apple에는 거래가
+// 남았는데 원장에는 없으니, 다음 검증이 그 거래를 새 구매로 보고
+// 다시 지급한다. 초기화한 줄 알았던 테스터가 상품을 그대로 갖는다.
+type sandboxResetRequest struct {
+	RequestID             string `json:"requestId"`
+	PlatformUserID        string `json:"platformUserId"`
+	Reason                string `json:"reason"`
+	AppID                 string `json:"appId"`
+	AppleClearedConfirmed bool   `json:"appleClearedConfirmed"`
+}
+
+// resetAppStoreSandbox는 sandbox 구매내역 초기화를 원장에 반영한다.
+//
+// 기기에 남은 미완료 거래를 떼어내는 출발점이다. 여기서 표식을 남겨야
+// 다음 검증이 그 거래를 재지급 대상이 아니라 정리 대상으로 본다.
+func (h *Handler) resetAppStoreSandbox(w http.ResponseWriter, r *http.Request) error {
+	var req sandboxResetRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+
+	if h.ledger.Environment() != domain.EnvSandbox {
+		return platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"sandbox 원장에서만 초기화할 수 있어요")
+	}
+	if req.RequestID == "" || req.PlatformUserID == "" || req.Reason == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 요청에 requestId, platformUserId, reason이 필요해요")
+	}
+	if !req.AppleClearedConfirmed {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"App Store Connect에서 구매내역을 먼저 지워야 해요")
+	}
+
+	actor := ActorFrom(r.Context())
+	login := actor.Login
+	if login == "" {
+		login = actor.Email
+	}
+
+	orderKeys, err := h.ledger.MarkSandboxReset(r.Context(), req.PlatformUserID, req.RequestID)
+	if err != nil {
+		h.auditSandboxReset(r.Context(), req, login, string(platformerr.CodeOf(err)), 0)
+		return err
+	}
+	h.auditSandboxReset(r.Context(), req, login, "ok", len(orderKeys))
+
+	httpx.WriteOK(w, http.StatusOK, map[string]any{
+		"platformUserId": req.PlatformUserID,
+		"resetOrderKeys": orderKeys,
+	})
+	return nil
+}
+
+func (h *Handler) auditSandboxReset(
+	ctx context.Context,
+	req sandboxResetRequest,
+	login, outcome string,
+	count int,
+) {
+	if h.auditor == nil {
+		return
+	}
+	h.auditor.Record(ctx, "iap.sandbox_reset", req.AppID, req.PlatformUserID, outcome,
+		map[string]any{
+			"request_id":  req.RequestID,
+			"actor":       login,
+			"reason":      req.Reason,
+			"order_count": count,
+		})
 }
 
 func (h *Handler) audit(ctx context.Context, action string, req operatorRequest, login, outcome string) {

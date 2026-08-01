@@ -39,15 +39,23 @@ func (f *fakeVerifier) CompleteGrant(context.Context, domain.VerifiedPurchase) e
 }
 
 type fakeLedger struct {
-	granted  []ledger.GrantInput
-	pending  []ledger.GrantInput
-	active   []string
-	grantErr error
+	granted      []ledger.GrantInput
+	pending      []ledger.GrantInput
+	active       []string
+	grantErr     error
+	blockSandbox bool
 }
 
 func (f *fakeLedger) Grant(_ context.Context, in ledger.GrantInput) (domain.GrantResult, error) {
 	if f.grantErr != nil {
 		return domain.GrantResult{}, f.grantErr
+	}
+	if f.blockSandbox {
+		return domain.GrantResult{
+			EntitlementID:         in.EntitlementID,
+			Entitlements:          f.active,
+			BlockedBySandboxReset: true,
+		}, nil
 	}
 	f.granted = append(f.granted, in)
 	f.active = append(f.active, in.EntitlementID)
@@ -356,5 +364,110 @@ func TestEmptyEntitlementsIsArray(t *testing.T) {
 	}
 	if list == nil {
 		t.Error("nil이 나왔다. 빈 배열이어야 한다")
+	}
+}
+
+// sandbox 초기화 이전 거래는 지급하지 않고 기기 정리 신호를 준다.
+//
+// 이 신호가 없으면 기기에 남은 미완료 거래를 뗄 방법이 없어
+// 유저가 몇 번을 눌러도 같은 거래만 되돌아온다.
+func TestSandboxResetBlockAsksClientToSync(t *testing.T) {
+	now := time.Now().UTC()
+	v := &fakeVerifier{
+		platform: domain.PlatformAppStore,
+		purchase: domain.VerifiedPurchase{
+			Platform:    domain.PlatformAppStore,
+			ProductID:   "com.x.gecko",
+			CanonicalID: "orig-tx-1",
+			PurchasedAt: now,
+			ObservedAt:  now,
+			State:       domain.StateActive,
+			Completion:  domain.CompletionAppleFinish,
+		},
+	}
+	l := &fakeLedger{blockSandbox: true}
+	s := newTestService(t, v, l, nil)
+
+	out, err := s.VerifyPurchase(context.Background(), "lizard-tycoon", "pu_1", domain.Proof{
+		Platform:  domain.PlatformAppStore,
+		ProductID: "com.x.gecko",
+		Token:     "orig-tx-1",
+	})
+	if err != nil {
+		t.Fatalf("검증 실패: %v", err)
+	}
+
+	if out.Status != "revoked" {
+		t.Errorf("status = %q, want revoked", out.Status)
+	}
+	if out.Granted != nil || out.AlreadyGranted != nil {
+		t.Error("차단인데 지급 여부가 실려 있다")
+	}
+	if out.Completion == nil ||
+		out.Completion.Action != domain.ActionAppStoreSyncAfterSandboxReset {
+		t.Fatalf("completion = %+v, want app_store_sync_after_sandbox_reset", out.Completion)
+	}
+	// 기기 쪽 잔재를 떼려면 Apple finish가 반드시 불려야 한다.
+	if v.completed != 1 {
+		t.Errorf("Apple finish 호출 = %d, want 1", v.completed)
+	}
+	if out.Entitlements == nil {
+		t.Error("entitlements가 null이면 클라이언트가 응답을 거부한다")
+	}
+}
+
+// finish가 실패해도 회수는 유지하고 클라이언트에게 같은 신호를 준다.
+func TestSandboxResetBlockSurvivesFinishFailure(t *testing.T) {
+	now := time.Now().UTC()
+	v := &fakeVerifier{
+		platform: domain.PlatformAppStore,
+		purchase: domain.VerifiedPurchase{
+			Platform:    domain.PlatformAppStore,
+			ProductID:   "com.x.gecko",
+			CanonicalID: "orig-tx-2",
+			PurchasedAt: now,
+			ObservedAt:  now,
+			State:       domain.StateActive,
+			Completion:  domain.CompletionAppleFinish,
+		},
+		completeEr: errors.New("apple 500"),
+	}
+	l := &fakeLedger{blockSandbox: true}
+	s := newTestService(t, v, l, nil)
+
+	out, err := s.VerifyPurchase(context.Background(), "lizard-tycoon", "pu_1", domain.Proof{
+		Platform:  domain.PlatformAppStore,
+		ProductID: "com.x.gecko",
+		Token:     "orig-tx-2",
+	})
+	if err != nil {
+		t.Fatalf("finish 실패가 검증을 깨뜨렸다: %v", err)
+	}
+	if out.Status != "revoked" ||
+		out.Completion == nil ||
+		out.Completion.Action != domain.ActionAppStoreSyncAfterSandboxReset {
+		t.Errorf("out = %+v", out)
+	}
+}
+
+// 차단 경로는 App Store finish 거래에만 성립한다.
+//
+// Play나 AIT가 여기 오면 원장이나 provider가 어긋난 것이므로
+// 조용히 넘기지 않고 드러낸다.
+func TestSandboxResetBlockRejectsOtherPlatforms(t *testing.T) {
+	v := &fakeVerifier{platform: domain.PlatformGooglePlay, purchase: activePurchase()}
+	l := &fakeLedger{blockSandbox: true}
+	s := newTestService(t, v, l, nil)
+
+	_, err := s.VerifyPurchase(context.Background(), "lizard-tycoon", "pu_1", domain.Proof{
+		Platform:  domain.PlatformGooglePlay,
+		ProductID: "gecko_galaxy",
+		Token:     "token-1",
+	})
+	if err == nil {
+		t.Fatal("Play 구매가 초기화 차단 경로를 통과했다")
+	}
+	if platformerr.CodeOf(err) != platformerr.CodeLedgerStateInvalid {
+		t.Errorf("code = %v, want ledger_state_invalid", platformerr.CodeOf(err))
 	}
 }
