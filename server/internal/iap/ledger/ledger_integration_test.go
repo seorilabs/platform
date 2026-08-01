@@ -382,7 +382,7 @@ func TestSandboxResetBlocksRepurchase(t *testing.T) {
 	}
 
 	// 운영자가 App Store sandbox 구매내역을 지웠다.
-	if err := l.MarkSandboxReset(ctx, puid, uniqueID("req"), []string{purchase.Key()}); err != nil {
+	if _, err := l.MarkSandboxReset(ctx, puid, uniqueID("req")); err != nil {
 		t.Fatalf("초기화 표식 실패: %v", err)
 	}
 
@@ -438,7 +438,7 @@ func TestSandboxResetAllowsLaterPurchase(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("최초 지급 실패: %v", err)
 	}
-	if err := l.MarkSandboxReset(ctx, puid, uniqueID("req"), []string{old.Key()}); err != nil {
+	if _, err := l.MarkSandboxReset(ctx, puid, uniqueID("req")); err != nil {
 		t.Fatalf("초기화 표식 실패: %v", err)
 	}
 

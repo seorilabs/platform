@@ -319,29 +319,61 @@ func blockingSandboxResetAt(
 	return order.SandboxReset.ResetAt, nil
 }
 
+// maxSandboxResetOrders는 한 번에 초기화할 수 있는 주문 수다.
+//
+// 초기화는 테스터 한 명을 되돌리는 도구다. 수십 건이 잡히면 대상을
+// 잘못 지정한 것이므로 진행하지 않고 멈춘다.
+const maxSandboxResetOrders = 20
+
 // MarkSandboxReset은 App Store sandbox 구매내역 초기화를 원장에 남긴다.
 //
-// 표식만 남기는 것이 아니라 주문과 entitlement를 revoked로 확정한다.
-// 표식만 남기면 다음 검증까지 유저가 갖고 있지도 않은 상품을 보게 된다.
+// Apple 쪽 구매내역은 App Store Connect에서 사람이 지운다. 이 함수는
+// 그 뒤에 원장을 맞추는 일만 한다. 표식만 남기는 것이 아니라 주문과
+// entitlement를 revoked로 확정한다. 표식만 남기면 다음 검증까지
+// 유저가 갖고 있지도 않은 상품을 계속 보게 된다.
+//
+// 대상은 사용자 내부 원장의 sources에서 찾는다. 주문 컬렉션을
+// platformUserId로 조회하면 인덱스가 하나 더 필요하고, 그 인덱스는
+// 이 도구 하나를 위해 결제 경로의 쓰기 비용을 올린다.
 func (l *Ledger) MarkSandboxReset(
 	ctx context.Context,
 	puid, requestID string,
-	orderKeys []string,
-) error {
+) ([]string, error) {
+	// 불변식 9의 연장이다. production 원장에서는 존재하지 않는 기능이어야 한다.
 	if l.env != domain.EnvSandbox {
-		return platformerr.New(platformerr.CodeLedgerStateInvalid,
+		return nil, platformerr.New(platformerr.CodeLedgerStateInvalid,
 			"sandbox 원장에서만 초기화할 수 있어요")
 	}
 	if puid == "" || requestID == "" {
-		return platformerr.New(platformerr.CodeInternal, "초기화 요청이 올바르지 않아요")
+		return nil, platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 요청이 올바르지 않아요")
 	}
 
-	for _, orderKey := range orderKeys {
-		if err := l.markOneSandboxReset(ctx, puid, requestID, orderKey); err != nil {
-			return err
+	list, err := l.ListUserEntitlements(ctx, puid)
+	if err != nil {
+		return nil, err
+	}
+
+	orderKeys := make([]string, 0, len(list))
+	for _, ent := range list {
+		for _, src := range ent.Sources {
+			if src.Platform == string(domain.PlatformAppStore) {
+				orderKeys = append(orderKeys, src.OrderKey)
+			}
 		}
 	}
-	return nil
+	if len(orderKeys) > maxSandboxResetOrders {
+		return nil, platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 대상이 너무 많아요")
+	}
+
+	sort.Strings(orderKeys)
+	for _, orderKey := range orderKeys {
+		if err := l.markOneSandboxReset(ctx, puid, requestID, orderKey); err != nil {
+			return nil, err
+		}
+	}
+	return orderKeys, nil
 }
 
 func (l *Ledger) markOneSandboxReset(ctx context.Context, puid, requestID, orderKey string) error {
