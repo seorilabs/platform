@@ -258,6 +258,13 @@ type GrantResult struct {
 
 	// BlockedBySandboxReset은 sandbox 초기화로 재지급이 차단된 경우다.
 	BlockedBySandboxReset bool
+
+	// TransferredFrom은 같은 마켓 계정의 다른 platform_user에게서
+	// 이 구매를 옮겨왔을 때 그 이전 소유자다. 비어 있으면 이전이 없었다.
+	//
+	// 감사 원장에 남기려고 돌려준다. 되돌릴 수 없는 조작이라
+	// 누가 누구에게서 무엇을 옮겼는지가 남아야 한다.
+	TransferredFrom string
 }
 
 // Valid는 불변식 2를 확인한다.

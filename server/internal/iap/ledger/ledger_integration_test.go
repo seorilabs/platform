@@ -111,6 +111,10 @@ func TestGrantIdempotency(t *testing.T) {
 }
 
 // 불변식 4: 다른 사용자의 구매를 자동으로 옮기지 않는다.
+//
+// 판정 기준은 platform_user가 아니라 마켓 계정이다. 같은 구글·애플
+// 계정이면 앱을 지워 익명 uid가 바뀌어도 같은 사람이므로 이전을
+// 허용한다. 여기서 보는 것은 마켓 계정까지 다른 진짜 타인이다.
 func TestGrantRejectsCrossUser(t *testing.T) {
 	l, done := newTestLedger(t)
 	defer done()
@@ -120,20 +124,24 @@ func TestGrantRejectsCrossUser(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	owner := uniqueID("pu_owner")
+	mine := testPurchase(token, domain.StateActive, now)
+	mine.PlatformAccountID = uniqueID("account-owner")
 	if _, err := l.Grant(ctx, GrantInput{
 		PlatformUserID: owner,
 		EntitlementID:  "sp_galaxy_gecko",
-		Purchase:       testPurchase(token, domain.StateActive, now),
+		Purchase:       mine,
 	}); err != nil {
 		t.Fatalf("소유자 지급 실패: %v", err)
 	}
 
-	// 다른 사용자가 같은 구매 증명을 제시한다
+	// 다른 마켓 계정의 사용자가 같은 구매 증명을 제시한다
 	other := uniqueID("pu_other")
+	theirs := testPurchase(token, domain.StateActive, now.Add(time.Minute))
+	theirs.PlatformAccountID = uniqueID("account-other")
 	_, err := l.Grant(ctx, GrantInput{
 		PlatformUserID: other,
 		EntitlementID:  "sp_galaxy_gecko",
-		Purchase:       testPurchase(token, domain.StateActive, now.Add(time.Minute)),
+		Purchase:       theirs,
 	})
 
 	if err == nil {
@@ -458,5 +466,147 @@ func TestSandboxResetAllowsLaterPurchase(t *testing.T) {
 	}
 	if !res.Granted {
 		t.Errorf("granted=%v, want true", res.Granted)
+	}
+}
+
+// 같은 마켓 계정이면 새 platform_user로 구매를 옮긴다.
+//
+// 앱을 지우면 익명 uid가 새로 생기지만 구글·애플 계정은 그대로다.
+// 명시적 복원에서 마켓이 준 증빙의 계정이 원장과 같으면 같은 사람이므로
+// 되찾게 해준다. Apple은 비소비성에 복원 수단 제공을 심사에서 요구한다.
+//
+// 이전은 이동이지 복제가 아니다. 한 구매가 두 계정에서 동시에 활성이면
+// 원장이 깨지므로, 이전 소유자가 실제로 잃는지까지 본다.
+func TestSameMarketAccountTransfersOwnership(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	entID := "sp_galaxy_gecko"
+	now := time.Now().UTC().Truncate(time.Second)
+	account := uniqueID("google-account")
+
+	purchase := testPurchase(uniqueID("token"), domain.StateActive, now)
+	purchase.PlatformAccountID = account
+
+	oldUser := uniqueID("pu_old")
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: oldUser, EntitlementID: entID, Purchase: purchase,
+	}); err != nil {
+		t.Fatalf("최초 지급 실패: %v", err)
+	}
+
+	// 재설치. 같은 구글 계정, 새 익명 uid.
+	newUser := uniqueID("pu_new")
+	later := purchase
+	later.ObservedAt = now.Add(time.Minute)
+	res, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: newUser, EntitlementID: entID, Purchase: later,
+	})
+	if err != nil {
+		t.Fatalf("같은 계정인데 이전이 거부됐다: %v", err)
+	}
+	if res.TransferredFrom != oldUser {
+		t.Errorf("transferredFrom = %q, want %q", res.TransferredFrom, oldUser)
+	}
+	if !res.Granted {
+		t.Errorf("granted = %v, want true", res.Granted)
+	}
+
+	newList, err := l.ListActive(ctx, newUser)
+	if err != nil {
+		t.Fatalf("새 소유자 목록 조회 실패: %v", err)
+	}
+	if len(newList) != 1 || newList[0] != entID {
+		t.Errorf("새 소유자 목록 = %v, want [%s]", newList, entID)
+	}
+
+	// 여기가 핵심이다. 이전 소유자가 실제로 잃어야 한다.
+	oldList, err := l.ListActive(ctx, oldUser)
+	if err != nil {
+		t.Fatalf("이전 소유자 목록 조회 실패: %v", err)
+	}
+	if len(oldList) != 0 {
+		t.Errorf("한 구매가 두 계정에서 활성이다. 이전 소유자 목록 = %v", oldList)
+	}
+}
+
+// 마켓 계정이 다르면 여전히 막는다. 불변식 4의 본래 목적이다.
+func TestDifferentMarketAccountStillRejected(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	entID := "sp_galaxy_gecko"
+	now := time.Now().UTC().Truncate(time.Second)
+	token := uniqueID("token-shared")
+
+	owner := uniqueID("pu_owner")
+	mine := testPurchase(token, domain.StateActive, now)
+	mine.PlatformAccountID = uniqueID("google-account-mine")
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: owner, EntitlementID: entID, Purchase: mine,
+	}); err != nil {
+		t.Fatalf("소유자 지급 실패: %v", err)
+	}
+
+	// 남의 구매 증명을 자기 계정으로 제시한다.
+	attacker := uniqueID("pu_attacker")
+	theirs := testPurchase(token, domain.StateActive, now.Add(time.Minute))
+	theirs.PlatformAccountID = uniqueID("google-account-theirs")
+
+	_, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: attacker, EntitlementID: entID, Purchase: theirs,
+	})
+	if err == nil {
+		t.Fatal("다른 마켓 계정에게 구매가 넘어갔다")
+	}
+	if code := platformerr.CodeOf(err); code != platformerr.CodePurchaseOwnedByAnotherUser {
+		t.Errorf("code = %q, want purchase_owned_by_another_user", code)
+	}
+
+	list, err := l.ListActive(ctx, owner)
+	if err != nil {
+		t.Fatalf("소유자 목록 조회 실패: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("거부됐는데 원래 소유자가 잃었다. 목록 = %v", list)
+	}
+}
+
+// 계정 참조가 없는 주문끼리 서로 이전되면 안 된다.
+//
+// HashAccountID는 빈 입력에 빈 문자열을 준다. 그냥 비교하면 계정
+// 정보가 없는 두 구매가 같다고 판정되어 아무나 가져갈 수 있다.
+func TestMissingAccountReferenceDoesNotTransfer(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	entID := "sp_galaxy_gecko"
+	now := time.Now().UTC().Truncate(time.Second)
+	token := uniqueID("token-noaccount")
+
+	owner := uniqueID("pu_owner")
+	bare := testPurchase(token, domain.StateActive, now)
+	bare.PlatformAccountID = ""
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: owner, EntitlementID: entID, Purchase: bare,
+	}); err != nil {
+		t.Fatalf("소유자 지급 실패: %v", err)
+	}
+
+	other := uniqueID("pu_other")
+	alsoBare := testPurchase(token, domain.StateActive, now.Add(time.Minute))
+	alsoBare.PlatformAccountID = ""
+
+	_, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: other, EntitlementID: entID, Purchase: alsoBare,
+	})
+	if err == nil {
+		t.Fatal("계정 참조가 없는데 이전이 허용됐다")
+	}
+	if code := platformerr.CodeOf(err); code != platformerr.CodePurchaseOwnedByAnotherUser {
+		t.Errorf("code = %q, want purchase_owned_by_another_user", code)
 	}
 }

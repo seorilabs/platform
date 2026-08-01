@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"crypto/subtle"
 	"sort"
 	"time"
 
@@ -122,6 +123,10 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 
 	err := l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
 		now := l.now()
+		// 트랜잭션은 재시도될 수 있다. 매 시도마다 초기화한다.
+		transferredFrom := ""
+		var prevOwnerEnt entitlementDoc
+		var prevOwnerPUID string
 
 		orderPath, err := l.paths.order(orderKey)
 		if err != nil {
@@ -142,10 +147,27 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 
 			// 불변식 4. 다른 사용자의 구매는 자동으로 옮기지 않는다.
 			// tombstone은 소유자가 없으므로 예외다.
+			//
+			// 예외가 하나 더 있다. 마켓 계정이 같으면 같은 사람이다.
+			// 앱을 지우면 익명 uid가 새로 생기지만 구글·애플 계정은
+			// 그대로다. 그 사람이 자기 구매를 되찾는 것은 이 불변식이
+			// 막으려는 "남의 구매 가로채기"가 아니다.
 			if !order.Tombstone && order.PlatformUserID != "" &&
 				order.PlatformUserID != in.PlatformUserID {
-				return platformerr.New(platformerr.CodePurchaseOwnedByAnotherUser,
-					"다른 계정에서 구매한 상품이에요")
+				if !sameMarketAccount(order, in.Purchase) {
+					return platformerr.New(platformerr.CodePurchaseOwnedByAnotherUser,
+						"다른 계정에서 구매한 상품이에요")
+				}
+				// 이전은 이동이지 복제가 아니다. 한 구매가 두 계정에서
+				// 동시에 활성이면 원장이 깨진다.
+				//
+				// 여기서는 읽기만 한다. Firestore 트랜잭션은 모든 읽기가
+				// 쓰기보다 앞서야 해서, 실제 반영은 아래 쓰기 구간에서 한다.
+				prevOwnerEnt, prevOwnerPUID, err = l.readDetachedPreviousOwner(tx, order, orderKey)
+				if err != nil {
+					return err
+				}
+				transferredFrom = order.PlatformUserID
 			}
 
 			// 같은 주문인데 상품이나 마켓이 다르면 위조이거나 버그다.
@@ -222,6 +244,13 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 			return nil
 		}
 
+		// 여기서부터 쓰기다. 이전 소유자 회수를 먼저 반영한다.
+		if prevOwnerPUID != "" {
+			if err := l.writeEntitlement(tx, prevOwnerPUID, prevOwnerEnt, now); err != nil {
+				return err
+			}
+		}
+
 		prevSource, hadSource := ent.Sources[orderKey]
 		alreadyActive := hadSource && prevSource.State == domain.StateActive &&
 			order.PlatformUserID == in.PlatformUserID && order.State == domain.StateActive
@@ -260,9 +289,10 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 
 		// 불변식 2. 둘은 항상 배타적이다.
 		result = domain.GrantResult{
-			Granted:        !alreadyActive,
-			AlreadyGranted: alreadyActive,
-			EntitlementID:  in.EntitlementID,
+			Granted:         !alreadyActive,
+			AlreadyGranted:  alreadyActive,
+			EntitlementID:   in.EntitlementID,
+			TransferredFrom: transferredFrom,
 		}
 		return nil
 	})
@@ -433,6 +463,62 @@ func (l *Ledger) markOneSandboxReset(ctx context.Context, puid, requestID, order
 		order.SandboxReset = &sandboxResetMark{RequestID: requestID, ResetAt: now}
 		return tx.Set(orderPath, order)
 	})
+}
+
+// sameMarketAccount는 같은 마켓 계정이 제시한 구매인지 본다.
+//
+// 마켓 계정 해시는 마켓이 직접 알려준 값이고, 그 값은 서명 검증을 거친
+// 영수증에서 나온다. 클라이언트가 주장하는 것이 아니라서 소유의 근거로
+// 삼을 수 있다.
+//
+// 둘 중 하나라도 비어 있으면 같다고 보지 않는다. HashAccountID는 빈
+// 입력에 빈 문자열을 주므로, 그냥 비교하면 계정 참조가 없는 주문끼리
+// 서로 이전 가능해진다.
+func sameMarketAccount(order orderDoc, p domain.VerifiedPurchase) bool {
+	incoming := domain.HashAccountID(p.PlatformAccountID)
+	if incoming == "" || order.PlatformAccountIDHash == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare(
+		[]byte(order.PlatformAccountIDHash), []byte(incoming),
+	) == 1
+}
+
+// readDetachedPreviousOwner는 이전 소유자의 원장을 읽고 이 구매의 근거를
+// 뺀 상태를 만들어 돌려준다. 쓰지는 않는다.
+//
+// Firestore 트랜잭션은 모든 읽기가 쓰기보다 앞서야 한다. 여기서 바로
+// 쓰면 뒤따르는 새 소유자 읽기가 read-after-write로 거부된다.
+//
+// 소유자만 바꾸고 이전 원장을 그대로 두면 한 구매가 두 계정에서 활성이
+// 된다. 불변식 6이 sources의 OR로 active를 재계산하므로, 근거를 빼고
+// projection을 다시 써야 이전 계정이 실제로 잃는다.
+//
+// 불변식 5에 따라 문서를 지우지는 않는다. source만 뺀다.
+func (l *Ledger) readDetachedPreviousOwner(
+	tx *store.Tx,
+	order orderDoc,
+	orderKey string,
+) (entitlementDoc, string, error) {
+	if order.PlatformUserID == "" || order.EntitlementID == "" {
+		return entitlementDoc{}, "", nil
+	}
+
+	intPath, err := l.paths.internalEntitlement(order.PlatformUserID, order.EntitlementID)
+	if err != nil {
+		return entitlementDoc{}, "", err
+	}
+	prev, err := l.readEntitlement(tx, intPath, order.EntitlementID)
+	if err != nil {
+		return entitlementDoc{}, "", err
+	}
+	if _, ok := prev.Sources[orderKey]; !ok {
+		// 이전 소유자에게 이 근거가 없다. 쓸 것도 없다.
+		return entitlementDoc{}, "", nil
+	}
+	delete(prev.Sources, orderKey)
+
+	return prev, order.PlatformUserID, nil
 }
 
 // checkReplay는 같은 주문 키에 다른 내용이 오는지 본다.
