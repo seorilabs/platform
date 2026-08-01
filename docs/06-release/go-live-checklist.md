@@ -18,12 +18,24 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 | shadow 대조 (orderKey 일치) | ✅ | ✅ | — |
 | 웹훅 (실데이터) | ✅ | ✅ | 해당 없음 |
 | 완료 호출 경로 | ✅ | ✅ | 클라이언트 담당 |
-| 완료 **반영** 확인 | ✅ | ⏳ 활성 구매 | — |
+| 완료 **반영** 확인 | ✅ | ✅ | — |
 | RTDN 실연동 | 해당 없음 | ✅ | — |
 | mTLS 배선 | — | — | ✅ |
 | API 계약 문서 대조 | — | — | ✅ |
 
-전환을 막는 것은 **Play 완료 반영 확인 하나**다.
+**Apple·Play 두 마켓은 전 항목을 통과했다.** AIT만 인증서를 기다린다.
+
+Play 완료 반영은 실제 활성 구매로 확인했다.
+
+```
+providerOrderId       GPA.3380-7033-5994-35388
+state                 active
+acknowledgementState  ACKNOWLEDGED   ← 마켓에 다시 물어 확인
+orderKey              42a8a5ae...dea02a98  ← 기존 Functions 원장과 일치
+```
+
+이 검증에서 **acknowledge 성공(204)을 실패로 처리하던 결함**을 찾았다.
+환불된 구매로는 드러나지 않는 경로였다.
 
 **RTDN은 실연동까지 확인했다.** Google이 직접 보낸 알림을
 `platform-iap`이 받아 처리했다.
@@ -45,9 +57,19 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 Play는 3일 안에 acknowledge하지 않으면 자동 환불한다. 이 경로가
 막혀 있으면 유저는 산 물건을 잃고 우리는 매출을 잃는다.
 
-**왜 코드로 못 하는가.** 활성 구매의 `purchaseToken`을 얻는 API가
-없다. `androidpublisher` v3 discovery로 확인했다 — `orders.get`이
-없고 `voidedpurchases.list`는 환불된 것만 준다.
+**토큰은 `orders.get`으로 얻을 수 있다.** 예전에 이 API가 없다고
+적어뒀는데 틀렸다. 구매가 일어난 뒤 orderId만 알면 토큰이 나온다.
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth application-default \
+    print-access-token --scopes=https://www.googleapis.com/auth/androidpublisher)" \
+  "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/\
+com.seorilabs.lizardtycoon/orders/<orderId>"
+```
+
+응답의 `purchaseToken`이 그것이다. orderId는 원장의 `providerOrderId`에
+있다. **다만 구매 자체는 여전히 기기에서 해야 한다** — 아직 사지 않은
+상품의 토큰을 만들어내는 API는 없다.
 
 ### 먼저 — sideload 빌드로는 구매할 수 없다
 
@@ -103,6 +125,37 @@ unzip -p assets.apk assets/firebase/iap-client.android.config.json
 ```
 
 `platform`, `app_check_mode`, `products`, `functions`가 다 있어야 한다.
+
+### 가장 먼저 볼 것 — Play 계정 국가
+
+상품은 판매 지역이 설정된 국가의 계정에만 내려간다. **계정 프로필
+국가가 다르면 상품 조회가 통째로 비어서 온다.**
+
+```
+[iap] product query: response=0 details=0 unfetched_statuses=[4]
+```
+
+`response=0`이라 성공처럼 보이고 상품만 없어서, Play Console 설정이나
+빌드를 의심하며 시간을 쓰게 된다. 실제로 그렇게 두 시간을 썼다.
+
+**Play Store → 프로필 → 설정 → General → Account and device
+preferences → Country and profiles**에서 확인한다.
+
+```
+United States  · SEO IL HWAN   ✓   ← 이 상태에서 KR 전용 상품은 안 온다
+South Korea    · 서일환         ○
+```
+
+상품 쪽 판매 지역은 API로 본다.
+
+```bash
+curl ... ".../oneTimeProducts/sp_shootingstar_tokay"
+# purchaseOptions[].regionalPricingAndAvailabilityConfigs[].regionCode
+```
+
+둘이 맞아야 가격이 뜬다. 계정 국가 변경은 결제수단·잔액·구독에
+영향이 있고 재변경이 1년간 제한될 수 있어 **계정 소유자가 판단할
+일이다.** 급하면 상품에 해당 국가를 추가하는 쪽이 되돌리기 쉽다.
 
 ### 여기까지 다 정상인데도 "가격 확인 중"이면
 
