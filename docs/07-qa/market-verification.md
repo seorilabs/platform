@@ -411,6 +411,54 @@ curl "https://androidpublisher.googleapis.com/\$discovery/rest?version=v3"
 
 **이 절차를 통과하기 전에 lizard-tycoon 전환 스위치를 켜지 않는다.**
 
+## 실기기에서만 드러난 것 — 본문 없는 POST와 411
+
+앱을 Go 서버로 전환한 첫 실기기 구매가 **첫 호출에서 막혔다.**
+
+```
+[iap] purchase stage=account_references_start platform=google_play
+ERROR: [iap] iap_response_invalid | 응답을 해석하지 못했어요
+```
+
+서버 로그에는 **아무것도 없었다.** Cloud Run 요청 로그에도 없었다.
+세션은 200으로 잘 열린 뒤였다.
+
+원인은 Godot의 `HTTPRequest`가 **본문이 빈 문자열이면 `Content-Length`를
+붙이지 않는 것**이었다. Google 프론트엔드가 그 POST를 411 Length Required로
+거부하고 HTML을 돌려준다. 컨테이너까지 오지 않으니 서버는 멀쩡하고 앱만
+실패한다.
+
+`/v1/iap/account-references`가 본문 없는 유일한 POST였고, 하필 구매 흐름의
+첫 호출이다.
+
+### 왜 배포 검증을 통과했나
+
+**curl로는 재현되지 않는다.** curl이 `Content-Length: 0`을 자동으로 붙인다.
+
+```bash
+# 통과한다 — curl이 Content-Length를 붙여 준다
+curl -s -X POST ".../v1/iap/account-references" -H "Authorization: Bearer $TOK"
+```
+
+배포 후 curl 스모크가 전부 200이었는데 실기기만 깨졌다. 클라이언트 HTTP
+스택으로 실제로 쏘아 보기 전에는 알 수 없는 종류다.
+
+### 남긴 것
+
+`lizard-tycoon/tools/empty_post_body_probe.gd`가 네트워크를 실제로 타고
+확인한다. 인증 없이 호출해 **우리 서버의 JSON 401**이 오는지 본다. 411이면
+프론트엔드가 HTML로 막은 것이라 실패한다. 오프라인이면 SKIP.
+
+fake transport로는 잡히지 않는다. 요청이 프론트엔드에서 막히는 것이라
+서버까지 갔는지 자체가 검증 대상이다.
+
+### 일반화
+
+> 클라이언트 HTTP 스택이 curl과 같게 동작한다고 가정하지 않는다.
+> 특히 **본문 없는 POST**, 리다이렉트, 압축, keep-alive는 스택마다 다르다.
+> 서버 로그가 비어 있는데 클라이언트가 응답을 받았다면, 답한 것은
+> 우리 서버가 아니라 그 앞의 무언가다.
+
 ## 관련
 
 - provider 구현: `server/internal/iap/providers/`
