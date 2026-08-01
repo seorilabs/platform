@@ -352,3 +352,111 @@ func TestRecordPendingDoesNotOverwriteFinal(t *testing.T) {
 		t.Errorf("pending이 active를 덮었다. 활성 = %v", list)
 	}
 }
+
+// sandbox 초기화 뒤 같은 거래를 다시 제시해도 지급하지 않는다.
+//
+// 실기기에서 겪은 상황을 그대로 재현한다. App Store Connect에서
+// 구매내역을 지워도 기기에는 미완료 거래가 남아 있어 다음 구매가
+// 구매 시트 없이 같은 거래를 돌려준다.
+//
+// 특히 stale 억제(불변식 3)보다 먼저 판정해야 한다. 한 번 차단해
+// revoked가 된 뒤에는 revoked(rank 3) > active(rank 2)라 stale로
+// 걸리고, 그러면 alreadyGranted=true가 나가 앱이 받은 적 없는
+// 상품을 가진 걸로 안다.
+func TestSandboxResetBlocksRepurchase(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	puid := uniqueID("pu_sandbox")
+	entID := "sp_galaxy_gecko"
+	now := time.Now().UTC().Truncate(time.Second)
+
+	purchase := testPurchase(uniqueID("orig-tx"), domain.StateActive, now)
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+	in := GrantInput{PlatformUserID: puid, EntitlementID: entID, Purchase: purchase}
+
+	if _, err := l.Grant(ctx, in); err != nil {
+		t.Fatalf("최초 지급 실패: %v", err)
+	}
+
+	// 운영자가 App Store sandbox 구매내역을 지웠다.
+	if err := l.MarkSandboxReset(ctx, puid, uniqueID("req"), []string{purchase.Key()}); err != nil {
+		t.Fatalf("초기화 표식 실패: %v", err)
+	}
+
+	list, err := l.ListActive(ctx, puid)
+	if err != nil {
+		t.Fatalf("목록 조회 실패: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("초기화 후 활성 목록 = %v, want []", list)
+	}
+
+	// 기기에 남은 거래를 다시 제시한다. 두 번 눌러도 결과가 같아야 한다.
+	for attempt := 1; attempt <= 2; attempt++ {
+		res, err := l.Grant(ctx, in)
+		if err != nil {
+			t.Fatalf("%d번째 재제시 실패: %v", attempt, err)
+		}
+		if !res.BlockedBySandboxReset {
+			t.Fatalf("%d번째: 초기화 이전 거래를 차단하지 않았다", attempt)
+		}
+		if res.Granted || res.AlreadyGranted {
+			t.Errorf("%d번째: granted=%v alreadyGranted=%v, want false/false",
+				attempt, res.Granted, res.AlreadyGranted)
+		}
+		if !res.Valid() {
+			t.Errorf("%d번째: 결과가 불변식을 깼다", attempt)
+		}
+		if len(res.Entitlements) != 0 {
+			t.Errorf("%d번째: 차단인데 소유 목록에 %v가 남았다", attempt, res.Entitlements)
+		}
+	}
+}
+
+// 초기화 이후에 산 거래는 진짜 새 구매다. 정상 지급해야 한다.
+//
+// 차단이 여기까지 번지면 초기화한 테스터는 영영 아무것도 살 수 없다.
+func TestSandboxResetAllowsLaterPurchase(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	puid := uniqueID("pu_sandbox_new")
+	entID := "sp_galaxy_gecko"
+	now := time.Now().UTC().Truncate(time.Second)
+
+	canonical := uniqueID("orig-tx")
+	old := testPurchase(canonical, domain.StateActive, now.Add(-time.Hour))
+	old.Platform = domain.PlatformAppStore
+	old.Completion = domain.CompletionAppleFinish
+
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: puid, EntitlementID: entID, Purchase: old,
+	}); err != nil {
+		t.Fatalf("최초 지급 실패: %v", err)
+	}
+	if err := l.MarkSandboxReset(ctx, puid, uniqueID("req"), []string{old.Key()}); err != nil {
+		t.Fatalf("초기화 표식 실패: %v", err)
+	}
+
+	// 초기화 이후 시각에 산 새 거래다. canonicalId도 새로 발급된다.
+	fresh := testPurchase(uniqueID("orig-tx-new"), domain.StateActive, now.Add(time.Hour))
+	fresh.Platform = domain.PlatformAppStore
+	fresh.Completion = domain.CompletionAppleFinish
+
+	res, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: puid, EntitlementID: entID, Purchase: fresh,
+	})
+	if err != nil {
+		t.Fatalf("새 구매 지급 실패: %v", err)
+	}
+	if res.BlockedBySandboxReset {
+		t.Fatal("초기화 이후 새 구매를 차단했다")
+	}
+	if !res.Granted {
+		t.Errorf("granted=%v, want true", res.Granted)
+	}
+}

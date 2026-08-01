@@ -264,6 +264,11 @@ type GrantResult struct {
 //
 // 원장 구현이 이 조건을 깨지 않는지 테스트와 런타임에서 함께 검사한다.
 func (r GrantResult) Valid() bool {
+	// 초기화 차단은 지급도 중복 지급도 아니다.
+	// 이때만 둘 다 false가 옳고, 그 밖에는 배타적이어야 한다.
+	if r.BlockedBySandboxReset {
+		return !r.Granted && !r.AlreadyGranted
+	}
 	return r.Granted != r.AlreadyGranted
 }
 
