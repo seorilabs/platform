@@ -268,6 +268,48 @@ func TestCompleteGrantCallsAcknowledge(t *testing.T) {
 	}
 }
 
+// Play는 acknowledge가 성공하면 204 No Content를 준다.
+//
+// 200만 성공으로 보면 성공한 완료 처리가 실패로 기록되고, 워커가
+// 영원히 재시도하다 dead-letter로 간다. 그 사이 유저는 이미 물건을
+// 받은 상태고, 원장에는 "완료하지 못한 주문"으로 남는다.
+//
+// 위 테스트가 200을 돌려주는 가짜 서버라 이 결함을 잡지 못했다.
+// 실제 활성 구매에 acknowledge를 보내고 나서야 드러났다 — 환불된
+// 구매로는 Play가 400을 주기 때문에 이 경로를 타지 않는다.
+func TestCompleteGrantAcceptsNoContent(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"204 No Content", http.StatusNoContent, ""},
+		{"200 빈 본문", http.StatusOK, ""},
+		{"200 빈 객체", http.StatusOK, `{}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, _ := newFakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				if tt.body != "" {
+					_, _ = w.Write([]byte(tt.body))
+				}
+			})
+
+			err := v.CompleteGrant(context.Background(), domain.VerifiedPurchase{
+				Platform:    domain.PlatformGooglePlay,
+				ProductID:   "gecko_galaxy",
+				CanonicalID: "purchase-token-xyz",
+				Completion:  domain.CompletionGoogleAcknowledge,
+			})
+			if err != nil {
+				t.Fatalf("완료 처리를 실패로 봤다: %v", err)
+			}
+		})
+	}
+}
+
 func TestCompleteGrantRejectsWrongCompletion(t *testing.T) {
 	v, _ := newFakeServer(t, jsonResponse(http.StatusOK, `{}`))
 

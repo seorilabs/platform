@@ -236,10 +236,20 @@ func (v *Verifier) doJSON(ctx context.Context, method, endpoint string, body []b
 			"Play 응답을 읽지 못했어요")
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	// acknowledge는 성공하면 204 No Content를 준다. 200만 성공으로 보면
+	// 성공한 완료 처리가 실패로 기록되고, 워커가 영원히 재시도하다가
+	// dead-letter로 간다. 그 사이 유저는 이미 물건을 받은 상태다.
+	//
+	// 환불된 구매로는 이 경로가 드러나지 않는다 — Play가 400을 주기
+	// 때문이다. 활성 구매로 실제 acknowledge를 보내고 나서야 알았다.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return mapHTTPError(resp.StatusCode)
 	}
 	if out == nil {
+		return nil
+	}
+	// 204에는 본문이 없다. 파싱하려 들면 거기서 깨진다.
+	if resp.StatusCode == http.StatusNoContent || len(raw) == 0 {
 		return nil
 	}
 

@@ -70,9 +70,13 @@ verify_play_purchase() {
   # acknowledge가 실제로 반영됐는지 다시 조회한다.
   # 호출이 성공해도 마켓 상태가 안 바뀌면 3일 뒤 자동 환불된다.
   echo "  acknowledge 반영을 재조회한다..."
+  # androidpublisher scope를 명시해야 한다. 기본 scope로 받은 토큰은
+  # 이 API에 403(insufficient authentication scopes)을 받고,
+  # 스크립트는 그걸 "반영되지 않았다"로 잘못 보고한다.
   local token
   token="$(GOOGLE_APPLICATION_CREDENTIALS="$creds" \
-    gcloud auth application-default print-access-token 2>/dev/null || true)"
+    gcloud auth application-default print-access-token \
+      --scopes=https://www.googleapis.com/auth/androidpublisher 2>/dev/null || true)"
 
   if [[ -z "$token" ]]; then
     warn "재조회용 토큰을 얻지 못했다. 위 test 결과로 판단해라"

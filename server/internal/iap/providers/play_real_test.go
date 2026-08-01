@@ -68,13 +68,23 @@ func TestPlayRealPurchase(t *testing.T) {
 	if got.ProductID == "" {
 		t.Error("productId가 비었다")
 	}
-	// 환불된 구매다. revoked여야 한다.
-	if got.State != domain.StateRevoked {
-		t.Errorf("state = %s — 환불된 구매라 revoked를 기대했다", got.State)
-	}
-	// 환불된 구매에 완료 처리를 시키면 안 된다.
-	if got.Completion != domain.CompletionNone {
-		t.Errorf("completion = %s — 환불된 구매에 완료 처리를 요구한다", got.Completion)
+	// 넘겨준 토큰이 활성인지 환불된 것인지에 따라 기대가 갈린다.
+	// 둘 다 유효한 검증 대상이라 상태별로 나눠 본다.
+	switch got.State {
+	case domain.StateActive:
+		// 활성 구매다. acknowledge하지 않았다면 완료 처리를 요구해야 한다.
+		// 3일 안에 하지 않으면 Play가 자동 환불한다.
+		if got.Completion != domain.CompletionGoogleAcknowledge &&
+			got.Completion != domain.CompletionNone {
+			t.Errorf("completion = %s — 활성 구매에 맞지 않는다", got.Completion)
+		}
+	case domain.StateRevoked:
+		// 환불된 구매에 완료 처리를 시키면 안 된다.
+		if got.Completion != domain.CompletionNone {
+			t.Errorf("completion = %s — 환불된 구매에 완료 처리를 요구한다", got.Completion)
+		}
+	default:
+		t.Errorf("state = %s — active나 revoked를 기대했다", got.State)
 	}
 	if got.PurchasedAt.IsZero() {
 		t.Error("purchasedAt이 비었다")
