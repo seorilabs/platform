@@ -103,9 +103,20 @@ func _send(entry: Dictionary) -> void:
 		_:
 			method = HTTPClient.METHOD_GET
 
+	# 본문 없는 POST도 빈 JSON 객체를 보낸다.
+	#
+	# Godot의 HTTPRequest는 본문이 빈 문자열이면 Content-Length를 붙이지
+	# 않는다. Google 프론트엔드는 그 POST를 411 Length Required로 거부하고
+	# HTML을 돌려준다. 컨테이너까지 오지 않으니 서버 로그에는 아무것도
+	# 남지 않고, 클라이언트는 "응답을 해석하지 못했어요"만 본다.
+	#
+	# 실기기에서 이것 때문에 결제 첫 단계인 계정 참조 발급이 통째로
+	# 막혔다. 원인을 찾는 데 가장 오래 걸린 자리다.
 	var body := ""
 	if data.has("body"):
 		body = JSON.stringify(data["body"])
+	elif String(data.get("method", "GET")) == "POST":
+		body = "{}"
 
 	var err := _http.request(url, headers, method, body)
 	if err != OK:
