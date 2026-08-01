@@ -149,7 +149,19 @@ func (s *Service) resolveIdentity(
 		if err != nil {
 			return "", false, err
 		}
-		return claims.UID, claims.IsAnonymous, nil
+		// Firebase 익명 로그인은 여기서 익명으로 치지 않는다.
+		//
+		// 이 플래그가 막는 것은 "사칭 가능한 신원"이지 "계정이 없는
+		// 사용자"가 아니다. Firebase 익명 계정도 서명된 ID 토큰을 받고
+		// 우리가 서명·aud·iss·exp를 전부 검증한다. 다른 사람의 uid를
+		// 주장할 수 없다는 점에서 이메일 계정과 같다.
+		//
+		// 반대로 KindAnonymous는 클라이언트가 아무 값이나 보낼 수 있는
+		// 해시라 사칭이 된다. 둘은 이름만 같고 성질이 다르다.
+		//
+		// 실제로 이걸 묶어 두면 lizard-tycoon은 결제가 하나도 되지 않는다.
+		// 전 사용자가 Firebase 익명 계정이기 때문이다.
+		return claims.UID, false, nil
 
 	case KindAnonymous:
 		// 사칭 가능한 신원이다. 여기서 막지 않고 세션에 표시만 한다.

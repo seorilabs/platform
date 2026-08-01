@@ -57,6 +57,7 @@ func configure(p_base_url: String, p_app_id: String, p_max_retries: int = 3) -> 
 ##   token    : String (선택)
 ##   query    : Dictionary (선택)
 ##   no_retry : bool (선택) — 결제처럼 중복이 위험한 요청
+##   base_url : String (선택) — 이 요청만 다른 호스트로 보낸다
 func request(request_data: Dictionary, callback: Callable) -> void:
 	if base_url.is_empty() or app_id.is_empty():
 		callback.call(_local_error(0, "transport_not_configured", "전송 설정이 없어요"))
@@ -112,7 +113,13 @@ func _send(entry: Dictionary) -> void:
 
 
 func _build_url(data: Dictionary) -> String:
-	var url := base_url + String(data.get("path", ""))
+	# 역할마다 Cloud Run 서비스가 다르다. 세션은 api, 결제는 iap,
+	# 이벤트는 ingest다. 마켓 자격증명을 iap 서비스에만 두려면
+	# 한 호스트로 합칠 수 없다.
+	var host := String(data.get("base_url", "")).rstrip("/")
+	if host.is_empty():
+		host = base_url
+	var url := host + String(data.get("path", ""))
 
 	var query: Dictionary = data.get("query", {})
 	if query.is_empty():

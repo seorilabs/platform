@@ -3,7 +3,12 @@
 # 그래서 이 Dockerfile은 빌드 플랫폼과 무관하게 동작한다.
 
 # go.mod의 go 지시어와 맞춘다. 낮으면 빌드가 거부된다.
-FROM golang:1.25 AS build
+#
+# --platform=$BUILDPLATFORM이 있어야 빌더가 빌드 머신의 아키텍처로 돈다.
+# 없으면 --platform linux/amd64로 빌드할 때 arm64 머신에서 컴파일러까지
+# QEMU로 돌아가고, Go 어셈블러가 거기서 세그폴트한다. Colima arm64에서
+# 실제로 겪었다. 크로스컴파일은 아래 GOARCH가 담당한다.
+FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 
 WORKDIR /src
 

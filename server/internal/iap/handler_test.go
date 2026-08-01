@@ -329,8 +329,8 @@ func TestAccountReferences(t *testing.T) {
 
 	var env struct {
 		Result struct {
-			GooglePlay string `json:"googlePlay"`
-			AppStore   string `json:"appStore"`
+			GooglePlay string `json:"googlePlayObfuscatedAccountId"`
+			AppStore   string `json:"appStoreAppAccountToken"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {

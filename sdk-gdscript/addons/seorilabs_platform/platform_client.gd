@@ -38,6 +38,8 @@ const MAX_EVENT_OUTBOX := 500
 
 var _transport: HttpTransport
 var _session: Dictionary = {}
+var _iap_base_url := ""
+var _ingest_base_url := ""
 var _credential: Dictionary = {}
 var _config: Dictionary = _fallback_config()
 
@@ -57,16 +59,29 @@ func _ready() -> void:
 ## 설정한다. add_child 전에 불러도 된다.
 ##
 ## options 키:
-##   base_url    : String (필수)
-##   app_id      : String (필수)
-##   max_retries : int (선택, 기본 3)
+##   base_url        : String (필수) — 세션·설정
+##   iap_base_url    : String (선택) — 결제. 없으면 base_url
+##   ingest_base_url : String (선택) — 이벤트. 없으면 base_url
+##   app_id          : String (필수)
+##   max_retries     : int (선택, 기본 3)
+##
+## 역할마다 Cloud Run 서비스가 다르다. 마켓 자격증명을 결제 서비스
+## 하나에만 마운트하는 것이 경계라서 한 호스트로 합칠 수 없다.
 func configure(options: Dictionary) -> void:
 	if _transport == null:
 		_transport = HttpTransport.new()
 		add_child(_transport)
 
+	var base := String(options.get("base_url", ""))
+	_iap_base_url = String(options.get("iap_base_url", "")).strip_edges()
+	if _iap_base_url.is_empty():
+		_iap_base_url = base
+	_ingest_base_url = String(options.get("ingest_base_url", "")).strip_edges()
+	if _ingest_base_url.is_empty():
+		_ingest_base_url = base
+
 	_transport.configure(
-		String(options.get("base_url", "")),
+		base,
 		String(options.get("app_id", "")),
 		int(options.get("max_retries", 3)),
 	)
@@ -262,6 +277,7 @@ func flush_events(callback: Callable = Callable()) -> void:
 			{
 				"method": "POST",
 				"path": "/v1/events",
+				"base_url": _ingest_base_url,
 				"token": token,
 				"body": {"events": batch},
 			},
@@ -395,6 +411,7 @@ func verify_purchase(proof: Dictionary, callback: Callable) -> void:
 			{
 				"method": "POST",
 				"path": "/v1/iap/verify",
+				"base_url": _iap_base_url,
 				"token": session_token,
 				"no_retry": true,
 				"body": {
@@ -424,6 +441,7 @@ func list_entitlements(callback: Callable) -> void:
 			{
 				"method": "GET",
 				"path": "/v1/iap/entitlements",
+				"base_url": _iap_base_url,
 				"token": session_token,
 			},
 			callback,
@@ -445,6 +463,7 @@ func account_references(callback: Callable) -> void:
 			{
 				"method": "POST",
 				"path": "/v1/iap/account-references",
+				"base_url": _iap_base_url,
 				"token": session_token,
 			},
 			callback,
