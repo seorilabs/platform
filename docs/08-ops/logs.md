@@ -59,13 +59,19 @@ gcloud alpha logging tail \
 while true; do
   gcloud logging read \
     'resource.type="cloud_run_revision" AND resource.labels.service_name=~"^platform-"' \
-    --project=seorilabs-platform --freshness=1m --limit=20 --order=asc \
+    --project=seorilabs-platform --freshness=2m --limit=20 \
     --format='value(timestamp, resource.labels.service_name, jsonPayload.method, jsonPayload.path, jsonPayload.status)'
+  echo "----"
   sleep 20
 done
 ```
 
-> 같은 줄이 반복해서 나온다. `--freshness=1m`과 `sleep 20`이 겹치기
+> ⚠️ **`--order=asc`를 붙이면 `--freshness`가 먹지 않는다.** 시간순으로
+> 보고 싶어 붙이기 쉬운데, 그러면 하루 전 로그가 그대로 딸려 온다.
+> 실제로 겪었다 — "최근 10분"이라고 적어 둔 출력에 24시간 전 웹훅이
+> 나왔다. 최신순(기본값)으로 두고 읽는 편이 안전하다.
+>
+> 같은 줄이 반복해서 나온다. `--freshness=2m`과 `sleep 20`이 겹치기
 > 때문이다. 겹치게 두는 편이 낫다 — 줄이면 로그 반영 지연(보통 수 초)
 > 때문에 요청을 통째로 놓친다.
 
