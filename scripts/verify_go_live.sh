@@ -7,7 +7,7 @@
 #
 #   1. Play 활성 구매      — 기기에서 샌드박스 결제
 #   2. Play RTDN 등록      — Play Console UI
-#   3. AppsInToss 인증서   — 파트너 콘솔 발급
+#   3. AppsInToss 인증서   — 파트너 콘솔 발급 (AIT_DEFERRED=1로 보류 가능)
 #   4. 완료 재시도 워커    — Job + Scheduler
 #
 # 사용법
@@ -167,12 +167,34 @@ verify_ait() {
   echo "== 3. AppsInToss 인증서 =="
 
   local missing=0
+  local found=0
+  for s in ait-client-cert ait-client-key; do
+    if gcloud secrets describe "$s" --project="$PROJECT" >/dev/null 2>&1; then
+      found=1
+    else
+      missing=1
+    fi
+  done
+
+  # AIT를 뒤로 미루고 Apple·Play 두 마켓으로 먼저 전환하기로 했다면
+  # 인증서 부재는 대기가 아니라 의도한 상태다. 판정을 막지 않는다.
+  #
+  # 그래도 조용히 넘기지는 않는다. 이 상태에서 AIT 결제는 전부
+  # platform_unavailable(503)로 거부되고, 그건 유저에게 보이는 실패다.
+  if [[ "$missing" -eq 1 && "${AIT_DEFERRED:-}" == "1" ]]; then
+    echo "  ℹ  인증서 없음 — 2마켓 전환으로 의도한 상태다"
+    echo "     AIT 결제는 platform_unavailable(503)로 거부된다"
+    if [[ "$found" -eq 1 ]]; then
+      no "한쪽만 있다. cert와 key는 같이 있어야 한다"
+    fi
+    return
+  fi
+
   for s in ait-client-cert ait-client-key; do
     if gcloud secrets describe "$s" --project="$PROJECT" >/dev/null 2>&1; then
       ok "Secret 존재: $s"
     else
       warn "Secret이 없다: $s"
-      missing=1
     fi
   done
 

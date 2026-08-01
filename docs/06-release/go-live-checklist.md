@@ -9,9 +9,11 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 구현은 전부 끝났고 검증도 코드로 할 수 있는 것은 전부 했다.
 남은 셋은 외부 시스템에서 사람이 조작해야 한다.
 
+**Apple·Play 두 마켓으로 먼저 전환한다.** AIT는 인증서를 받은 뒤 붙인다.
+
 | 항목 | Apple | Play | AIT |
 |---|---|---|---|
-| 마켓 인증 | ✅ | ✅ | ⏳ 인증서 |
+| 마켓 인증 | ✅ | ✅ | 보류 |
 | 실제 구매 검증 | ✅ | ✅ | — |
 | shadow 대조 (orderKey 일치) | ✅ | ✅ | — |
 | 웹훅 (실데이터) | ✅ | ✅ | 해당 없음 |
@@ -19,6 +21,9 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 | 완료 **반영** 확인 | ✅ | ⏳ 활성 구매 | — |
 | RTDN 실연동 | 해당 없음 | ✅ | — |
 | mTLS 배선 | — | — | ✅ |
+| API 계약 문서 대조 | — | — | ✅ |
+
+전환을 막는 것은 **Play 완료 반영 확인 하나**다.
 
 **RTDN은 실연동까지 확인했다.** Google이 직접 보낸 알림을
 `platform-iap`이 받아 처리했다.
@@ -231,7 +236,36 @@ gcloud logging read 'resource.labels.service_name="platform-iap"
 
 ---
 
-## 3. AppsInToss mTLS 인증서 — 파트너 콘솔 필요
+## 3. AppsInToss mTLS 인증서 — 뒤로 미룬다
+
+**Apple·Play 두 마켓으로 먼저 전환하기로 했다.** AIT는 인증서를
+받은 뒤 붙인다.
+
+이 상태에서 AIT 결제는 전부 이렇게 거부된다.
+
+```go
+v, ok := s.verifiers[proof.Platform]
+if !ok {
+    return Outcome{}, platformerr.Newf(platformerr.CodePlatformUnavailable,
+        "%s 결제는 아직 준비 중이에요", proof.Platform)
+}
+```
+
+`platform_unavailable` → HTTP 503. 나머지 두 마켓은 영향받지 않는다.
+lizard-tycoon은 현재 AIT 빌드가 없어 실사용자 영향이 없다.
+
+검증할 때 이 부재를 대기가 아니라 의도로 다루려면 플래그를 준다.
+
+```bash
+AIT_DEFERRED=1 scripts/verify_go_live.sh
+```
+
+cert와 key 중 **한쪽만 있으면 이 모드에서도 실패로 잡는다.** 반쪽만
+올라간 상태로 배포하면 부팅에서 터진다.
+
+인증서를 받으면 아래 절차로 붙인다.
+
+## 3-1. 인증서를 받은 뒤 — 파트너 콘솔 필요
 
 **왜 필요한가.** AIT는 mTLS로 인증한다. 인증서가 없으면 검증기가
 조립되지 않고 AIT 결제만 `platform_unavailable`로 거부된다.
