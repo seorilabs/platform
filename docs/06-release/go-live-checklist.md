@@ -67,6 +67,38 @@ adb shell dumpsys package com.seorilabs.lizardtycoon | grep installer
 **Play Store 내부 테스트 링크로 설치해야 한다.** 그래야
 `installerPackageName=com.android.vending`이 되고 Billing이 상품을 준다.
 
+### 그 다음 — 트랙의 빌드가 최신이어야 한다
+
+Play Store로 설치하면 Billing은 살아나지만, 트랙에 올라간 빌드가
+오래되면 이번엔 앱 쪽 IAP 어댑터가 fail-closed된다. 상점 버튼이
+"가격 확인 중"이 아니라 **"준비 중"**이면 이쪽이다.
+
+```gdscript
+# main.gd — 어댑터가 없거나 is_available()이 false면 "준비 중"
+func _premium_purchase_available() -> bool:
+	return _purchase != null and _purchase.has_method("is_available") \
+		and bool(_purchase.is_available())
+```
+
+릴리스 빌드는 로그를 내보내지 않아 어느 조건인지 특정할 수 없다.
+대신 **서버 쪽에서 앱이 무엇을 호출했는지** 보면 절반은 가려진다.
+
+```bash
+gcloud logging read 'resource.labels.service_name="listiapentitlements"' \
+  --project=lizard-tycoon --limit=10 --freshness=30m \
+  --format="value(timestamp,httpRequest.status)"
+```
+
+200이 찍혀 있으면 인증·세션·Functions는 정상이고 BillingClient만
+남는다. APK에서 config를 직접 뜯어 확인할 수도 있다.
+
+```bash
+adb pull "$(adb shell pm path <pkg> | grep assetPack | sed 's/package://')" assets.apk
+unzip -p assets.apk assets/firebase/iap-client.android.config.json
+```
+
+`platform`, `app_check_mode`, `products`, `functions`가 다 있어야 한다.
+
 앱을 지우고 다시 받으면 저장 데이터가 날아가므로 먼저 백업한다.
 
 ```bash
