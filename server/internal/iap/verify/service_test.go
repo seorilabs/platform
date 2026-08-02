@@ -75,6 +75,23 @@ func (f *fakeLedger) ListActive(context.Context, string) ([]string, error) {
 	return f.active, nil
 }
 
+// fakeAuditor는 감사 기록을 모은다.
+//
+// 바인딩 불일치처럼 "막지는 않지만 남겨야 하는" 신호를 검증하려면
+// 기록 자체가 확인 대상이 된다.
+type fakeAuditor struct {
+	records []auditRecord
+}
+
+type auditRecord struct {
+	action  string
+	outcome string
+}
+
+func (f *fakeAuditor) Record(_ context.Context, action, _, _, outcome string, _ map[string]any) {
+	f.records = append(f.records, auditRecord{action: action, outcome: outcome})
+}
+
 type fakeOutbox struct{ enqueued int }
 
 func (f *fakeOutbox) Enqueue(context.Context, string, domain.VerifiedPurchase) error {
@@ -312,25 +329,45 @@ func TestAccountBindingMismatch(t *testing.T) {
 	l := &fakeLedger{}
 	cat, _ := catalog.Parse([]byte(catalogJSON), nil)
 
+	auditor := &fakeAuditor{}
 	s, err := New(Config{
 		Verifiers: []Verifier{v}, Ledger: l, Catalog: cat, Keyring: keyring,
+		Auditor: auditor,
 	})
 	if err != nil {
 		t.Fatalf("서비스 생성 실패: %v", err)
 	}
 
-	_, err = s.VerifyPurchase(context.Background(), "app", "pu_나", domain.Proof{
+	out, err := s.VerifyPurchase(context.Background(), "app", "pu_나", domain.Proof{
 		Platform:  domain.PlatformGooglePlay,
 		ProductID: "gecko_galaxy",
 	})
-	if err == nil {
-		t.Fatal("다른 사용자의 계정 참조를 통과시켰다")
+	// 바인딩 불일치는 지급을 막지 않는다. ADR 0010
+	//
+	// 바인딩 참조는 마켓 계정 식별자가 아니라 platform_user_id로 만든
+	// HMAC이다. 앱을 지우면 익명 uid가 새로 생겨 반드시 달라지므로,
+	// 거부하면 재설치한 유저는 예외 없이 산 상품을 잃는다.
+	// 소유의 근거는 마켓이 이 계정에 발급한 토큰 자체다.
+	if err != nil {
+		t.Fatalf("바인딩 불일치로 지급이 막혔다: %v", err)
 	}
-	if code := platformerr.CodeOf(err); code != platformerr.CodeAccountBindingMismatch {
-		t.Errorf("code = %q, want account_binding_mismatch", code)
+	if out.Granted == nil || !*out.Granted {
+		t.Error("granted가 true가 아니다")
 	}
-	if len(l.granted) != 0 {
-		t.Error("바인딩이 틀렸는데 지급했다")
+
+	// 다만 부정 신호로는 남아야 한다. 이 기록이 없으면 실제 사칭 시도를
+	// 나중에 찾을 방법이 없다.
+	found := false
+	for _, r := range auditor.records {
+		if r.action == "iap.binding_mismatch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("바인딩 불일치가 감사 원장에 남지 않았다")
+	}
+	if len(l.granted) != 1 {
+		t.Errorf("원장 지급 호출 = %d, want 1", len(l.granted))
 	}
 }
 
