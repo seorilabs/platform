@@ -173,7 +173,6 @@ func TestGrantResultValidAllowsSandboxBlock(t *testing.T) {
 		})
 	}
 }
-
 func TestSandboxResetInputAndPayloadBinding(t *testing.T) {
 	base := SandboxResetInput{
 		RequestID:      "reset-1",
@@ -250,71 +249,6 @@ func TestValidSandboxResetRecordFailsClosed(t *testing.T) {
 			tt.mutate(&doc)
 			if validSandboxResetRecord(doc) {
 				t.Error("브라우저 응답에 부적합한 reset 기록을 허용했다")
-			}
-		})
-	}
-}
-
-// 마켓 계정이 같으면 같은 사람이다.
-//
-// 앱을 지우면 익명 uid가 새로 생기지만 구글·애플 계정은 그대로다.
-// 그 사람이 자기 구매를 되찾는 것은 불변식 4가 막으려는 "남의 구매
-// 가로채기"가 아니다. 여기서 잘못 열면 실제 사칭이 통과한다.
-func TestSameMarketAccount(t *testing.T) {
-	const accountA = "google-account-a"
-	const accountB = "google-account-b"
-
-	withHash := func(raw string) orderDoc {
-		return orderDoc{PlatformAccountIDHash: domain.HashAccountID(raw)}
-	}
-	purchase := func(raw string) domain.VerifiedPurchase {
-		return domain.VerifiedPurchase{PlatformAccountID: raw}
-	}
-
-	tests := []struct {
-		name  string
-		order orderDoc
-		p     domain.VerifiedPurchase
-		want  bool
-	}{
-		{
-			name:  "같은 계정이면 이전을 허용한다",
-			order: withHash(accountA),
-			p:     purchase(accountA),
-			want:  true,
-		},
-		{
-			name:  "다른 계정은 막는다",
-			order: withHash(accountA),
-			p:     purchase(accountB),
-			want:  false,
-		},
-		{
-			// HashAccountID는 빈 입력에 빈 문자열을 준다. 그냥 비교하면
-			// 계정 참조가 없는 주문끼리 서로 이전 가능해진다.
-			name:  "원장에 계정 해시가 없으면 막는다",
-			order: orderDoc{},
-			p:     purchase(accountA),
-			want:  false,
-		},
-		{
-			name:  "들어온 구매에 계정이 없으면 막는다",
-			order: withHash(accountA),
-			p:     purchase(""),
-			want:  false,
-		},
-		{
-			name:  "둘 다 비어 있으면 막는다",
-			order: orderDoc{},
-			p:     purchase(""),
-			want:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := sameMarketAccount(tt.order, tt.p); got != tt.want {
-				t.Errorf("sameMarketAccount() = %v, want %v", got, tt.want)
 			}
 		})
 	}

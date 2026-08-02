@@ -152,11 +152,28 @@ func (s *Service) VerifyPurchase(
 		return Outcome{}, err
 	}
 
-	// 계정 바인딩. 다른 사용자가 시작한 구매를 가로채지 못하게 한다.
-	// AIT는 면제다. claim 자체가 신뢰 경로이기 때문이다.
+	// 계정 바인딩은 부정 신호로 남기되 지급을 막지는 않는다. ADR 0010
+	//
+	// 바인딩 참조는 마켓 계정 식별자가 아니라 우리가 platform_user_id로
+	// 만든 HMAC이다. 앱을 지우면 익명 uid가 새로 생기므로 이 값이 반드시
+	// 달라진다. 거부하면 재설치한 유저는 예외 없이 산 상품을 잃는다.
+	// Apple 심사 지침 3.1.1은 비소비성 상품에 복원 수단을 요구하므로
+	// 그 상태로는 리젝 사유이기도 하다.
+	//
+	// 소유의 근거는 마켓이 이 계정에 발급한 토큰 자체다. Play는
+	// queryPurchases로 현재 로그인 계정이 가진 구매만 돌려주고, Apple은
+	// Apple ID에 묶인 거래만 준다. 우리는 그 토큰을 마켓 API로 다시
+	// 검증한 뒤에야 여기 도달한다.
+	//
+	// Google도 이 필드를 "부정 탐지와 귀속"으로 설명하고 선택 사항으로
+	// 둔다. 불일치를 거부 사유로 쓰라고 하지 않는다.
 	if s.keyring != nil && binding.RequiresBinding(proof.Platform) {
 		if err := s.checkBinding(puid, purchase); err != nil {
-			return Outcome{}, err
+			s.audit(ctx, "iap.binding_mismatch", appID, puid,
+				string(platformerr.CodeOf(err)), map[string]any{
+					"platform":   string(proof.Platform),
+					"product_id": proof.ProductID,
+				})
 		}
 	}
 
