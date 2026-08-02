@@ -1,0 +1,48 @@
+# GDScript SDK 검증.
+#
+# Godot 런타임이 필요하다. 설치·캐시·import를 여기서 다시 짜지 않고 org
+# 재사용 워크플로를 호출한다. 러너 아키텍처 분기와 fontconfig 처리까지
+# 그쪽이 맡는다.
+#
+# conformance probe는 TS SDK와 바이트 동일 출력을 강제하고, smoke probe는
+# SCRIPT ERROR를 잡는다. Godot은 스크립트 런타임 오류가 나도 실행을
+# 계속하므로 exit code만 봐서는 놓친다.
+#
+# SDK나 conformance 벡터가 바뀔 때만 돈다. Go 서버만 고친 PR에서는
+# 실행되지 않는다.
+name: Checks (GDScript SDK)
+
+on:
+  pull_request:
+    paths:
+      - "sdk-gdscript/**"
+      - "spec/conformance/**"
+      - "scripts/check_sdk_gdscript.sh"
+      - "scripts/sdk_gdscript_checksum.sh"
+      - ".github/workflows/checks-sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk-gdscript/**"
+      - "spec/conformance/**"
+      - "scripts/check_sdk_gdscript.sh"
+      - "scripts/sdk_gdscript_checksum.sh"
+      - ".github/workflows/checks-sdk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk:
+    name: GDScript SDK
+    uses: seorilabs/.github/.github/workflows/godot-checks.yml@main
+    secrets: inherit
+    with:
+      runs_on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+      project_dir: sdk-gdscript
+      check_command: |
+        bash scripts/check_sdk_gdscript.sh

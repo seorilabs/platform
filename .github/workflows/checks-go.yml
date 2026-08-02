@@ -1,0 +1,67 @@
+# Go 서버 정적 검사.
+#
+# Godot은 필요 없다. 이 저장소가 GDScript SDK도 같이 배포하지만 그건
+# checks-sdk.yml이 따로 맡는다. 서버만 고친 PR에서 Godot을 내려받으면
+# ARC 러너를 낭비한다.
+#
+# private repo이므로 Seorilabs ARC arm64 러너로 보낸다. Go 테스트는
+# 아키텍처에 의존하지 않고, 배포 산출물은 deploy.yml이 따로 만든다.
+name: Checks (Go)
+
+on:
+  pull_request:
+    paths:
+      - "server/**"
+      - "spec/**"
+      - ".github/workflows/checks-go.yml"
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "spec/**"
+      - ".github/workflows/checks-go.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-go-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go lint and test
+    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # -race는 데이터 경합을 잡는다. 원장이 Firestore 트랜잭션과
+      # goroutine을 함께 쓰므로 이게 없으면 경합이 CI를 통과한다.
+      - name: go test
+        run: go test -race ./...
+
+      # 버전을 고정한다. latest로 두면 린터 기본값이 바뀌는 날
+      # 아무도 건드리지 않은 PR이 빨갛게 된다. v2.12.2에서 0 issues임을
+      # 로컬에서 확인했다.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          working-directory: server
+          version: v2.12.2
