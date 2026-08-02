@@ -20,12 +20,33 @@
 #
 # 빌드 job은 같은 commit의 이미지가 이미 있으면 건너뛴다. 그래서 병합
 # 직후 dispatch하면 빌드를 기다리지 않고 배포로 바로 들어간다.
+#
+# ## 러너
+#
+# GitHub-hosted를 기본으로 쓴다. 배포는 짧고, x64 러너에서는 amd64가
+# 네이티브라 크로스컴파일도 필요 없다. ARC는 최대 3대라 짧은 작업이
+# 자리를 차지하면 다른 작업을 밀어낸다. 조직 기본값인 ARC arm64 라우팅을
+# 여기서만 의도적으로 벗어난다.
+#
+# GitHub Actions에 자동 fallback은 없다. 쿼타가 차면 명시적으로 넘긴다.
+#
+#   일회성  Run workflow의 runner 드롭다운에서 arc 선택
+#   지속    저장소 변수 PLATFORM_DEPLOY_RUNNER=arc
+#
+# 둘 중 하나라도 arc면 ARC로 간다. 쿼타가 풀리면 변수를 지우면 된다.
 name: Deploy
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "러너. GitHub 쿼타가 소진됐으면 arc를 고른다"
+        type: choice
+        required: false
+        default: github
+        options: [github, arc]
 
 permissions:
   contents: read
@@ -46,9 +67,11 @@ env:
 jobs:
   build:
     name: Build and push image
-    # Docker가 필요하므로 DIND 러너로 보낸다. Go는 크로스컴파일이
-    # 네이티브라 arm64 러너에서 amd64 이미지를 QEMU 없이 만든다.
-    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64-dind' || 'ubuntu-latest' }}
+    # GitHub-hosted에는 Docker가 이미 있고 x64라 amd64가 네이티브다.
+    # ARC로 넘어가면 Docker가 필요하므로 DIND 라벨을 쓴다. 그쪽은
+    # arm64지만 Dockerfile이 FROM --platform=$BUILDPLATFORM이라
+    # QEMU 없이 amd64로 크로스컴파일한다.
+    runs-on: ${{ (github.event.inputs.runner == 'arc' || vars.PLATFORM_DEPLOY_RUNNER == 'arc') && 'seorilabs-rpi-arm64-dind' || 'ubuntu-latest' }}
     timeout-minutes: 30
     outputs:
       image: ${{ steps.meta.outputs.image }}
@@ -104,7 +127,8 @@ jobs:
     # main 병합만으로는 배포하지 않는다. 사람이 Actions에서 실행해야
     # 시작된다 — 이것이 승인 게이트를 대신한다.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    # gcloud만 쓰므로 Docker가 필요 없다. ARC로 넘어가도 일반 러너면 된다.
+    runs-on: ${{ (github.event.inputs.runner == 'arc' || vars.PLATFORM_DEPLOY_RUNNER == 'arc') && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
     timeout-minutes: 30
     # 보호 규칙은 못 걸지만 배포 이력이 environment에 남는다.
     environment: production

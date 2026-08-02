@@ -454,6 +454,28 @@ repo에서 required reviewer는 이 요금제로 쓸 수 없고 API가 422로 �
 Actions → Deploy → Run workflow → Branch: main
 ```
 
+### 러너
+
+배포는 GitHub-hosted 러너에서 돈다. 짧게 끝나고 x64라 amd64가
+네이티브라 크로스컴파일도 필요 없다. ARC는 최대 3대라 짧은 작업이
+자리를 차지하면 다른 작업을 밀어낸다. 조직 기본값인 ARC arm64 라우팅을
+여기서만 의도적으로 벗어난다.
+
+GitHub Actions에 자동 fallback은 없다. 쿼타가 차면 명시적으로 넘긴다.
+
+| 상황 | 방법 |
+|---|---|
+| 일회성 | Run workflow의 `runner` 드롭다운에서 `arc` |
+| 지속 | 저장소 변수 `PLATFORM_DEPLOY_RUNNER=arc` |
+
+둘 중 하나라도 `arc`면 ARC로 간다. 쿼타가 풀리면 변수를 지운다.
+
+ARC로 넘어가면 빌드는 `seorilabs-rpi-arm64-dind`(Docker 필요), 배포는
+`seorilabs-rpi-arm64`(gcloud만 사용)로 간다. arm64에서도 Dockerfile이
+`FROM --platform=$BUILDPLATFORM`이라 QEMU 없이 amd64로 크로스컴파일한다.
+
+Go 체크(`checks-go.yml`)는 ARC에 그대로 둔다.
+
 배포 상태는 이렇게 본다.
 
 ```bash
