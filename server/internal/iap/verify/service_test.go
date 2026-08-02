@@ -44,6 +44,7 @@ type fakeLedger struct {
 	active       []string
 	grantErr     error
 	blockSandbox bool
+	transferFrom string
 }
 
 func (f *fakeLedger) Grant(_ context.Context, in ledger.GrantInput) (domain.GrantResult, error) {
@@ -60,9 +61,10 @@ func (f *fakeLedger) Grant(_ context.Context, in ledger.GrantInput) (domain.Gran
 	f.granted = append(f.granted, in)
 	f.active = append(f.active, in.EntitlementID)
 	return domain.GrantResult{
-		Granted:       true,
-		EntitlementID: in.EntitlementID,
-		Entitlements:  f.active,
+		Granted:         true,
+		EntitlementID:   in.EntitlementID,
+		Entitlements:    f.active,
+		TransferredFrom: f.transferFrom,
 	}, nil
 }
 
@@ -314,7 +316,7 @@ func TestUnknownSKU(t *testing.T) {
 	}
 }
 
-// 계정 바인딩이 다르면 다른 사용자의 구매를 가로채는 것이다.
+// 계정 바인딩 불일치는 부정 신호지만 소유권을 부정하는 근거는 아니다.
 func TestAccountBindingMismatch(t *testing.T) {
 	keyring, err := binding.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
@@ -322,7 +324,7 @@ func TestAccountBindingMismatch(t *testing.T) {
 	}
 
 	p := activePurchase()
-	// 다른 사용자에게 발급된 계정 참조를 실어 보낸다
+	// 다른 platform_user_id로 만든 계정 참조를 실어 보낸다.
 	p.PlatformAccountID = keyring.GoogleAccountID("pu_다른사람")
 
 	v := &fakeVerifier{platform: domain.PlatformGooglePlay, purchase: p}
@@ -368,6 +370,44 @@ func TestAccountBindingMismatch(t *testing.T) {
 	}
 	if len(l.granted) != 1 {
 		t.Errorf("원장 지급 호출 = %d, want 1", len(l.granted))
+	}
+}
+
+// 불변식 4, 5: revoked 검증도 cross-PUID 소유권을 옮겼다면 활성 지급과
+// 동일하게 iap.transferred 보조 감사를 남긴다. 복구 가능한 정본 증거는 ledger
+// transaction에 있고, 이 이벤트는 운영 검색을 위한 projection이다.
+func TestRevokedCrossUserTransferIsAudited(t *testing.T) {
+	p := activePurchase()
+	p.State = domain.StateRevoked
+	p.Completion = domain.CompletionNone
+	v := &fakeVerifier{platform: domain.PlatformGooglePlay, purchase: p}
+	l := &fakeLedger{transferFrom: "pu_이전소유자"}
+	auditor := &fakeAuditor{}
+	cat, _ := catalog.Parse([]byte(catalogJSON), nil)
+	s, err := New(Config{
+		Verifiers: []Verifier{v}, Ledger: l, Catalog: cat, Auditor: auditor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := s.VerifyPurchase(context.Background(), "lizard-tycoon", "pu_새소유자", domain.Proof{
+		Platform: domain.PlatformGooglePlay, ProductID: "gecko_galaxy", Token: "token-1",
+	})
+	if err != nil {
+		t.Fatalf("revoked 검증 실패: %v", err)
+	}
+	if out.Status != "revoked" {
+		t.Fatalf("status = %q, want revoked", out.Status)
+	}
+	found := false
+	for _, rec := range auditor.records {
+		if rec.action == "iap.transferred" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("revoked cross-PUID 이전의 iap.transferred 감사 이벤트가 없다")
 	}
 }
 

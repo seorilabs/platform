@@ -21,7 +21,10 @@ Accepted
 분리의 진짜 논거였던 "가용성"은 배포 위치가 아니라 **백오피스가 런타임 경로에 있는가**의 문제다. 이건 아키텍처 규칙으로 푼다.
 
 - **R1** 백오피스는 플랫폼 Admin API의 클라이언트일 뿐이며 클라이언트 요청 경로에 들어가지 않는다
-- **R2** 백오피스 MySQL은 런타임 유저 데이터를 0바이트도 저장하지 않는다. 미러조차 만들지 않는다
+- **R2** 백오피스 MySQL은 런타임 유저 **조회 미러·캐시**를 0바이트도
+  저장하지 않는다. 사람이 승인한 mutation을 전달하는 최소 command envelope의
+  한시 저장과 삭제 규칙은 [ADR 0011](0011-admin-management-boundary.md)이 이 문장을
+  대체한다
 
 "GitHub = SoT" 원칙의 본질은 "GitHub이 최고다"가 아니라 **"이 앱 DB는 원본이 아니다"**이며, 이건 그대로 일반화된다. 플랫폼이 런타임 데이터의 SoT이고 백오피스는 API로 읽고 쓴다. GitHub은 webhook이 있어 미러를 만든 것이고, 플랫폼은 Admin API 직접 조회가 항상 더 신선하다.
 
@@ -31,10 +34,11 @@ Accepted
 
 - 백오피스에 새 탭을 만들지 않는다. **기존 `commerce` 탭을 플랫폼 Admin API에 연결한다**
 - 백오피스 어댑터가 Firestore를 직접 조작하던 1,124줄이 API 호출로 바뀌면서 **오히려 단순해진다** — SA 키 관리, firebase-admin 초기화, 앱별 하드코딩이 사라진다
-- `backoffice-admin@` SA에는 `run.invoker` **외 어떤 권한도 주지 않는다.** RPI가 침해돼도 얻는 건 "API 호출 가능"이고, 그 위에 dry-run 토큰·rate limit·하드 상한이 서버 측에 있다
+- 백오피스 OIDC SA에는 `run.invoker` **외 어떤 권한도 주지 않는다.** RPI가 침해돼도 얻는 건 "API 호출 가능"이고, 그 위에 read/write allowlist·서버 typed confirmation·durable rate limit·하드 상한이 있다. 세부 경계는 [ADR 0011](0011-admin-management-boundary.md)에서 확정한다
 - **장애 대응 중 RPI까지 죽어 있으면 긴급 조작을 못 한다.** 이건 두 번째 백오피스를 짓는다고 해결되지 않으므로 [BREAK-GLASS 런북](../08-ops/BREAK-GLASS.md)으로 푼다
 - **확장의 전제 조건 3가지를 지키지 못하면 이 결정을 재검토한다**
-  1. 백오피스 MySQL에 런타임 유저 데이터를 저장하지 않는다
+  1. 백오피스 MySQL에 런타임 유저 조회 미러·캐시를 저장하지 않고, 승인된
+     mutation command envelope는 ADR 0011의 보존·redaction 경계만 따른다
   2. 대량 팬아웃을 RPI에서 실행하지 않는다
   3. break-glass 경로가 문서화되고 **실제로 실행해 검증된다**
 

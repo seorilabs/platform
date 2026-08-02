@@ -35,6 +35,7 @@ const playScope = "https://www.googleapis.com/auth/androidpublisher"
 type iapParts struct {
 	service   *verify.Service
 	ledger    *ledger.Ledger
+	catalog   *catalog.Catalog
 	verifiers map[domain.Platform]verify.Verifier
 	enabled   []domain.Platform
 }
@@ -106,6 +107,7 @@ func newIAPService(
 	return &iapParts{
 		service:   svc,
 		ledger:    led,
+		catalog:   cat,
 		verifiers: byPlatform,
 		enabled:   enabled,
 	}, nil
@@ -113,21 +115,30 @@ func newIAPService(
 
 // newAdminIAP는 검증기 없이 원장만 조립한다.
 //
-// Admin API는 원장을 읽고 운영자 지급을 쓴다. 마켓에 물어볼 일이 없다.
-// 그래서 마켓 자격증명도 카탈로그도 필요 없다 — 필요한 것은
-// 원장 경로를 가르는 환경 하나뿐이다.
-func newAdminIAP(cfg config.Config, st *store.Client) *iapParts {
+// Admin API는 원장을 읽고 운영자 지급을 쓴다. 앱에 허용된 entitlement인지
+// 확인할 카탈로그는 필요하지만 마켓에 물어볼 일이 없어 자격증명과 계정
+// 바인딩 키는 조립하지 않는다.
+func newAdminIAP(cfg config.Config, st *store.Client) (*iapParts, error) {
 	env := domain.EnvProduction
 	if cfg.IAP.IsSandbox() {
 		env = domain.EnvSandbox
 	}
 
-	slog.Info("Admin 원장 준비 완료", "environment", cfg.IAP.Environment)
+	cat, err := catalog.Parse(cfg.IAP.CatalogJSON, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Info("Admin 원장 준비 완료",
+		"environment", cfg.IAP.Environment,
+		"entitlements", len(cat.IDs()),
+	)
 
 	return &iapParts{
 		ledger:    ledger.New(st, env),
+		catalog:   cat,
 		verifiers: map[domain.Platform]verify.Verifier{},
-	}
+	}, nil
 }
 
 // newVerifiers는 자격증명이 있는 마켓의 검증기를 만든다.
@@ -213,7 +224,12 @@ func newPlayHTTPClient(ctx context.Context, cfg config.PlayConfig) (*http.Client
 		return client, nil
 	}
 
-	creds, err := google.CredentialsFromJSON(ctx, cfg.ServiceAccountJSON, playScope)
+	creds, err := google.CredentialsFromJSONWithTypeAndParams(
+		ctx,
+		cfg.ServiceAccountJSON,
+		google.ServiceAccount,
+		google.CredentialsParams{Scopes: []string{playScope}},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("iap: Play 전용 자격증명을 읽지 못했다: %w", err)
 	}
@@ -236,11 +252,25 @@ func (a auditAdapter) Record(
 	if a.col == nil {
 		return
 	}
-	a.col.Audit(ctx, events.AuditRow{
+	a.col.Audit(ctx, newAuditRow(action, appID, puid, outcome, detail))
+}
+
+// newAuditRow는 detail에만 있던 운영자와 멱등 키를 BigQuery의 검색 가능한
+// 고정 컬럼에도 올린다. detail JSON만 채우면 장애 대응 SQL이 매 행의 JSON을
+// 파싱해야 하고 request_id 기준 재시도 추적도 인덱스 경계를 잃는다.
+func newAuditRow(action, appID, puid, outcome string, detail map[string]any) events.AuditRow {
+	row := events.AuditRow{
 		Action:         events.AuditAction(action),
 		AppID:          appID,
 		PlatformUserID: puid,
 		Outcome:        outcome,
 		Detail:         detail,
-	})
+	}
+	if actor, ok := detail["actor"].(string); ok {
+		row.Actor = actor
+	}
+	if requestID, ok := detail["request_id"].(string); ok {
+		row.RequestID = requestID
+	}
+	return row
 }

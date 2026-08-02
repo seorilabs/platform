@@ -48,7 +48,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			"code", pe.Code,
 			"status", pe.Status,
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", requestLogPath(r),
 			"err", err.Error(),
 		)
 	}

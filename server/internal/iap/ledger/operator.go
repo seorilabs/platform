@@ -2,15 +2,50 @@ package ledger
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"regexp"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
 
+	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
 )
+
+var (
+	operatorRequestIDPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+	operatorActorPattern       = regexp.MustCompile(`^(?:[A-Za-z0-9-]{1,39}|oidc_sha256:[0-9a-f]{64})$`)
+	operatorPUIDPattern        = regexp.MustCompile(`^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
+	operatorAppIDPattern       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+	operatorEntitlementPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+	operatorOrderKeyPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+const (
+	AdminReasonCustomerSupportCompensation = "customer_support_compensation"
+	AdminReasonIncorrectGrantCorrection    = "incorrect_grant_correction"
+	AdminReasonIncidentRecovery            = "incident_recovery"
+	AdminReasonInternalValidation          = "internal_validation"
+)
+
+// ValidAdminMutationReason은 영구 감사 원장에 저장 가능한 고정 사유 코드만
+// 허용한다. 자유 서술은 PII나 영수증·토큰이 섞일 수 있어 받지 않는다.
+func ValidAdminMutationReason(reason string) bool {
+	switch reason {
+	case AdminReasonCustomerSupportCompensation,
+		AdminReasonIncorrectGrantCorrection,
+		AdminReasonIncidentRecovery,
+		AdminReasonInternalValidation:
+		return true
+	default:
+		return false
+	}
+}
 
 // 운영자 지급과 회수.
 //
@@ -24,10 +59,13 @@ type operatorDoc struct {
 	RequestID      string `firestore:"requestId"`
 	PlatformUserID string `firestore:"platformUserId"`
 	EntitlementID  string `firestore:"entitlementId"`
+	// GrantRequestID는 회수 대상 operator 지급의 requestId다.
+	// 지급 레코드에서는 비어 있다.
+	GrantRequestID string `firestore:"grantRequestId,omitempty"`
 
 	// ActorLogin은 조작한 운영자다. 백오피스가 넘긴다.
 	ActorLogin string `firestore:"actorLogin"`
-	// Reason은 왜 했는지다. 비어 있으면 받지 않는다.
+	// Reason은 왜 했는지 분류하는 고정 코드다. 자유 서술은 받지 않는다.
 	Reason string `firestore:"reason"`
 
 	AppID     string    `firestore:"appId"`
@@ -46,6 +84,9 @@ type OperatorInput struct {
 	ActorLogin     string
 	Reason         string
 	AppID          string
+	// GrantRequestID는 회수할 operator 지급의 requestId다.
+	// 지급 요청에서는 비어 있어야 한다.
+	GrantRequestID string
 }
 
 // OperatorResult는 조작 결과다.
@@ -56,24 +97,134 @@ type OperatorResult struct {
 	Entitlements []string
 }
 
+// FindOperatorReplay는 신규 조작의 mutable precondition과 rate gate를 타기
+// 전에 영구 감사 원장에서 exact retry를 찾는다. commit 뒤 응답만 유실된
+// 요청은 앱 pause나 사용자 binding 변경과 무관하게 같은 결과를 읽을 수 있어야
+// 한다. 신규 요청과의 경합은 실제 OperatorGrant/OperatorRevoke 트랜잭션이 다시
+// 검증하므로 이 읽기는 mutation 권한을 부여하지 않는다.
+func (l *Ledger) FindOperatorReplay(
+	ctx context.Context,
+	in OperatorInput,
+	revoke bool,
+) (OperatorResult, bool, error) {
+	if err := in.validate(); err != nil {
+		return OperatorResult{}, false, err
+	}
+	if revoke {
+		if !operatorRequestIDPattern.MatchString(in.GrantRequestID) {
+			return OperatorResult{}, false, platformerr.New(platformerr.CodeRequestInvalid,
+				"회수할 지급 requestId가 필요해요")
+		}
+	} else if in.GrantRequestID != "" {
+		return OperatorResult{}, false, platformerr.New(platformerr.CodeRequestInvalid,
+			"지급 요청에는 grantRequestId를 넣을 수 없어요")
+	}
+
+	var recordPath, oppositePath fspath.Path
+	var err error
+	if revoke {
+		recordPath, err = l.paths.operatorRevocation(in.RequestID)
+		if err == nil {
+			oppositePath, err = l.paths.operatorGrant(in.RequestID)
+		}
+	} else {
+		recordPath, err = l.paths.operatorGrant(in.RequestID)
+		if err == nil {
+			oppositePath, err = l.paths.operatorRevocation(in.RequestID)
+		}
+	}
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	resetPath, err := l.paths.sandboxResetRequest(in.RequestID)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	resetCompletionPath, err := l.paths.sandboxResetCompletion(in.RequestID)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	resetClosurePath, err := l.paths.sandboxResetClosure(in.RequestID)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+
+	recordSnap, recordExists, err := l.getOptional(ctx, recordPath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	_, oppositeExists, err := l.getOptional(ctx, oppositePath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	_, resetExists, err := l.getOptional(ctx, resetPath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	_, resetCompletionExists, err := l.getOptional(ctx, resetCompletionPath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	_, resetClosureExists, err := l.getOptional(ctx, resetClosurePath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	if oppositeExists || resetExists || resetCompletionExists || resetClosureExists {
+		return OperatorResult{}, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
+			"requestId가 다른 운영 조작에 이미 사용됐어요")
+	}
+	if !recordExists {
+		return OperatorResult{}, false, nil
+	}
+
+	var prev operatorDoc
+	if err := recordSnap.DataTo(&prev); err != nil {
+		return OperatorResult{}, false, platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+			"운영 기록을 읽지 못했어요")
+	}
+	if !sameOperatorRequest(prev, in) {
+		return OperatorResult{}, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
+			"같은 requestId의 이전 운영 요청과 내용이 달라요")
+	}
+	result, err := l.operatorResult(ctx, in.PlatformUserID, false)
+	return result, err == nil, err
+}
+
+func (l *Ledger) getOptional(
+	ctx context.Context,
+	path fspath.Path,
+) (*firestore.DocumentSnapshot, bool, error) {
+	snap, err := l.store.Get(ctx, path)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return snap, true, nil
+}
+
 func (in OperatorInput) validate() error {
 	switch {
-	case in.RequestID == "":
+	case !operatorRequestIDPattern.MatchString(in.RequestID):
 		return platformerr.New(platformerr.CodeRequestInvalid,
 			"요청 식별자가 필요해요")
-	case in.PlatformUserID == "":
+	case !operatorPUIDPattern.MatchString(in.PlatformUserID):
 		return platformerr.New(platformerr.CodeRequestInvalid,
 			"대상 사용자가 필요해요")
-	case in.EntitlementID == "":
+	case !operatorEntitlementPattern.MatchString(in.EntitlementID):
 		return platformerr.New(platformerr.CodeRequestInvalid,
 			"대상 상품이 필요해요")
-	case in.ActorLogin == "":
+	case !operatorActorPattern.MatchString(in.ActorLogin):
 		return platformerr.New(platformerr.CodeRequestInvalid,
 			"조작한 운영자 정보가 필요해요")
-	case in.Reason == "":
+	case !ValidAdminMutationReason(in.Reason):
 		// 이유 없는 지급은 나중에 아무도 설명할 수 없다.
 		return platformerr.New(platformerr.CodeRequestInvalid,
-			"지급 사유가 필요해요")
+			"허용된 운영 사유 코드가 필요해요")
+	case !operatorAppIDPattern.MatchString(in.AppID):
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"앱 식별자가 필요해요")
 	}
 	return nil
 }
@@ -83,7 +234,134 @@ func (in OperatorInput) validate() error {
 // 마켓 구매와 같은 원장에 source로 들어간다. platform이 operator다.
 // 나중에 실제 구매가 들어와도 서로를 덮어쓰지 않고 OR로 합쳐진다.
 func (l *Ledger) OperatorGrant(ctx context.Context, in OperatorInput) (OperatorResult, error) {
-	return l.operatorApply(ctx, in, operatorGrants, domain.StateActive)
+	if err := in.validate(); err != nil {
+		return OperatorResult{}, err
+	}
+	if in.GrantRequestID != "" {
+		return OperatorResult{}, platformerr.New(platformerr.CodeRequestInvalid,
+			"지급 요청에는 grantRequestId를 넣을 수 없어요")
+	}
+
+	applied := false
+	err := l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		applied = false
+		now := l.now().UTC()
+		recordPath, err := l.paths.operatorGrant(in.RequestID)
+		if err != nil {
+			return err
+		}
+		exists, snap, err := tx.Exists(recordPath)
+		if err != nil {
+			return err
+		}
+		oppositePath, err := l.paths.operatorRevocation(in.RequestID)
+		if err != nil {
+			return err
+		}
+		oppositeExists, _, err := tx.Exists(oppositePath)
+		if err != nil {
+			return err
+		}
+		resetPath, err := l.paths.sandboxResetRequest(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetExists, _, err := tx.Exists(resetPath)
+		if err != nil {
+			return err
+		}
+		resetCompletionPath, err := l.paths.sandboxResetCompletion(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetCompletionExists, _, err := tx.Exists(resetCompletionPath)
+		if err != nil {
+			return err
+		}
+		resetClosurePath, err := l.paths.sandboxResetClosure(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetClosureExists, _, err := tx.Exists(resetClosurePath)
+		if err != nil {
+			return err
+		}
+		if oppositeExists || resetExists || resetCompletionExists || resetClosureExists {
+			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"requestId가 다른 운영 조작에 이미 사용됐어요")
+		}
+		if exists {
+			var prev operatorDoc
+			if err := snap.DataTo(&prev); err != nil {
+				return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+					"운영 지급 기록을 읽지 못했어요")
+			}
+			if !sameOperatorRequest(prev, in) {
+				return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+					"같은 requestId의 이전 지급 요청과 내용이 달라요")
+			}
+			return nil
+		}
+
+		orderKey := domain.OrderKey(domain.PlatformOperator, in.RequestID)
+		orderPath, err := l.paths.order(orderKey)
+		if err != nil {
+			return err
+		}
+		orderExists, _, err := tx.Exists(orderPath)
+		if err != nil {
+			return err
+		}
+		if orderExists {
+			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"운영 지급 주문과 감사 기록이 일치하지 않아요")
+		}
+
+		intPath, err := l.paths.internalEntitlement(in.PlatformUserID, in.EntitlementID)
+		if err != nil {
+			return err
+		}
+		ent, err := l.readEntitlement(tx, intPath, in.EntitlementID)
+		if err != nil {
+			return err
+		}
+
+		purchase := operatorPurchase(in.RequestID, in.EntitlementID, domain.StateActive, now)
+		if err := tx.Create(orderPath, orderDoc{
+			PlatformUserID:  in.PlatformUserID,
+			EntitlementID:   in.EntitlementID,
+			Platform:        purchase.Platform,
+			ProductID:       purchase.ProductID,
+			ProviderOrderID: purchase.ProviderOrderID,
+			State:           purchase.State,
+			PurchasedAt:     now,
+			ObservedAt:      now,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}); err != nil {
+			return err
+		}
+		ent.Sources[orderKey] = domain.Source{
+			Platform:    domain.PlatformOperator,
+			ProductID:   in.EntitlementID,
+			State:       domain.StateActive,
+			PurchasedAt: now,
+			ObservedAt:  now,
+			UpdatedAt:   now,
+		}
+		if err := l.writeEntitlement(tx, in.PlatformUserID, ent, now); err != nil {
+			return err
+		}
+		if err := tx.Create(recordPath, newOperatorDoc(in, now)); err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	if err != nil {
+		return OperatorResult{}, err
+	}
+	return l.operatorResult(ctx, in.PlatformUserID, applied)
 }
 
 // OperatorRevoke는 운영자가 entitlement를 회수한다.
@@ -91,106 +369,286 @@ func (l *Ledger) OperatorGrant(ctx context.Context, in OperatorInput) (OperatorR
 // 오지급 정정에 쓴다. 마켓 구매로 받은 것을 회수하면 사용자가
 // 돈을 내고 산 물건을 잃으므로, 백오피스가 근거를 확인해야 한다.
 func (l *Ledger) OperatorRevoke(ctx context.Context, in OperatorInput) (OperatorResult, error) {
-	return l.operatorApply(ctx, in, operatorRevocations, domain.StateRevoked)
-}
-
-func (l *Ledger) operatorApply(
-	ctx context.Context,
-	in OperatorInput,
-	collection string,
-	state domain.State,
-) (OperatorResult, error) {
 	if err := in.validate(); err != nil {
 		return OperatorResult{}, err
 	}
+	if !operatorRequestIDPattern.MatchString(in.GrantRequestID) {
+		return OperatorResult{}, platformerr.New(platformerr.CodeRequestInvalid,
+			"회수할 지급 requestId가 필요해요")
+	}
 
-	recorded, err := l.recordOperatorRequest(ctx, in, collection)
+	applied := false
+	err := l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		applied = false
+		now := l.now().UTC()
+		revokePath, err := l.paths.operatorRevocation(in.RequestID)
+		if err != nil {
+			return err
+		}
+		exists, snap, err := tx.Exists(revokePath)
+		if err != nil {
+			return err
+		}
+		requestGrantPath, err := l.paths.operatorGrant(in.RequestID)
+		if err != nil {
+			return err
+		}
+		requestGrantExists, _, err := tx.Exists(requestGrantPath)
+		if err != nil {
+			return err
+		}
+		resetPath, err := l.paths.sandboxResetRequest(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetExists, _, err := tx.Exists(resetPath)
+		if err != nil {
+			return err
+		}
+		resetCompletionPath, err := l.paths.sandboxResetCompletion(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetCompletionExists, _, err := tx.Exists(resetCompletionPath)
+		if err != nil {
+			return err
+		}
+		resetClosurePath, err := l.paths.sandboxResetClosure(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetClosureExists, _, err := tx.Exists(resetClosurePath)
+		if err != nil {
+			return err
+		}
+		if requestGrantExists || resetExists || resetCompletionExists || resetClosureExists {
+			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"requestId가 다른 운영 조작에 이미 사용됐어요")
+		}
+		if exists {
+			var prev operatorDoc
+			if err := snap.DataTo(&prev); err != nil {
+				return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+					"운영 회수 기록을 읽지 못했어요")
+			}
+			if !sameOperatorRequest(prev, in) {
+				return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+					"같은 requestId의 이전 회수 요청과 내용이 달라요")
+			}
+			return nil
+		}
+
+		grantPath, err := l.paths.operatorGrant(in.GrantRequestID)
+		if err != nil {
+			return err
+		}
+		grantExists, grantSnap, err := tx.Exists(grantPath)
+		if err != nil {
+			return err
+		}
+		if !grantExists {
+			return platformerr.New(platformerr.CodePurchaseNotFound,
+				"회수할 운영자 지급을 찾을 수 없어요")
+		}
+		var grant operatorDoc
+		if err := grantSnap.DataTo(&grant); err != nil {
+			return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+				"운영 지급 기록을 읽지 못했어요")
+		}
+		if grant.AppID != in.AppID || grant.PlatformUserID != in.PlatformUserID ||
+			grant.EntitlementID != in.EntitlementID {
+			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"회수 대상 지급과 사용자·앱·상품이 달라요")
+		}
+
+		orderKey := domain.OrderKey(domain.PlatformOperator, in.GrantRequestID)
+		orderPath, err := l.paths.order(orderKey)
+		if err != nil {
+			return err
+		}
+		orderExists, orderSnap, err := tx.Exists(orderPath)
+		if err != nil {
+			return err
+		}
+		if !orderExists {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"운영 지급 주문을 찾을 수 없어요")
+		}
+		var order orderDoc
+		if err := orderSnap.DataTo(&order); err != nil {
+			return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+				"운영 지급 주문을 읽지 못했어요")
+		}
+		if order.Platform != domain.PlatformOperator || order.PlatformUserID != in.PlatformUserID ||
+			order.EntitlementID != in.EntitlementID || order.ProductID != in.EntitlementID {
+			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"운영 지급 주문이 회수 요청과 달라요")
+		}
+		if order.State != domain.StateActive {
+			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"운영 지급이 이미 비활성 상태예요")
+		}
+
+		intPath, err := l.paths.internalEntitlement(in.PlatformUserID, in.EntitlementID)
+		if err != nil {
+			return err
+		}
+		ent, err := l.readEntitlement(tx, intPath, in.EntitlementID)
+		if err != nil {
+			return err
+		}
+		src, ok := ent.Sources[orderKey]
+		if !ok || src.Platform != domain.PlatformOperator || src.State != domain.StateActive {
+			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"회수할 operator source가 활성 상태가 아니에요")
+		}
+
+		order.State = domain.StateRevoked
+		order.ObservedAt = now
+		order.UpdatedAt = now
+		if err := tx.Set(orderPath, order); err != nil {
+			return err
+		}
+		src.State = domain.StateRevoked
+		src.ObservedAt = now
+		src.UpdatedAt = now
+		ent.Sources[orderKey] = src
+		if err := l.writeEntitlement(tx, in.PlatformUserID, ent, now); err != nil {
+			return err
+		}
+		if err := tx.Create(revokePath, newOperatorDoc(in, now)); err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
 	if err != nil {
 		return OperatorResult{}, err
 	}
+	return l.operatorResult(ctx, in.PlatformUserID, applied)
+}
 
-	if !recorded {
-		// 이미 처리한 요청이다. 다시 지급하지 않는다.
-		list, err := l.ListActive(ctx, in.PlatformUserID)
-		if err != nil {
-			return OperatorResult{}, err
-		}
-		return OperatorResult{Applied: false, Entitlements: orEmpty(list)}, nil
-	}
-
-	now := l.now().UTC()
-
-	// canonicalId를 requestId로 삼는다.
-	// 같은 요청이 만드는 orderKey가 항상 같아서 원장에서도 멱등이다.
-	purchase := domain.VerifiedPurchase{
+func operatorPurchase(requestID, entitlementID string, state domain.State, now time.Time) domain.VerifiedPurchase {
+	return domain.VerifiedPurchase{
 		Platform:        domain.PlatformOperator,
-		ProductID:       in.EntitlementID,
-		CanonicalID:     in.RequestID,
-		ProviderOrderID: in.RequestID,
+		ProductID:       entitlementID,
+		CanonicalID:     requestID,
+		ProviderOrderID: requestID,
 		PurchasedAt:     now,
 		ObservedAt:      now,
 		State:           state,
 		Completion:      domain.CompletionNone,
 	}
+}
 
-	res, err := l.Grant(ctx, GrantInput{
+func newOperatorDoc(in OperatorInput, now time.Time) operatorDoc {
+	return operatorDoc{
+		RequestID:      in.RequestID,
+		GrantRequestID: in.GrantRequestID,
 		PlatformUserID: in.PlatformUserID,
 		EntitlementID:  in.EntitlementID,
-		Purchase:       purchase,
-	})
+		ActorLogin:     in.ActorLogin,
+		Reason:         in.Reason,
+		AppID:          in.AppID,
+		CreatedAt:      now,
+	}
+}
+
+func sameOperatorRequest(doc operatorDoc, in OperatorInput) bool {
+	return doc.RequestID == in.RequestID &&
+		doc.GrantRequestID == in.GrantRequestID &&
+		doc.PlatformUserID == in.PlatformUserID &&
+		doc.EntitlementID == in.EntitlementID &&
+		doc.ActorLogin == in.ActorLogin &&
+		doc.Reason == in.Reason &&
+		doc.AppID == in.AppID
+}
+
+func (l *Ledger) operatorResult(ctx context.Context, puid string, applied bool) (OperatorResult, error) {
+	list, err := l.ListActive(ctx, puid)
 	if err != nil {
 		return OperatorResult{}, err
 	}
-
-	return OperatorResult{Applied: true, Entitlements: orEmpty(res.Entitlements)}, nil
+	return OperatorResult{Applied: applied, Entitlements: orEmpty(list)}, nil
 }
 
-// recordOperatorRequest는 감사 원장에 기록한다.
-//
-// 이미 있으면 false를 준다. 멱등의 근거가 여기다.
-func (l *Ledger) recordOperatorRequest(
-	ctx context.Context,
-	in OperatorInput,
-	collection string,
-) (bool, error) {
-	created := false
+// Admin mutation 한도는 인증된 OIDC principal 기준이다. X-Seori-Actor는
+// 증명되지 않은 헤더라 키로 쓰면 공격자가 값을 바꿔 우회할 수 있다.
+const (
+	adminMutationsPerMinute = 5
+	adminMutationsPerHour   = 20
+	adminMutationsPerDay    = 50
+)
 
-	err := l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
-		created = false
+type adminMutationLimitDoc struct {
+	MinuteStart time.Time `firestore:"minuteStart"`
+	MinuteCount int       `firestore:"minuteCount"`
+	HourStart   time.Time `firestore:"hourStart"`
+	HourCount   int       `firestore:"hourCount"`
+	DayStart    time.Time `firestore:"dayStart"`
+	DayCount    int       `firestore:"dayCount"`
+	UpdatedAt   time.Time `firestore:"updatedAt"`
+}
 
-		path, err := l.paths.operatorRecord(collection, in.RequestID)
-		if err != nil {
-			return err
-		}
+// CheckAdminMutationRate는 모든 replica가 공유하는 Firestore durable gate다.
+// 실제 조작이 뒤에서 실패해도 quota는 되돌리지 않는다. 보안 한도는
+// fail-open보다 보수적으로 소모되는 편이 안전하다.
+func (l *Ledger) CheckAdminMutationRate(ctx context.Context, principal string) error {
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		return platformerr.New(platformerr.CodeAuthForbidden,
+			"인증된 조작 주체가 필요해요")
+	}
+	sum := sha256.Sum256([]byte(principal))
+	path, err := l.paths.adminMutationLimit(hex.EncodeToString(sum[:]))
+	if err != nil {
+		return err
+	}
 
-		exists, _, err := tx.Exists(path)
+	return l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		now := l.now().UTC()
+		minute := now.Truncate(time.Minute)
+		hour := now.Truncate(time.Hour)
+		day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+		var doc adminMutationLimitDoc
+		exists, snap, err := tx.Exists(path)
 		if err != nil {
 			return err
 		}
 		if exists {
-			return nil
+			if err := snap.DataTo(&doc); err != nil {
+				return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+					"운영 조작 한도를 읽지 못했어요")
+			}
 		}
-
-		created = true
-		return tx.Create(path, operatorDoc{
-			RequestID:      in.RequestID,
-			PlatformUserID: in.PlatformUserID,
-			EntitlementID:  in.EntitlementID,
-			ActorLogin:     in.ActorLogin,
-			Reason:         in.Reason,
-			AppID:          in.AppID,
-			CreatedAt:      l.now().UTC(),
-		})
+		if !doc.MinuteStart.Equal(minute) {
+			doc.MinuteStart, doc.MinuteCount = minute, 0
+		}
+		if !doc.HourStart.Equal(hour) {
+			doc.HourStart, doc.HourCount = hour, 0
+		}
+		if !doc.DayStart.Equal(day) {
+			doc.DayStart, doc.DayCount = day, 0
+		}
+		if doc.MinuteCount >= adminMutationsPerMinute ||
+			doc.HourCount >= adminMutationsPerHour ||
+			doc.DayCount >= adminMutationsPerDay {
+			return platformerr.New(platformerr.CodeRateLimited,
+				"운영 조작 한도를 초과했어요")
+		}
+		doc.MinuteCount++
+		doc.HourCount++
+		doc.DayCount++
+		doc.UpdatedAt = now
+		return tx.Set(path, doc)
 	})
-	if err != nil {
-		return false, err
-	}
-	return created, nil
 }
 
 // OperatorRecord는 조회용 감사 기록이다.
 type OperatorRecord struct {
 	RequestID      string    `json:"requestId"`
+	GrantRequestID string    `json:"grantRequestId,omitempty"`
 	PlatformUserID string    `json:"platformUserId"`
 	EntitlementID  string    `json:"entitlementId"`
 	ActorLogin     string    `json:"actorLogin"`
@@ -247,9 +705,17 @@ func (l *Ledger) listOperatorRecords(
 			return nil, platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
 				"운영 기록을 읽지 못했어요")
 		}
+		// 자유 서술 reason, 이메일 원문 actor, 계약 형식 밖의 식별자가 있는
+		// 레거시 레코드는 마이그레이션 전까지 fail-closed해 브라우저로
+		// 노출하지 않는다.
+		if !validOperatorRecord(doc, kind) {
+			return nil, platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"운영 기록에 노출할 수 없는 감사 값이 있어요")
+		}
 
 		out = append(out, OperatorRecord{
 			RequestID:      doc.RequestID,
+			GrantRequestID: doc.GrantRequestID,
 			PlatformUserID: doc.PlatformUserID,
 			EntitlementID:  doc.EntitlementID,
 			ActorLogin:     doc.ActorLogin,
@@ -261,27 +727,45 @@ func (l *Ledger) listOperatorRecords(
 	}
 }
 
+func validOperatorRecord(doc operatorDoc, kind string) bool {
+	if !operatorRequestIDPattern.MatchString(doc.RequestID) ||
+		!operatorPUIDPattern.MatchString(doc.PlatformUserID) ||
+		!operatorEntitlementPattern.MatchString(doc.EntitlementID) ||
+		!operatorActorPattern.MatchString(doc.ActorLogin) ||
+		!ValidAdminMutationReason(doc.Reason) ||
+		!operatorAppIDPattern.MatchString(doc.AppID) || doc.CreatedAt.IsZero() {
+		return false
+	}
+	switch kind {
+	case "grant":
+		return doc.GrantRequestID == ""
+	case "revoke":
+		return operatorRequestIDPattern.MatchString(doc.GrantRequestID)
+	default:
+		return false
+	}
+}
+
 // 조회 상한. 백오피스가 실수로 전체를 긁어가지 못하게 한다.
 const (
 	defaultListLimit = 50
 	maxListLimit     = 200
 )
 
-// orderSummary는 운영 화면에 보여줄 주문 요약이다.
+// OrderSummary는 Admin 응답을 구성하는 데 필요한 내부 주문 요약이다.
 //
-// canonicalId와 마켓 계정 해시는 넣지 않는다. 운영자가 볼 이유가 없고
-// 화면에 뜨면 스크린샷과 로그로 퍼진다.
+// providerOrderId, canonicalId와 마켓 계정 해시는 읽지 않는다. 운영자가 볼
+// 이유가 없고 응답 객체에 실리면 서버 컴포넌트 payload와 로그로 퍼진다.
 type OrderSummary struct {
-	OrderKey        string    `json:"orderKey"`
-	PlatformUserID  string    `json:"platformUserId"`
-	EntitlementID   string    `json:"entitlementId"`
-	Platform        string    `json:"platform"`
-	ProductID       string    `json:"productId"`
-	ProviderOrderID string    `json:"providerOrderId"`
-	State           string    `json:"state"`
-	PurchasedAt     time.Time `json:"purchasedAt"`
-	ObservedAt      time.Time `json:"observedAt"`
-	Tombstone       bool      `json:"tombstone"`
+	OrderKey       string    `json:"orderKey"`
+	PlatformUserID string    `json:"platformUserId"`
+	EntitlementID  string    `json:"entitlementId"`
+	Platform       string    `json:"platform"`
+	ProductID      string    `json:"productId"`
+	State          string    `json:"state"`
+	PurchasedAt    time.Time `json:"purchasedAt"`
+	ObservedAt     time.Time `json:"observedAt"`
+	Tombstone      bool      `json:"tombstone"`
 }
 
 // ListRecentOrders는 최근 주문을 읽는다.
@@ -322,16 +806,15 @@ func (l *Ledger) ListRecentOrders(ctx context.Context, limit int) ([]OrderSummar
 		}
 
 		out = append(out, OrderSummary{
-			OrderKey:        snap.Ref.ID,
-			PlatformUserID:  doc.PlatformUserID,
-			EntitlementID:   doc.EntitlementID,
-			Platform:        string(doc.Platform),
-			ProductID:       doc.ProductID,
-			ProviderOrderID: doc.ProviderOrderID,
-			State:           string(doc.State),
-			PurchasedAt:     doc.PurchasedAt,
-			ObservedAt:      doc.ObservedAt,
-			Tombstone:       doc.Tombstone,
+			OrderKey:       snap.Ref.ID,
+			PlatformUserID: doc.PlatformUserID,
+			EntitlementID:  doc.EntitlementID,
+			Platform:       string(doc.Platform),
+			ProductID:      doc.ProductID,
+			State:          string(doc.State),
+			PurchasedAt:    doc.PurchasedAt,
+			ObservedAt:     doc.ObservedAt,
+			Tombstone:      doc.Tombstone,
 		})
 	}
 }

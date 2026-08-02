@@ -83,16 +83,23 @@ type deps struct {
 	store    *store.Client
 	registry *registry.Registry
 	identity *identity.Handler
-	keys     *identity.KeyCache
-	events   *events.Collector
-	config   *remoteconfig.Service
-	iap      *iapParts
+	// adminUsers는 세션 issuer 없이 PII 없는 사용자 조회만 제공한다.
+	adminUsers *identity.StoreRepository
+	keys       *identity.KeyCache
+	events     *events.Collector
+	config     *remoteconfig.Service
+	iap        *iapParts
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	st, err := store.New(ctx, cfg.ProjectID, cfg.FirestorePrefix)
 	if err != nil {
 		return nil, err
+	}
+	closeStore := func() {
+		if closeErr := st.Close(); closeErr != nil {
+			slog.Error("Firestore 종료 실패", "err", closeErr)
+		}
 	}
 
 	reg := registry.New(registry.NewStoreSource(st))
@@ -103,24 +110,35 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		config:   remoteconfig.NewService(st),
 	}
 
-	// 세션 비밀키가 있는 role만 identity를 조립한다.
-	// ingest는 익명 수집을 허용하므로 세션이 필요 없다.
-	if len(cfg.SessionSecret) > 0 {
+	// 최종 사용자 세션을 발급하는 role만 identity issuer를 조립한다.
+	// Admin은 Config에 비밀이 잘못 들어와도 issuer를 만들지 않는다.
+	if cfg.Role == config.RoleAPI || cfg.Role == config.RoleIAP {
+		if len(cfg.SessionSecret) == 0 {
+			closeStore()
+			return nil, errors.New("identity role에 세션 비밀키가 필요하다")
+		}
 		keys := identity.NewKeyCache(nil)
 		issuer, err := identity.NewSessionIssuer(cfg.SessionSecret, cfg.SessionTTL)
 		if err != nil {
-			st.Close()
+			closeStore()
 			return nil, err
 		}
 
+		users := identity.NewStoreRepository(st)
 		svc := identity.NewService(
 			reg,
 			identity.NewFirebaseVerifier(keys),
-			identity.NewStoreRepository(st),
+			users,
 			issuer,
 		)
 		d.identity = identity.NewHandler(svc)
+		d.adminUsers = users
 		d.keys = keys
+	}
+	if cfg.Role == config.RoleAdmin {
+		// Admin은 플랫폼 세션을 발급하거나 검증하지 않는다. 사용자 지원 조회에
+		// 필요한 저장소 포트만 조립하므로 PLATFORM_SESSION_SECRET이 필요 없다.
+		d.adminUsers = identity.NewStoreRepository(st)
 	}
 
 	// 이벤트를 다루는 role만 BigQuery에 붙는다.
@@ -129,7 +147,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		cfg.Role == config.RoleIAP || cfg.Role == config.RoleAdmin {
 		col, err := events.NewCollector(ctx, cfg.ProjectID, cfg.BigQueryDataset)
 		if err != nil {
-			st.Close()
+			closeStore()
 			return nil, err
 		}
 		d.events = col
@@ -141,7 +159,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	case config.RoleIAP, config.RoleWorker:
 		svc, err := newIAPService(ctx, cfg, st, d.events)
 		if err != nil {
-			st.Close()
+			closeStore()
 			return nil, err
 		}
 		d.iap = svc
@@ -150,7 +168,11 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		// admin은 원장을 읽고 운영자 지급을 쓴다. 마켓에 묻지 않는다.
 		// 검증기를 조립하려 들면 없는 자격증명을 찾다가 부팅이 실패하고,
 		// 자격증명을 붙이면 폭발 반경이 admin까지 넓어진다.
-		d.iap = newAdminIAP(cfg, st)
+		d.iap, err = newAdminIAP(cfg, st)
+		if err != nil {
+			closeStore()
+			return nil, err
+		}
 	}
 
 	return d, nil
@@ -196,17 +218,17 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 	// 헬스체크는 계약이 아니라 인프라 관심사다. spec/openapi.yaml에 두지 않는다.
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ok")
+		_, _ = fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
 		// 레지스트리를 읽을 수 있어야 요청을 받을 준비가 된 것이다.
 		if _, err := d.registry.List(r.Context()); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintln(w, "not ready")
+			_, _ = fmt.Fprintln(w, "not ready")
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ready")
+		_, _ = fmt.Fprintln(w, "ready")
 	})
 
 	switch cfg.Role {

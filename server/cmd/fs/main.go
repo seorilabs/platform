@@ -186,9 +186,9 @@ func runGet(ctx context.Context, args []string) error {
 
 	client, err := firestore.NewClient(ctx, c.project)
 	if err != nil {
-		return fmt.Errorf("Firestore 클라이언트 생성 실패: %w", err)
+		return fmt.Errorf("firestore 클라이언트 생성 실패: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	snap, err := client.Doc(p.String()).Get(ctx)
 	if err != nil {
@@ -228,9 +228,9 @@ func runList(ctx context.Context, args []string) error {
 
 	client, err := firestore.NewClient(ctx, c.project)
 	if err != nil {
-		return fmt.Errorf("Firestore 클라이언트 생성 실패: %w", err)
+		return fmt.Errorf("firestore 클라이언트 생성 실패: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 정렬이나 필터를 붙이지 않는다.
 	// Firestore는 인덱스 없는 복합 쿼리가 런타임에 실패하므로

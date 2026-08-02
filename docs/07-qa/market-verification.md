@@ -27,6 +27,55 @@ go test -tags=market ./internal/iap/providers/ -v
 | Google Play | **통과** | 400 | **통과** | — | **통과** |
 | AppsInToss | 미확보 | — | — | — | — |
 
+## 2026-08-02 sandbox reset durable-intent 배포 게이트
+
+`sandbox_reset_barriers`와 immutable intent/completion 도입 전에 live
+`iap_environments/sandbox/sandbox_reset_requests`를 문서 내용 없이 1건 존재
+여부만 조회했고 **0건**임을 확인했다. 따라서 과거 reset cutoff backfill 대상은
+현재 없다.
+
+이 확인은 2026-08-02 시점의 증거일 뿐 배포 시점까지 고정되지 않는다. 최초
+배포 직전에 아래 순서를 다시 수행한다.
+
+1. 백오피스와 break-glass의 sandbox reset 쓰기를 중단한다.
+2. live `sandbox_reset_requests`, `sandbox_reset_completions`,
+   `sandbox_reset_barriers`에서 legacy reset과 active intent가 모두 0건인지 문서
+   내용을 출력하지 않고 확인한다.
+3. 1건이라도 있으면 그대로 배포하지 않는다. 해당 request의 PUID와 cutoff를
+   새 intent/completion/barrier 스키마로 옮기는 backfill을 별도 설계·검증한다.
+4. 0건이면 durable-intent를 인식하는 API와 worker를 모두 배포한 뒤 상태 조회와
+   resume 스모크를 확인하고 쓰기를 다시 연다.
+
+prepare intent가 한 건이라도 commit된 뒤에는 이전 바이너리로 롤백하지 않는다.
+active intent를 보존한 채 수정 버전으로 **roll-forward**한다.
+
+### 필수 회귀 시나리오
+
+| 시나리오 | 기대 결과 |
+|---|---|
+| prepare commit 뒤 apply 전에 중단, 같은 POST 재호출 | 같은 cutoff로 resume 후 completion 1건 |
+| completion commit 뒤 응답 유실, 같은 POST·resume 재호출 | 저장된 order key를 멱등 반환 |
+| 같은 requestId·다른 payload | 409 `operator_replay_mismatch` |
+| 같은 PUID의 다른 prepared requestId | 409 `sandbox_reset_busy` |
+| reset prepare → 같은 PUID pre-cutoff grant | grant 차단, 이전 증거 없음 |
+| reset prepare → A에서 B로 pre-cutoff 복원 | 양쪽 barrier로 이전 차단, 이전 증거 없음 |
+| grant/이전 commit → reset prepare | reset이 최신 원장을 다시 읽어 revoke |
+| reset completion → cutoff 이후 신규 구매 | grant 허용 |
+| 두 commit 순서를 실제 Firestore emulator/integration에서 반복 | 어느 순서도 pre-cutoff active 잔존 없음 |
+| entitlement 201개 또는 reset 대상 주문 21개 | 부분 적용 없이 pending/fail-closed |
+| intent·completion·barrier 필드 파손 | `ledger_state_invalid`, 부분 적용 없음 |
+| absent 조회 뒤 close가 먼저 commit | `closed_not_started`; 늦은 reset/resume는 `sandbox_reset_closed` |
+| absent 조회 뒤 reset prepare가 먼저 commit | close는 `sandbox_reset_already_started`; prepared를 resume |
+| 같은 closure의 exact 재호출 | 200 `applied=false`, 상태는 `closed_not_started` 유지 |
+| 같은 requestId·다른 appId 또는 actor로 close | 409 `operator_replay_mismatch` |
+
+상태 조회 검증에서는 `prepared`/`completed`/`closed_not_started`만 허용하고,
+응답에 `platformUserId`와 `resetOrderKeys`가 없는지 확인한다. 없는 requestId는 404
+`sandbox_reset_not_found`여야 하지만 이 관찰만으로 `not_applied`로 종결하지 않는다.
+먼저 `CLOSE RESET {appId} {requestId}` 확인 문자열로 closure를 commit한다.
+`sandbox_reset_pending` 이후에는 새 ID가 아니라
+`RESUME RESET {appId} {requestId}` 확인 문자열로 원 요청을 재개한다.
+
 ## Play 실제 구매 검증 — 토큰을 얻는 법
 
 원장에는 `purchaseToken`을 저장하지 않는다(PII 최소화). 하지만
@@ -458,6 +507,58 @@ fake transport로는 잡히지 않는다. 요청이 프론트엔드에서 막히
 > 특히 **본문 없는 POST**, 리다이렉트, 압축, keep-alive는 스택마다 다르다.
 > 서버 로그가 비어 있는데 클라이언트가 응답을 받았다면, 답한 것은
 > 우리 서버가 아니라 그 앞의 무언가다.
+
+## 가짜가 원본과 갈라지면 테스트는 아무것도 지키지 못한다
+
+복원이 실기기에서 매달렸다. 화면은 "구매 내역을 확인하고 있어요"에서
+멈추고 `operation_timeout`이 났다. 원인은 SDK 호출 시그니처였다.
+
+```gdscript
+func verify_purchase(proof: Dictionary, callback: Callable) -> void:      # SDK 정의
+_platform_client.verify_purchase(platform, product_id, token, callback)   # 호출부
+```
+
+GDScript는 이 호출을 런타임에 실패시키고 콜백을 돌려주지 않는다.
+컴파일 시점에 잡히지 않는다.
+
+### 왜 probe가 놓쳤나
+
+**가짜 SDK가 잘못된 쪽을 흉내내도록 만들어져 있었다.** 호출부가 인자
+넷을 쓰니 가짜도 넷을 받게 했고, 그래서 36건이 전부 통과했다.
+잘못된 코드를 잘못된 테스트가 승인한 것이다.
+
+`account_references`와 `list_entitlements`는 인자가 없어 우연히 맞았다.
+그래서 구매 흐름의 앞부분만 동작했고 정확히 검증에서만 죽었다 — 어느
+한 부분만 조용히 실패하는 형태라 원인을 좁히는 데 오래 걸렸다.
+
+### 두 겹으로 막는다
+
+**시그니처 대조.** `get_method_list()`로 가짜와 실제 SDK의 인자 수를
+비교한다. 갈라지는 순간 CI에서 걸린다.
+
+```gdscript
+func _arg_count(obj: Object, method_name: String) -> int:
+	for method in obj.get_method_list():
+		if String(method.get("name", "")) == method_name:
+			return (method.get("args", []) as Array).size()
+	return -1
+```
+
+**가짜 없이 한 번 돌려본다.** `real_verify_chain_probe.gd`가 진짜
+`PlatformClient`와 진짜 `PlatformIapClient`를 붙여 실제 서버까지 보낸다.
+증빙이 가짜라 서버가 거부하는 것이 정상이고, 보는 것은 **콜백이
+유실되지 않는다**는 사실이다.
+
+### 일반화
+
+> 가짜는 원본의 계약을 흉내내야지, 호출부의 가정을 흉내내면 안 된다.
+> 가짜를 만들 때 참조할 것은 내가 쓴 호출 코드가 아니라 원본의 정의다.
+>
+> 그리고 연결부는 가짜 없이 한 번은 실제로 돌려봐야 한다. 단위
+> probe가 아무리 많아도 그 하나를 대신하지 못한다.
+
+이 결함 하나 때문에 실기기 빌드를 세 번 더 올렸다. 로컬에서 실제 SDK로
+한 번만 돌려봤으면 첫 빌드 전에 끝났다.
 
 ## 관련
 

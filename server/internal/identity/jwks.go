@@ -128,7 +128,7 @@ func (c *KeyCache) refresh(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("identity: 키셋 요청 실패: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("identity: 키셋 응답이 %d다", resp.StatusCode)
