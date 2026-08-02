@@ -51,8 +51,12 @@ type App struct {
 	FirebaseCustomTokenServiceAccount string `json:"firebase_custom_token_service_account,omitempty" firestore:"firebase_custom_token_service_account,omitempty"`
 	Status                            Status `json:"status" firestore:"status"`
 
-	Features        map[string]bool `json:"features" firestore:"features"`
-	RequireAppCheck bool            `json:"require_app_check" firestore:"require_app_check"`
+	Features map[string]bool `json:"features" firestore:"features"`
+
+	// RequireAppCheck는 아직 아무도 읽지 않는다. 검증기가 없다.
+	// true로 두어도 막히지 않으므로 보안 통제로 믿으면 안 된다.
+	// 사정은 platformerr의 App Check 코드 주석에 적었다.
+	RequireAppCheck bool `json:"require_app_check" firestore:"require_app_check"`
 
 	GA4 GA4Config `json:"ga4" firestore:"ga4"`
 	IAP IAPConfig `json:"iap" firestore:"iap"`

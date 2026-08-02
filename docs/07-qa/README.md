@@ -6,11 +6,11 @@
 |---|---|---|
 | 1 | **Apple JWS 검증 Go 방안 결정** ← 최우선 | **✅ 확정 — ADR 0009 Accepted** |
 | 2 | Firebase 미등록 GCP 프로젝트에서 Firestore 생성 | **✅ 검증됨** |
-| 3 | AIT 웹 프레임워크가 `Storage`/`getAnonymousKey`/`appLogin`을 노출하는가 | 대기 |
-| 4 | Godot HTML shell에 추가 script를 넣은 `.ait`가 심사를 통과하는가 | 대기 |
-| 5 | `appLogin` 토큰의 서버 검증 API 존재 여부 | 대기 |
+| 3 | AIT 웹 프레임워크가 `Storage`/`getAnonymousKey`/`appLogin`을 노출하는가 | 대기 — 실제 `.ait` 빌드 필요 |
+| 4 | Godot HTML shell에 추가 script를 넣은 `.ait`가 심사를 통과하는가 | 대기 — 심사 제출 필요 |
+| 5 | `appLogin` 토큰의 서버 검증 API 존재 여부 | 대기 — **미확인이라 `KindAITLogin`을 fail-closed로 거부 중** |
 | 6 | Cloud Run `allUsers`가 조직 DRS 정책에 막히는가 | **✅ 확인됨 — 막힌다. 우회 방법 확보** |
-| 7 | Go 콜드스타트 실측 | **진행 중** — warm 확보, 콜드 측정 중 |
+| 7 | Go 콜드스타트 실측 | **⚠️ 425ms — 목표 300ms 초과.** 아래 참고. 그 뒤 코드가 많이 바뀌어 재측정 필요 |
 
 ### 결과 — 2번: Firestore ✅
 
@@ -54,6 +54,16 @@ org policy `constraints/iam.allowedPolicyMemberDomains`가 seorilabs 디렉토�
 - `min-instances=1`은 서비스당 월 5~10달러라 채택하지 않는다
 
 적용 시점은 각 서비스 배포와 함께다. `platform-iap`(결제 경로)에 가장 가치가 크다.
+
+> **현재 상태: 아직 도입하지 않았다.** Cloud Scheduler에는 `platform-worker-5m`
+> 하나뿐이다. 위에 적은 "P1·P5 이후 재측정"도 하지 않았다.
+>
+> 그래서 **재측정이 먼저다.** 425ms는 표준 라이브러리만 쓴 최소 서버 수치이고,
+> 지금 서버는 Firestore·마켓 클라이언트가 붙어 있다. 늘었는지 줄었는지 모르는
+> 상태에서 도입 여부를 정할 수 없다.
+>
+> 측정: `platform-iap` 리비전을 재배포해 인스턴스를 비우고 첫 요청을
+> `curl -w '%{time_total} %{time_connect}'`로 잰다. 유휴 16분 후 조건을 맞춘다.
 
 **부수 검증**: arm64 Mac에서 `GOOS=linux GOARCH=amd64`로 정적 바이너리가 QEMU 없이 빌드됐다. ADR 0006의 CI 근거가 확인됐다.
 
