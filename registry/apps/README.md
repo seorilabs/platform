@@ -61,4 +61,4 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | app_id | 원장 환경 | IAP | entitlements |
 |---|---|---|---|
 | `babycare` | 미사용 | 비활성 | — |
-| `lizard-tycoon` | sandbox | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
+| `lizard-tycoon` | production | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
