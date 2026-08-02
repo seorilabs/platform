@@ -2,7 +2,6 @@ package ledger
 
 import (
 	"context"
-	"crypto/subtle"
 	"sort"
 	"time"
 
@@ -148,16 +147,20 @@ func (l *Ledger) Grant(ctx context.Context, in GrantInput) (domain.GrantResult, 
 			// 불변식 4. 다른 사용자의 구매는 자동으로 옮기지 않는다.
 			// tombstone은 소유자가 없으므로 예외다.
 			//
-			// 예외가 하나 더 있다. 마켓 계정이 같으면 같은 사람이다.
-			// 앱을 지우면 익명 uid가 새로 생기지만 구글·애플 계정은
-			// 그대로다. 그 사람이 자기 구매를 되찾는 것은 이 불변식이
-			// 막으려는 "남의 구매 가로채기"가 아니다.
+			// 여기 도달했다는 것은 마켓이 이 토큰을 유효한 소유로 확인해
+			// 줬다는 뜻이다. Play는 queryPurchases로 현재 로그인 계정이
+			// 가진 구매만 돌려주고 Apple은 Apple ID에 묶인 거래만 준다.
+			// 그 토큰을 마켓 API로 다시 검증한 뒤에야 여기 온다.
+			//
+			// 앱을 지우면 익명 uid가 새로 생기므로 소유자가 달라 보이는
+			// 것은 정상이다. 그때 거부하면 재설치한 유저는 예외 없이 산
+			// 상품을 잃는다. ADR 0010
+			//
+			// 남는 위험은 남의 purchaseToken을 손에 넣은 경우다. 토큰은
+			// 로그에 남기지 않고 TLS로만 오가며 이전은 감사 원장에 남는다.
+			// 근본 해결은 계정 연동이다.
 			if !order.Tombstone && order.PlatformUserID != "" &&
 				order.PlatformUserID != in.PlatformUserID {
-				if !sameMarketAccount(order, in.Purchase) {
-					return platformerr.New(platformerr.CodePurchaseOwnedByAnotherUser,
-						"다른 계정에서 구매한 상품이에요")
-				}
 				// 이전은 이동이지 복제가 아니다. 한 구매가 두 계정에서
 				// 동시에 활성이면 원장이 깨진다.
 				//
@@ -463,25 +466,6 @@ func (l *Ledger) markOneSandboxReset(ctx context.Context, puid, requestID, order
 		order.SandboxReset = &sandboxResetMark{RequestID: requestID, ResetAt: now}
 		return tx.Set(orderPath, order)
 	})
-}
-
-// sameMarketAccount는 같은 마켓 계정이 제시한 구매인지 본다.
-//
-// 마켓 계정 해시는 마켓이 직접 알려준 값이고, 그 값은 서명 검증을 거친
-// 영수증에서 나온다. 클라이언트가 주장하는 것이 아니라서 소유의 근거로
-// 삼을 수 있다.
-//
-// 둘 중 하나라도 비어 있으면 같다고 보지 않는다. HashAccountID는 빈
-// 입력에 빈 문자열을 주므로, 그냥 비교하면 계정 참조가 없는 주문끼리
-// 서로 이전 가능해진다.
-func sameMarketAccount(order orderDoc, p domain.VerifiedPurchase) bool {
-	incoming := domain.HashAccountID(p.PlatformAccountID)
-	if incoming == "" || order.PlatformAccountIDHash == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare(
-		[]byte(order.PlatformAccountIDHash), []byte(incoming),
-	) == 1
 }
 
 // readDetachedPreviousOwner는 이전 소유자의 원장을 읽고 이 구매의 근거를
