@@ -63,6 +63,7 @@ env:
   REGISTRY: asia-northeast3-docker.pkg.dev
   IMAGE_PATH: seorilabs-platform/platform/platform
   DEPLOYER_SA: platform-deployer@seorilabs-platform.iam.gserviceaccount.com
+  IAP_ENVIRONMENT: production
 
 jobs:
   build:
@@ -142,11 +143,12 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      # --image만 바꾸면 환경변수와 시크릿 마운트는 유지된다.
-      # PLATFORM_ROLE이 서비스마다 다르므로 이걸 건드리면 안 된다.
+      # production 서비스는 이미지와 IAP 원장 환경을 함께 고정한다.
+      # 환경을 명시하지 않으면 TestFlight 기간의 sandbox 값이 다음 배포에도
+      # 남아 production 레지스트리와 런타임이 갈라진다.
       - name: Deploy services
         run: |
-          for s in platform-api platform-iap platform-ingest platform-admin; do
+          for s in platform-api platform-ingest; do
             echo "::group::$s"
             gcloud run deploy "$s" \
               --project="$PROJECT_ID" --region="$REGION" \
@@ -154,11 +156,25 @@ jobs:
             echo "::endgroup::"
           done
 
+          gcloud run deploy platform-iap \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --image="${{ needs.build.outputs.image }}" \
+            --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
+            --quiet
+
+          gcloud run deploy platform-admin \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --image="${{ needs.build.outputs.image }}" \
+            --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT}" \
+            --quiet
+
       - name: Deploy worker job
         run: |
           gcloud run jobs update platform-worker \
             --project="$PROJECT_ID" --region="$REGION" \
-            --image="${{ needs.build.outputs.image }}" --quiet
+            --image="${{ needs.build.outputs.image }}" \
+            --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
+            --quiet
 
       # 배포가 전부 성공했다고 같은 태그가 됐다는 보장은 없다.
       # 드리프트를 눈으로 확인하지 않으면 다음에 또 놓친다.
@@ -179,6 +195,38 @@ jobs:
           printf '%-18s %s\n' "platform-worker" "$actual"
           [ "$actual" = "$expected" ] || { echo "  기대: $expected" >&2; fail=1; }
           [ "$fail" -eq 0 ] || { echo "배포 대상이 서로 다른 이미지로 돈다." >&2; exit 1; }
+
+      - name: Assert production IAP environment
+        run: |
+          service_env() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '.spec.template.spec.containers[0].env[] | select(.name == $name) | .value'
+          }
+          job_env() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '.spec.template.spec.template.spec.containers[0].env[] | select(.name == $name) | .value'
+          }
+
+          fail=0
+          for target in platform-iap platform-admin; do
+            actual=$(service_env "$target" IAP_LEDGER_ENVIRONMENT)
+            printf '%-18s IAP_LEDGER_ENVIRONMENT=%s\n' "$target" "$actual"
+            [ "$actual" = "$IAP_ENVIRONMENT" ] || fail=1
+          done
+
+          actual=$(service_env platform-iap APPLE_APP_STORE_ENVIRONMENT)
+          printf '%-18s APPLE_APP_STORE_ENVIRONMENT=%s\n' platform-iap "$actual"
+          [ "$actual" = "$IAP_ENVIRONMENT" ] || fail=1
+
+          for name in IAP_LEDGER_ENVIRONMENT APPLE_APP_STORE_ENVIRONMENT; do
+            actual=$(job_env platform-worker "$name")
+            printf '%-18s %s=%s\n' platform-worker "$name" "$actual"
+            [ "$actual" = "$IAP_ENVIRONMENT" ] || fail=1
+          done
+
+          [ "$fail" -eq 0 ] || { echo "IAP production 환경이 일치하지 않는다." >&2; exit 1; }
 
       # admin은 DRS로 비공개라 인증 없이는 403이 정상이다. 여기서
       # 확인하는 것은 공개 서비스 셋이 새 리비전으로 뜬 뒤 실제로
