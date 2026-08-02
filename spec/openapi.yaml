@@ -231,11 +231,22 @@ paths:
                           deleted: { type: boolean }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /iap/google-play/verify:
+  # 마켓별 엔드포인트를 두지 않는다. 증빙 필드 이름도 마켓마다 다르지
+  # 않고 token 하나다. 마켓이 늘 때마다 경로와 필드가 늘면 SDK가 마켓
+  # 개수만큼 갈라지고, 그 갈라짐은 지급 여부가 걸린 자리에서 드러난다.
+  /iap/verify:
     post:
       tags: [iap]
-      summary: Google Play 구매 검증
-      operationId: verifyGooglePlayPurchase
+      summary: 구매 검증과 지급
+      description: |
+        마켓 3종을 한 엔드포인트로 받는다. `platform`이 어느 마켓인지 정한다.
+
+        **Apple은 NON_CONSUMABLE이 아닌 상품을 422로 거부한다.**
+        **production과 sandbox 사이의 자동 fallback은 없다.**
+
+        응답의 `granted`와 `alreadyGranted`는 항상 배타적이다. 둘 다
+        false인 조합은 존재하지 않는다 — 불변식 2다.
+      operationId: verifyIapPurchase
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
         - $ref: '#/components/parameters/AppCheck'
@@ -245,16 +256,21 @@ paths:
           application/json:
             schema:
               type: object
-              required: [platform, productId, purchaseToken]
+              required: [platform, productId, token]
               additionalProperties: false
               properties:
                 platform:
                   type: string
-                  enum: [google_play]
+                  enum: [google_play, app_store, apps_in_toss]
                 productId: { $ref: '#/components/schemas/ProductId' }
-                purchaseToken:
+                token:
                   type: string
                   maxLength: 4096
+                  description: >
+                    마켓이 발급한 증빙. Play는 purchaseToken, App Store는
+                    transactionId, AppsInToss는 orderId다. 소유의 근거는
+                    이 토큰이다 — 마켓이 이 계정에 발급했다는 사실 자체가
+                    마켓이 내린 소유 판정이다. ADR 0010 참고.
       responses:
         '200': { $ref: '#/components/responses/VerifyPurchaseOk' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -266,84 +282,6 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '502': { $ref: '#/components/responses/ProviderError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
-
-  /iap/app-store/verify:
-    post:
-      tags: [iap]
-      summary: App Store 구매 검증
-      description: |
-        **NON_CONSUMABLE이 아닌 상품은 422로 거부한다.**
-
-        canonicalId는 transactionId가 아니라 **originalTransactionId**다.
-      operationId: verifyAppStorePurchase
-      parameters:
-        - $ref: '#/components/parameters/SeoriApp'
-        - $ref: '#/components/parameters/AppCheck'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [platform, productId, transactionId]
-              additionalProperties: false
-              properties:
-                platform:
-                  type: string
-                  enum: [app_store]
-                productId: { $ref: '#/components/schemas/ProductId' }
-                transactionId:
-                  type: string
-                  maxLength: 128
-      responses:
-        '200': { $ref: '#/components/responses/VerifyPurchaseOk' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '413': { $ref: '#/components/responses/PayloadTooLarge' }
-        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
-        '422': { $ref: '#/components/responses/Unprocessable' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '502': { $ref: '#/components/responses/ProviderError' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-
-  /iap/apps-in-toss/verify:
-    post:
-      tags: [iap]
-      summary: AppsInToss 구매 검증
-      description: |
-        **tossUserKey는 body로 받지 않는다.** 검증된 토큰의 claim에서만 읽는다.
-
-        AIT는 계정 바인딩 HMAC 검증에서 면제된다. claim 자체가 신뢰 경로다.
-        따라서 anonymous 신원은 이 엔드포인트를 쓸 수 없다.
-      operationId: verifyAppsInTossPurchase
-      parameters:
-        - $ref: '#/components/parameters/SeoriApp'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [platform, productId, orderId]
-              additionalProperties: false
-              properties:
-                platform:
-                  type: string
-                  enum: [apps_in_toss]
-                productId: { $ref: '#/components/schemas/ProductId' }
-                orderId:
-                  type: string
-                  maxLength: 128
-      responses:
-        '200': { $ref: '#/components/responses/VerifyPurchaseOk' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '413': { $ref: '#/components/responses/PayloadTooLarge' }
-        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
-        '422': { $ref: '#/components/responses/Unprocessable' }
-        '502': { $ref: '#/components/responses/ProviderError' }
 
   /iap/entitlements:
     get:
@@ -409,7 +347,10 @@ paths:
                             format: uuid
         '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /iap/webhooks/app-store:
+  # 실제 라우트는 /v1/iap/webhooks/apple 이다. App Store Connect의 알림
+  # URL에 이 값을 그대로 등록한다. 경로가 틀리면 404가 나고 환불·취소
+  # 알림이 유실된다 — 마켓은 우리 원장을 대신 지켜주지 않는다.
+  /iap/webhooks/apple:
     post:
       tags: [webhook]
       summary: App Store Server Notification v2 수신
@@ -449,7 +390,9 @@ paths:
         '422': { $ref: '#/components/responses/Unprocessable' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
-  /iap/webhooks/google-play:
+  # 실제 라우트는 /v1/iap/webhooks/play 다. Pub/Sub push subscription의
+  # push endpoint에 이 값을 등록한다.
+  /iap/webhooks/play:
     post:
       tags: [webhook]
       summary: Google Play RTDN 수신
