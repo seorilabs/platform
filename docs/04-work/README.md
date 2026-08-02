@@ -38,8 +38,14 @@ GCP 프로젝트 + **Billing budget 70,000 KRW**(40%/100%) · Firestore `(defaul
 `platformerr`(Code 60여 개, **AST 파싱으로 누락 자동 검출**) · `store`(Firestore 접근 독점) · `httpx` · `registry` · `identity` · `cmd/regsync`.
 
 Babycare는 ADR 0013의 Firebase custom token bridge를 사용한다. 기존 ID token은 같은 uid로
-교환하고 신규 uid는 서버가 생성한다. 실제 활성화에는 앱 SA 생성, resource-level
-`roles/iam.serviceAccountTokenCreator`, registry sync, platform-api 배포가 모두 필요하다.
+교환하고 신규 uid는 서버가 생성한다. 2026-08-02 앱 SA와 resource-level
+`roles/iam.serviceAccountTokenCreator`, registry sync, platform-api production 배포를 완료했다.
+
+- workflow: [run 30750253253](https://github.com/seorilabs/platform/actions/runs/30750253253)
+- revision/image: `platform-api-00015-xpx` / `platform:b57bfc82a6cf7cf5f5fb2b9c612adc4612d5754d`
+- live smoke: UID 주입 거부, 신규 Firebase custom token 교환, 합성 legacy UID 보존,
+  `Cache-Control: no-store`, 생성한 Firebase 사용자와 platform mapping cleanup
+- 남은 운영 gate: App Check 또는 edge rate limit, 실제 기존 사용자·실기기 migration
 
 **필수 게이트 통과**: 골든 JWT 6종 거부 · 100회 동시 호출 → `platform_user_id` 1개.
 
