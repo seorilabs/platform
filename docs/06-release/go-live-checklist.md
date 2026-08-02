@@ -491,6 +491,84 @@ gcloud run jobs list --project=seorilabs-platform \
 **워커를 빠뜨리지 않는다.** 서비스만 보는 명령으로는 드리프트가 보이지
 않는다. 위 두 명령을 항상 같이 본다.
 
+### 4.0.1 서비스별 필수 설정
+
+**코드가 요구하는 설정과 배포된 설정이 어긋나면 부팅에서 죽는다.** 실제로
+겪었다. Admin API를 확장하면서 `platform-admin`의 요구가 바뀌었는데 배포
+설정이 따라가지 않았고, 수동 배포 시절에는 admin을 올리지 않아 드러나지
+않다가 다섯을 함께 올리는 워크플로가 처음으로 노출시켰다.
+
+부팅 실패는 트래픽을 받지 않으므로 장애는 아니다. 다만 세 번 연속으로
+한 단계씩 막혔다 — 하나 고치면 다음이 나온다. 그래서 여기에 전부 적는다.
+
+#### platform-admin
+
+| 환경변수 | 출처 | 비고 |
+|---|---|---|
+| `PLATFORM_ROLE=admin` | 평문 | |
+| `GOOGLE_CLOUD_PROJECT` | 평문 | |
+| `IAP_LEDGER_ENVIRONMENT` | 평문 | `platform-api`·`platform-iap`과 같아야 한다 |
+| `IAP_CATALOG_JSON` | Secret `iap-catalog` | 앱에 허용된 entitlement인지 검증한다 |
+| `ADMIN_OIDC_AUDIENCE` | 평문 | 서비스 URL |
+| `ADMIN_READ_ALLOWED_ACCOUNTS` | 평문 | **조회 전용 계정만** |
+| `ADMIN_WRITE_ALLOWED_ACCOUNTS` | 평문 | 조작 계정 |
+
+`config.go`의 `loadIAP(role != RoleAdmin)`가 admin에는 카탈로그만 읽힌다.
+**마켓 자격증명과 계정 바인딩 키는 admin에 마운트하지 않는다** — R3다.
+카탈로그는 SKU 메타데이터라 자격증명이 아니다.
+
+시크릿을 마운트하려면 런타임 SA에 접근 권한도 줘야 한다. 마운트만 하면
+부팅이 실패한다.
+
+```bash
+gcloud secrets add-iam-policy-binding iap-catalog \
+  --project=seorilabs-platform \
+  --member="serviceAccount:platform-admin@seorilabs-platform.iam.gserviceaccount.com" \
+  --role=roles/secretmanager.secretAccessor
+```
+
+**read와 write 목록은 서로 겹치면 안 된다.** 겹치면
+`runtime_config_invalid`로 부팅이 실패한다.
+
+```go
+allowed := a.writeAllowed[email]
+if access == AccessRead {
+    allowed = allowed || a.readAllowed[email]
+}
+```
+
+write 계정은 조회도 된다. 그래서 read 목록에는 **조회만 하는 계정**을
+넣는다. 양쪽에 같은 계정을 넣으면 분리의 의미가 없을 뿐 아니라 아예
+뜨지 않는다.
+
+`ADMIN_ALLOWED_ACCOUNTS`는 폐기했다. 남아 있으면 경고만 찍고 무시한다.
+구버전으로 fallback하지 않는다 — 조회 자격증명이 유출돼도 원장을 바꿀
+수 없어야 한다는 것이 분리의 이유이기 때문이다.
+
+`--update-env-vars`에 이메일을 넘길 때는 구분자를 바꾼다. 기본 구분자가
+쉼표라 목록이 쪼개지고, `^@^`는 이메일의 `@`와 충돌한다.
+
+```bash
+gcloud run services update platform-admin \
+  --project=seorilabs-platform --region=asia-northeast3 \
+  --update-env-vars="^;^ADMIN_READ_ALLOWED_ACCOUNTS=a@x;ADMIN_WRITE_ALLOWED_ACCOUNTS=b@x,c@x"
+```
+
+#### 부팅 실패를 진단한다
+
+Cloud Run은 "container failed to start"까지만 알려준다. 실제 사유는
+리비전 로그에 있다.
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision"
+   AND resource.labels.service_name="platform-admin"
+   AND resource.labels.revision_name="<실패한 리비전>"' \
+  --project=seorilabs-platform --limit=20
+```
+
+`{"msg":"종료","err":"..."}` 한 줄이 원인이다.
+
 ### 4.1 서비스 배포
 
 production 환경으로 올린다. **`platform-api`와 `platform-iap`의
