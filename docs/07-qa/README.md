@@ -10,7 +10,7 @@
 | 4 | Godot HTML shell에 추가 script를 넣은 `.ait`가 심사를 통과하는가 | 대기 — 심사 제출 필요 |
 | 5 | `appLogin` 토큰의 서버 검증 API 존재 여부 | 대기 — **미확인이라 `KindAITLogin`을 fail-closed로 거부 중** |
 | 6 | Cloud Run `allUsers`가 조직 DRS 정책에 막히는가 | **✅ 확인됨 — 막힌다. 우회 방법 확보** |
-| 7 | Go 콜드스타트 실측 | **⚠️ 425ms — 목표 300ms 초과.** 아래 참고. 그 뒤 코드가 많이 바뀌어 재측정 필요 |
+| 7 | Go 콜드스타트 실측 | **⚠️ 실서버 재측정 798~878ms — 목표 300ms 초과.** warm-up ping 도입 확정 |
 
 ### 결과 — 2번: Firestore ✅
 
@@ -55,15 +55,52 @@ org policy `constraints/iam.allowedPolicyMemberDomains`가 seorilabs 디렉토�
 
 적용 시점은 각 서비스 배포와 함께다. `platform-iap`(결제 경로)에 가장 가치가 크다.
 
-> **현재 상태: 아직 도입하지 않았다.** Cloud Scheduler에는 `platform-worker-5m`
-> 하나뿐이다. 위에 적은 "P1·P5 이후 재측정"도 하지 않았다.
+### 재측정 — 2026-08-02, 실서버
+
+위에서 "P1·P5 이후 재측정"으로 미뤄둔 것을 실제 서비스에서 다시 쟀다.
+
+**Cloud Run이 이미 기록한 `run.googleapis.com/container/startup_latencies`를 읽었다.**
+리비전을 일부러 비워 콜드를 만들지 않았다 — 실서비스 중이라 유저에게 콜드를
+떠넘기게 된다. 지표는 지난 7일간 실제 콜드스타트를 전부 담고 있어 표본이 더 낫다.
+
+현재 트래픽을 받는 리비전 기준이다.
+
+| 서비스 | p50 | p95 | 목표 | P0 대비 |
+|---|---|---|---|---|
+| `platform-api` | 842ms | 878ms | 300ms | **2.1배** |
+| `platform-iap` | 765ms | **798ms** | 300ms | **1.9배** |
+| `platform-ingest` | 575ms | 600ms | 300ms | 1.4배 |
+
+**예측대로 늘었다.** P0의 425ms는 표준 라이브러리만 쓴 최소 서버였고, 지금은
+Firestore·BigQuery 클라이언트 초기화와 ADC 토큰 획득이 붙는다. `platform-api`가
+가장 느린 이유는 JWKS 최초 로드가 겹치기 때문으로 보인다.
+
+warm은 반대로 좋다. `/health/live` 왕복이 api 98ms, iap 111ms이고 `connect`
+50ms를 빼면 **서버 몫은 47~60ms**다.
+
+> **결론: warm-up ping을 도입한다.** 재측정 결과가 목표를 2배 가까이 넘겼고,
+> 결제 검증은 유저가 화면에서 기다리는 유일한 경로다. 798ms는 구매 버튼을
+> 누른 뒤 체감되는 지연이다.
 >
-> 그래서 **재측정이 먼저다.** 425ms는 표준 라이브러리만 쓴 최소 서버 수치이고,
-> 지금 서버는 Firestore·마켓 클라이언트가 붙어 있다. 늘었는지 줄었는지 모르는
-> 상태에서 도입 여부를 정할 수 없다.
->
-> 측정: `platform-iap` 리비전을 재배포해 인스턴스를 비우고 첫 요청을
-> `curl -w '%{time_total} %{time_connect}'`로 잰다. 유휴 16분 후 조건을 맞춘다.
+> 대상은 `platform-iap`와 `platform-api` 둘. `platform-ingest`는
+> fire-and-forget이라 콜드가 유저에게 보이지 않고, `platform-admin`은
+> 운영자용이라 660ms를 감수한다.
+
+측정을 재현하려면:
+
+```bash
+curl -s -G -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: seorilabs-platform" \
+  "https://monitoring.googleapis.com/v3/projects/seorilabs-platform/timeSeries" \
+  --data-urlencode 'filter=metric.type="run.googleapis.com/container/startup_latencies"' \
+  --data-urlencode "interval.startTime=<7일 전 RFC3339>" \
+  --data-urlencode "interval.endTime=<지금 RFC3339>" \
+  --data-urlencode "aggregation.alignmentPeriod=604800s" \
+  --data-urlencode "aggregation.perSeriesAligner=ALIGN_PERCENTILE_95"
+```
+
+`x-goog-user-project` 헤더가 필요하다. 없으면 gcloud 기본 quota 프로젝트로
+붙어서 billing 오류가 난다.
 
 **부수 검증**: arm64 Mac에서 `GOOS=linux GOARCH=amd64`로 정적 바이너리가 QEMU 없이 빌드됐다. ADR 0006의 CI 근거가 확인됐다.
 
