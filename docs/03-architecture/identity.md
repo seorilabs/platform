@@ -43,7 +43,25 @@ https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceacc
 
 구현은 `golang-jwt/jwt/v5` + JWKS 캐시. **알고리즘·issuer·audience 판정을 라이브러리 옵션에 전부 위임하고 직접 파싱하지 않는다.**
 
-**Firebase Admin SDK for Go를 쓰지 않는다.** 프로젝트별 App 인스턴스가 필요해 16개 앱에 부적합하고, 메모리와 콜드스타트가 낭비된다.
+ID token **검증에는 Firebase Admin SDK for Go를 쓰지 않는다.** 프로젝트별 App 인스턴스가 필요해 16개 앱에 부적합하고, 메모리와 콜드스타트가 낭비된다.
+
+## Firebase custom token bridge
+
+```
+POST /v1/auth/firebase-custom-token
+{ "appId": "babycare", "existingFirebaseIdToken": "선택" }
+→ { "firebaseCustomToken": "...", "appUserId": "..." }
+```
+
+- 기존 token이 있으면 위 검증 규칙으로 확인한 uid를 그대로 쓴다. Babycare의 기존 Firestore
+  소유권을 끊지 않는 migration 경로다.
+- token이 없으면 `pb_` + ULID uid를 서버에서 만든다. 클라이언트가 uid를 선택할 수 없다.
+- custom token 생성만 IAM Credentials `signJwt`를 쓴다. 앱별 private key나 service account
+  JSON은 platform에 두지 않는다.
+- 레지스트리 feature와 앱 프로젝트 service account가 모두 있어야 한다.
+- 응답 token은 1회용 전달값이다. 로그·Firestore·클라이언트 저장소에 남기지 않는다.
+
+세부 보안 결정은 ADR 0013을 따른다.
 
 ### `checkRevoked` — 판단이 필요한 지점
 

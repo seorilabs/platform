@@ -80,14 +80,23 @@ type Result struct {
 	ExpiresAt   time.Time
 }
 
+// FirebaseCustomTokenResult는 custom token bridge 응답이다.
+// 토큰은 클라이언트가 즉시 Firebase signInWithCustomToken에 쓰고 저장하지 않는다.
+type FirebaseCustomTokenResult struct {
+	FirebaseCustomToken string
+	AppUserID           string
+	PlatformUserID      string
+}
+
 // Service는 세션 교환 유스케이스다.
 type Service struct {
-	registry   *registry.Registry
-	verifier   TokenVerifier
-	users      UserRepository
-	issuer     *SessionIssuer
-	refreshTTL time.Duration
-	now        func() time.Time
+	registry     *registry.Registry
+	verifier     TokenVerifier
+	users        UserRepository
+	issuer       *SessionIssuer
+	customTokens CustomTokenIssuer
+	refreshTTL   time.Duration
+	now          func() time.Time
 }
 
 // NewService는 서비스를 만든다.
@@ -105,6 +114,88 @@ func NewService(
 		refreshTTL: DefaultRefreshTTL,
 		now:        time.Now,
 	}
+}
+
+// WithCustomTokenIssuer는 API role에만 custom token 원격 서명기를 연결한다.
+func (s *Service) WithCustomTokenIssuer(issuer CustomTokenIssuer) *Service {
+	s.customTokens = issuer
+	return s
+}
+
+// CreateFirebaseCustomToken은 platform 신원을 Firebase custom token으로 잇는다.
+//
+// 기존 Firebase ID token이 있으면 검증한 uid를 그대로 써서 기존 Firestore 소유권을
+// 보존한다. 토큰이 없으면 uid를 서버에서 생성한다. 클라이언트가 uid를 직접 고르는
+// kind=anonymous 경로를 Firebase 권한 부여에 재사용하지 않는 것이 핵심이다.
+func (s *Service) CreateFirebaseCustomToken(
+	ctx context.Context,
+	appID string,
+	existingFirebaseIDToken string,
+) (FirebaseCustomTokenResult, error) {
+	app, err := s.registry.GetUsable(ctx, appID)
+	if err != nil {
+		return FirebaseCustomTokenResult{}, err
+	}
+	if !app.FeatureEnabled("firebase_custom_token_bridge") {
+		return FirebaseCustomTokenResult{}, platformerr.New(
+			platformerr.CodeAuthForbidden,
+			"이 앱은 custom token bridge를 사용하지 않아요",
+		)
+	}
+	if s.customTokens == nil {
+		return FirebaseCustomTokenResult{}, platformerr.New(
+			platformerr.CodePlatformUnavailable,
+			"인증 bridge를 사용할 수 없어요",
+		)
+	}
+
+	var uid string
+	if token := strings.TrimSpace(existingFirebaseIDToken); token != "" {
+		if len(token) > 4096 {
+			return FirebaseCustomTokenResult{}, platformerr.New(
+				platformerr.CodeRequestInvalid,
+				"기존 Firebase token이 너무 길어요",
+			)
+		}
+		claims, verifyErr := s.verifier.Verify(ctx, token, app)
+		if verifyErr != nil {
+			return FirebaseCustomTokenResult{}, verifyErr
+		}
+		uid = claims.UID
+	} else {
+		uid, err = NewFirebaseBridgeUserID()
+		if err != nil {
+			return FirebaseCustomTokenResult{}, platformerr.Wrap(
+				err,
+				platformerr.CodePlatformUnavailable,
+				"인증 사용자를 만들지 못했어요",
+			)
+		}
+	}
+	if app.UIDBlocked(uid) {
+		return FirebaseCustomTokenResult{}, platformerr.New(
+			platformerr.CodeUserBlocked,
+			"이용이 제한된 계정이에요",
+		)
+	}
+
+	customToken, err := s.customTokens.Mint(ctx, app, uid)
+	if err != nil {
+		return FirebaseCustomTokenResult{}, platformerr.Wrap(
+			err,
+			platformerr.CodePlatformUnavailable,
+			"Firebase 인증 토큰을 만들지 못했어요",
+		)
+	}
+	platformUserID, err := s.users.EnsureUser(ctx, app.AppID, uid, false)
+	if err != nil {
+		return FirebaseCustomTokenResult{}, err
+	}
+	return FirebaseCustomTokenResult{
+		FirebaseCustomToken: customToken,
+		AppUserID:           uid,
+		PlatformUserID:      platformUserID,
+	}, nil
 }
 
 // WithClock은 시계를 주입한다. 테스트용이다.

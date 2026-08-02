@@ -31,3 +31,4 @@ ADR과 장기 의사결정을 관리한다.
 | [0010](0010-market-account-as-ownership-anchor.md) | 소유의 근거는 마켓 계정이다 | Accepted |
 | [0011](0011-admin-management-boundary.md) | 플랫폼 관리 조작은 좁은 Admin 경계에서만 수행한다 | Accepted |
 | [0012](0012-sandbox-reset-durable-intent.md) | sandbox reset은 영구 intent로 시작 순서를 확정한다 | Accepted |
+| [0013](0013-platform-firebase-custom-token-bridge.md) | platform이 앱 Firebase custom token을 원격 서명한다 | Accepted |

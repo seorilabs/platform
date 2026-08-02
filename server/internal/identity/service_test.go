@@ -28,6 +28,24 @@ func (f fakeVerifier) Verify(_ context.Context, token string, _ registry.App) (C
 	return Claims{UID: token, SignInProvider: "anonymous", IsAnonymous: true}, nil
 }
 
+type fakeCustomTokenIssuer struct {
+	token string
+	err   error
+	uid   string
+}
+
+func (f *fakeCustomTokenIssuer) Mint(
+	_ context.Context,
+	_ registry.App,
+	uid string,
+) (string, error) {
+	f.uid = uid
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.token, nil
+}
+
 // memRepo는 메모리 기반 저장소다.
 //
 // EnsureUser의 멱등성을 실제로 검증하려고 잠금을 건다.
@@ -110,6 +128,25 @@ func newTestService(t *testing.T, verifier TokenVerifier, repo UserRepository) *
 	return NewService(reg, verifier, repo, issuer)
 }
 
+func newBridgeTestService(
+	t *testing.T,
+	verifier TokenVerifier,
+	repo UserRepository,
+	customTokens CustomTokenIssuer,
+) *Service {
+	t.Helper()
+	app := testApp()
+	app.Features = map[string]bool{}
+	app.Features["firebase_custom_token_bridge"] = true
+	app.FirebaseCustomTokenServiceAccount = "platform-auth@lizard-tycoon.iam.gserviceaccount.com"
+	reg := registry.New(fakeSource{apps: []registry.App{app}})
+	issuer, err := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
+	if err != nil {
+		t.Fatalf("발급기 생성 실패: %v", err)
+	}
+	return NewService(reg, verifier, repo, issuer).WithCustomTokenIssuer(customTokens)
+}
+
 func TestCreateSession(t *testing.T) {
 	repo := newMemRepo()
 	svc := newTestService(t, fakeVerifier{}, repo)
@@ -141,6 +178,72 @@ func TestCreateSession(t *testing.T) {
 	if sess.PlatformUserID != res.PlatformUserID {
 		t.Errorf("puid = %q, want %q", sess.PlatformUserID, res.PlatformUserID)
 	}
+}
+
+func TestCreateFirebaseCustomTokenPreservesExistingUID(t *testing.T) {
+	repo := newMemRepo()
+	customTokens := &fakeCustomTokenIssuer{token: "signed-custom-token"}
+	svc := newBridgeTestService(t, fakeVerifier{}, repo, customTokens)
+
+	result, err := svc.CreateFirebaseCustomToken(
+		context.Background(),
+		"lizard-tycoon",
+		"existing-firebase-uid",
+	)
+	if err != nil {
+		t.Fatalf("custom token bridge 실패: %v", err)
+	}
+	if result.AppUserID != "existing-firebase-uid" || customTokens.uid != result.AppUserID {
+		t.Fatalf("기존 uid가 보존되지 않았다: result=%q signer=%q", result.AppUserID, customTokens.uid)
+	}
+	if result.FirebaseCustomToken != "signed-custom-token" {
+		t.Fatalf("custom token = %q", result.FirebaseCustomToken)
+	}
+	if result.PlatformUserID == "" {
+		t.Fatal("platform user 매핑이 생성되지 않았다")
+	}
+}
+
+func TestCreateFirebaseCustomTokenGeneratesServerUID(t *testing.T) {
+	customTokens := &fakeCustomTokenIssuer{token: "signed-custom-token"}
+	svc := newBridgeTestService(t, fakeVerifier{}, newMemRepo(), customTokens)
+
+	result, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+	if err != nil {
+		t.Fatalf("custom token bridge 실패: %v", err)
+	}
+	if len(result.AppUserID) != len(firebaseBridgeUserPrefix)+26 ||
+		result.AppUserID[:len(firebaseBridgeUserPrefix)] != firebaseBridgeUserPrefix {
+		t.Fatalf("server uid 형식이 올바르지 않다: %q", result.AppUserID)
+	}
+	if customTokens.uid != result.AppUserID {
+		t.Fatalf("서명 uid = %q, want %q", customTokens.uid, result.AppUserID)
+	}
+}
+
+func TestCreateFirebaseCustomTokenFailsClosed(t *testing.T) {
+	t.Run("feature가 꺼진 앱", func(t *testing.T) {
+		svc := newTestService(t, fakeVerifier{}, newMemRepo()).WithCustomTokenIssuer(
+			&fakeCustomTokenIssuer{token: "unused"},
+		)
+		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+		if code := platformerr.CodeOf(err); code != platformerr.CodeAuthForbidden {
+			t.Fatalf("code = %q, want auth_forbidden", code)
+		}
+	})
+
+	t.Run("원격 서명 실패", func(t *testing.T) {
+		svc := newBridgeTestService(
+			t,
+			fakeVerifier{},
+			newMemRepo(),
+			&fakeCustomTokenIssuer{err: errors.New("signJwt denied")},
+		)
+		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+		if code := platformerr.CodeOf(err); code != platformerr.CodePlatformUnavailable {
+			t.Fatalf("code = %q, want platform_unavailable", code)
+		}
+	})
 }
 
 // 같은 uid로 동시에 100번 호출해도 platform_user_id는 하나여야 한다.

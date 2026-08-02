@@ -27,8 +27,46 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // Go 1.22+가 메서드와 경로 변수를 지원하므로 외부 라우터가 불필요하다.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/session", httpx.Wrap(h.createSession))
+	mux.HandleFunc("POST /v1/auth/firebase-custom-token", httpx.Wrap(h.createFirebaseCustomToken))
 	mux.HandleFunc("POST /v1/auth/refresh", httpx.Wrap(h.refresh))
 	mux.HandleFunc("DELETE /v1/users/me", httpx.Wrap(h.deleteMe))
+}
+
+type createFirebaseCustomTokenRequest struct {
+	AppID                   string `json:"appId"`
+	ExistingFirebaseIDToken string `json:"existingFirebaseIdToken,omitempty"`
+}
+
+type firebaseCustomTokenResponse struct {
+	FirebaseCustomToken string `json:"firebaseCustomToken"`
+	AppUserID           string `json:"appUserId"`
+}
+
+func (h *Handler) createFirebaseCustomToken(w http.ResponseWriter, r *http.Request) error {
+	var req createFirebaseCustomTokenRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if req.AppID == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid, "appId가 필요해요")
+	}
+	appID, err := resolveAppID(r, req.AppID)
+	if err != nil {
+		return err
+	}
+	result, err := h.svc.CreateFirebaseCustomToken(
+		r.Context(),
+		appID,
+		req.ExistingFirebaseIDToken,
+	)
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusOK, firebaseCustomTokenResponse{
+		FirebaseCustomToken: result.FirebaseCustomToken,
+		AppUserID:           result.AppUserID,
+	})
+	return nil
 }
 
 type createSessionRequest struct {

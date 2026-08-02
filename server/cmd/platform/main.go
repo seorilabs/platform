@@ -131,6 +131,14 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			users,
 			issuer,
 		)
+		if cfg.Role == config.RoleAPI {
+			customTokens, err := identity.NewIAMCustomTokenIssuer(ctx)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			svc.WithCustomTokenIssuer(customTokens)
+		}
 		d.identity = identity.NewHandler(svc)
 		d.adminUsers = users
 		d.keys = keys

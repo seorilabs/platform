@@ -82,3 +82,58 @@ func TestEntitlementAllowedIsAppScoped(t *testing.T) {
 		t.Fatal("다른 앱 entitlement가 허용됐다")
 	}
 }
+
+func TestFirebaseCustomTokenBridgeConfigValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*App)
+		wantErr string
+	}{
+		{
+			name: "활성 bridge는 같은 Firebase 프로젝트 SA를 허용",
+			mutate: func(app *App) {
+				app.Features["firebase_custom_token_bridge"] = true
+				app.FirebaseCustomTokenServiceAccount = "platform-auth@test-app.iam.gserviceaccount.com"
+			},
+		},
+		{
+			name: "활성 bridge에 SA가 없으면 거부",
+			mutate: func(app *App) {
+				app.Features["firebase_custom_token_bridge"] = true
+			},
+			wantErr: "service account가 필요",
+		},
+		{
+			name: "다른 프로젝트 SA는 거부",
+			mutate: func(app *App) {
+				app.Features["firebase_custom_token_bridge"] = true
+				app.FirebaseCustomTokenServiceAccount = "platform-auth@other-app.iam.gserviceaccount.com"
+			},
+			wantErr: "Firebase 프로젝트와 다르다",
+		},
+		{
+			name: "비활성 bridge의 잔여 SA는 거부",
+			mutate: func(app *App) {
+				app.FirebaseCustomTokenServiceAccount = "platform-auth@test-app.iam.gserviceaccount.com"
+			},
+			wantErr: "bridge가 비활성",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := validAppForTest()
+			tt.mutate(&app)
+			err := app.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
