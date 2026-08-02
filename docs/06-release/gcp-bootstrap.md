@@ -180,7 +180,8 @@ gcloud iam service-accounts add-iam-policy-binding \
 | 프로젝트 전체 Token Creator | 동일 member/role binding 없음 |
 | registry | `cmd/regsync`로 `babycare`, `lizard-tycoon` 2개 앱 upsert |
 | production workflow | [run 30750253253](https://github.com/seorilabs/platform/actions/runs/30750253253) 성공 |
-| Cloud Run | `platform-api-00015-xpx`, `platform:b57bfc82a6cf7cf5f5fb2b9c612adc4612d5754d`, traffic 100% |
+| 최초 활성화 Cloud Run | `platform-api-00015-xpx`, `platform:b57bfc82a6cf7cf5f5fb2b9c612adc4612d5754d`, traffic 100% |
+| 후속 main 배포 호환성 | [run 30750946141](https://github.com/seorilabs/platform/actions/runs/30750946141) 뒤 `platform-api-00016-cdv`, `platform:bdbd69428900d85ab7ae4e9a58b32eee09e48f20`, babycare config 200, custom-token GET 405·`Allow: POST` |
 | live smoke | UID 주입 거부, 신규 custom token Firebase 교환, 합성 legacy UID 동일 전환, `no-store`, 테스트 사용자·mapping cleanup |
 
 API key, custom token, ID token과 UID는 출력하거나 문서화하지 않았다. App Check 또는 edge
