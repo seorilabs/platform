@@ -1,7 +1,8 @@
 // Package registry는 앱 레지스트리를 로드하고 캐시한다.
 //
 // 레지스트리의 source of truth는 repo의 registry/apps/*.json이다.
-// CI가 스키마를 검증해 Firestore로 upsert하고, 런타임은 여기서 캐시해 읽는다.
+// CI는 스키마만 검증한다. Firestore로 올리는 것은 cmd/regsync를 사람이
+// 돌리는 별도 단계다. 런타임은 여기서 캐시해 읽는다.
 // 콘솔이나 Firestore를 직접 수정하지 않는다.
 package registry
 
@@ -87,7 +88,7 @@ var entitlementIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
-// CI가 Firestore로 올리기 전에 부르고, 런타임 로드에서도 부른다.
+// regsync가 Firestore로 올리기 전에 부르고, 런타임 로드에서도 부른다.
 // 잘못된 항목이 하나 있어도 나머지는 살아야 하므로 항목 단위로 판정한다.
 func (a App) Validate() error {
 	if !appIDPattern.MatchString(a.AppID) {

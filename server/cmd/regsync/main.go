@@ -3,10 +3,19 @@
 // registry/apps/*.json 이 source of truth다. 이 도구가 Firestore로 밀어넣고
 // 런타임은 Firestore에서 읽는다. 컨테이너에 repo가 없기 때문이다.
 //
-// CI가 registry/** 변경 시 자동으로 부른다. 로컬에서도 쓸 수 있다.
+// CI는 --dry-run 검증만 한다. 실제 적용은 사람이 돌린다.
 //
-//	regsync --dir=../registry/apps --project=seorilabs-platform
+// 자동 적용을 하지 않는 이유는 자격증명 범위다. Firestore IAM은 컬렉션
+// 단위로 못 쪼갠다. 레지스트리를 쓸 권한을 주면 같은 주체가 IAP 원장도
+// 쓸 수 있다. GitHub Actions에서 닿는 신원에 그 권한을 두지 않는다.
+// R3(자격증명 격리)와 같은 이유다.
+//
+// 대신 파일만 고치고 적용을 잊는 사고가 실제로 있었다. registry 파일은
+// iap:false인데 앱은 결제가 되고 백오피스 관리만 403이었다.
+// docs/06-release/go-live-checklist.md의 절차를 따른다.
+//
 //	regsync --dir=../registry/apps --project=seorilabs-platform --dry-run
+//	regsync --dir=../registry/apps --project=seorilabs-platform
 package main
 
 import (

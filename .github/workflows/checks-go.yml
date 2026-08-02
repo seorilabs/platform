@@ -25,6 +25,7 @@ on:
     paths:
       - "server/**"
       - "spec/**"
+      - "registry/**"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
   push:
@@ -32,6 +33,7 @@ on:
     paths:
       - "server/**"
       - "spec/**"
+      - "registry/**"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
 
@@ -66,6 +68,15 @@ jobs:
       - name: 스펙과 라우트 대조
         working-directory: .
         run: bash scripts/check_spec_routes.sh
+
+      # 레지스트리 파일이 부팅 전에 통과해야 하는 검증과 같은 규칙이다.
+      # 자격증명이 없어도 도는 검사라 여기 둔다.
+      #
+      # 이 단계가 잡지 못하는 것이 하나 있다. 파일이 옳아도 Firestore에
+      # 적용되지 않았으면 런타임은 옛 값으로 돈다. regsync는 CI가 아니라
+      # 사람이 돌린다 — docs/06-release/go-live-checklist.md 참고.
+      - name: 레지스트리 검증
+        run: go run ./cmd/regsync --dir=../registry/apps --dry-run
 
       - name: go vet
         run: go vet ./...

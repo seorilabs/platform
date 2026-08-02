@@ -569,6 +569,62 @@ gcloud logging read \
 
 `{"msg":"종료","err":"..."}` 한 줄이 원인이다.
 
+### 4.0.2 레지스트리는 배포에 딸려 오지 않는다
+
+`registry/apps/*.json`이 SoT지만 **파일을 고치고 병합하는 것만으로는 아무
+일도 일어나지 않는다.** 런타임은 Firestore를 읽고, 파일을 Firestore로
+올리는 것은 `cmd/regsync`를 사람이 돌리는 별도 단계다.
+
+```bash
+cd server
+go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform --dry-run
+go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
+```
+
+CI에는 `--dry-run` 검증만 있다. 자동 적용을 하지 않는 이유는 자격증명
+범위다 — Firestore IAM은 컬렉션 단위로 쪼갤 수 없어서, 레지스트리를 쓸
+권한을 주면 같은 주체가 IAP 원장도 쓸 수 있다. GitHub Actions에서 닿는
+신원에 그 권한을 두지 않는다(R3).
+
+**이 함정을 실제로 밟았다.** `features.iap`가 `false`인 채로 남아 결제는
+정상인데 백오피스 IAP 관리만 403이었다. 검증이 admin 경로에만 있어
+증상이 한쪽에서만 났다.
+
+```
+GET /v1/admin/apps/lizard-tycoon/iap/catalog
+→ 403 auth_forbidden "이 앱은 IAP 관리가 활성화되지 않았어요"
+```
+
+반영은 캐시 TTL 60초 안에 끝난다. 위 엔드포인트가 200에 entitlement
+목록을 돌려주면 된 것이다.
+
+### 4.0.3 운영자 지급(선물)을 열 때
+
+백오피스 `/platform/iap` 화면의 지급·회수는 세 가지가 **모두** 갖춰져야
+동작한다. 하나라도 빠지면 화면은 뜨지만 실행이 막힌다.
+
+| 전제 | 확인 |
+|---|---|
+| 레지스트리 `features.iap` + `entitlement_ids` | 위 4.0.2의 catalog 엔드포인트 200 |
+| `IAP_CATALOG_JSON`에 같은 entitlement | 두 목록의 **교집합만** 지급 가능 |
+| write 자격증명이 worker에만 | Secret `backoffice-app-ops-secrets` |
+
+플래그는 웹과 worker **양쪽을 같은 시점에** 바꾼다.
+
+```
+backoffice                  FEATURE_PLATFORM_ADMIN_WRITES=true
+backoffice-app-ops-worker   FEATURE_PLATFORM_ADMIN=true
+                            FEATURE_PLATFORM_ADMIN_WRITES=true
+```
+
+웹만 켜면 화면은 열리지만 worker가 mutation을 집지 않는다. worker만 켜면
+접수 경로가 없다. 웹 Pod에는 read 키만 있고 write 키는 worker에만 있으므로
+플래그를 켜도 웹이 원장을 직접 쓰지는 못한다 — 이것이 분리의 목적이다.
+
+한도는 조작 주체별 **분당 5 / 시간당 20 / 일 50**이다(`ledger/operator.go`).
+Firestore durable gate라 replica를 늘려도 공유된다. 대량 이벤트 배포용이
+아니다.
+
 ### 4.1 서비스 배포
 
 production 환경으로 올린다. **`platform-api`와 `platform-iap`의
