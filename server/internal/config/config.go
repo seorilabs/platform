@@ -42,7 +42,7 @@ type Config struct {
 	// BigQueryDataset은 이벤트와 감사 원장이 들어갈 데이터셋이다.
 	BigQueryDataset string
 
-	// IAP는 결제 설정이다. iap와 worker role에서만 채워진다.
+	// IAP는 결제 설정이다. iap, worker, admin role에서 채워진다.
 	//
 	// 마켓 자격증명은 platform-iap 서비스에만 마운트된다. R3다.
 	IAP IAPConfig
@@ -73,7 +73,7 @@ func Load() (Config, error) {
 
 	// worker는 HTTP를 열지 않으므로 세션 비밀키가 필요 없다.
 	// ingest도 세션 없이 익명 수집을 허용한다.
-	if role == RoleAPI || role == RoleIAP || role == RoleAdmin {
+	if role == RoleAPI || role == RoleIAP {
 		secret, err := loadSessionSecret()
 		if err != nil {
 			return Config{}, err
@@ -92,10 +92,10 @@ func Load() (Config, error) {
 	// 원장을 다루는 role이 마켓 설정을 읽는다.
 	//
 	// worker는 완료 재시도 때 마켓을 호출하므로 검증기가 필요하고,
-	// admin은 원장 경로(환경 prefix)만 알면 된다. 마켓 자격증명은
+	// admin은 원장 경로와 entitlement 카탈로그만 읽는다. 마켓 자격증명은
 	// iap와 worker에만 마운트한다. R3다.
 	if role == RoleIAP || role == RoleWorker || role == RoleAdmin {
-		// admin은 마켓에 묻지 않으므로 자격증명도 카탈로그도 요구하지 않는다.
+		// admin은 카탈로그는 검증하되 마켓 자격증명은 요구하지 않는다.
 		iap, err := loadIAP(role != RoleAdmin)
 		if err != nil {
 			return Config{}, err

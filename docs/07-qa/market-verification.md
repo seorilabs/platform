@@ -459,6 +459,58 @@ fake transport로는 잡히지 않는다. 요청이 프론트엔드에서 막히
 > 서버 로그가 비어 있는데 클라이언트가 응답을 받았다면, 답한 것은
 > 우리 서버가 아니라 그 앞의 무언가다.
 
+## 가짜가 원본과 갈라지면 테스트는 아무것도 지키지 못한다
+
+복원이 실기기에서 매달렸다. 화면은 "구매 내역을 확인하고 있어요"에서
+멈추고 `operation_timeout`이 났다. 원인은 SDK 호출 시그니처였다.
+
+```gdscript
+func verify_purchase(proof: Dictionary, callback: Callable) -> void:      # SDK 정의
+_platform_client.verify_purchase(platform, product_id, token, callback)   # 호출부
+```
+
+GDScript는 이 호출을 런타임에 실패시키고 콜백을 돌려주지 않는다.
+컴파일 시점에 잡히지 않는다.
+
+### 왜 probe가 놓쳤나
+
+**가짜 SDK가 잘못된 쪽을 흉내내도록 만들어져 있었다.** 호출부가 인자
+넷을 쓰니 가짜도 넷을 받게 했고, 그래서 36건이 전부 통과했다.
+잘못된 코드를 잘못된 테스트가 승인한 것이다.
+
+`account_references`와 `list_entitlements`는 인자가 없어 우연히 맞았다.
+그래서 구매 흐름의 앞부분만 동작했고 정확히 검증에서만 죽었다 — 어느
+한 부분만 조용히 실패하는 형태라 원인을 좁히는 데 오래 걸렸다.
+
+### 두 겹으로 막는다
+
+**시그니처 대조.** `get_method_list()`로 가짜와 실제 SDK의 인자 수를
+비교한다. 갈라지는 순간 CI에서 걸린다.
+
+```gdscript
+func _arg_count(obj: Object, method_name: String) -> int:
+	for method in obj.get_method_list():
+		if String(method.get("name", "")) == method_name:
+			return (method.get("args", []) as Array).size()
+	return -1
+```
+
+**가짜 없이 한 번 돌려본다.** `real_verify_chain_probe.gd`가 진짜
+`PlatformClient`와 진짜 `PlatformIapClient`를 붙여 실제 서버까지 보낸다.
+증빙이 가짜라 서버가 거부하는 것이 정상이고, 보는 것은 **콜백이
+유실되지 않는다**는 사실이다.
+
+### 일반화
+
+> 가짜는 원본의 계약을 흉내내야지, 호출부의 가정을 흉내내면 안 된다.
+> 가짜를 만들 때 참조할 것은 내가 쓴 호출 코드가 아니라 원본의 정의다.
+>
+> 그리고 연결부는 가짜 없이 한 번은 실제로 돌려봐야 한다. 단위
+> probe가 아무리 많아도 그 하나를 대신하지 못한다.
+
+이 결함 하나 때문에 실기기 빌드를 세 번 더 올렸다. 로컬에서 실제 SDK로
+한 번만 돌려봤으면 첫 빌드 전에 끝났다.
+
 ## 관련
 
 - provider 구현: `server/internal/iap/providers/`

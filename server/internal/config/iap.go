@@ -108,9 +108,9 @@ const (
 // platform_unavailable로 거부되고 나머지는 정상 동작한다.
 // AIT 인증서 미확보 같은 상황이 실제로 있어서 전부-아니면-전무로 두지 않는다.
 //
-// requireMarket이 false면 원장 환경만 읽는다. Admin API가 그렇다 —
-// 원장을 읽고 운영자 지급을 쓸 뿐 마켓에 묻지 않는다. 필요 없는
-// 비밀을 마운트하지 않는 것이 R3의 실질이다.
+// requireMarket이 false면 원장 환경과 SKU 카탈로그만 읽는다. Admin API가
+// 앱에 허용된 entitlement인지 검증하는 데 카탈로그가 필요하지만 마켓에
+// 묻지는 않는다. 필요 없는 자격증명을 마운트하지 않는 것이 R3의 실질이다.
 func loadIAP(requireMarket bool) (IAPConfig, error) {
 	c := IAPConfig{
 		Environment:           envOr("IAP_LEDGER_ENVIRONMENT", EnvProduction),
@@ -126,16 +126,17 @@ func loadIAP(requireMarket bool) (IAPConfig, error) {
 			"config: IAP_LEDGER_ENVIRONMENT는 production 또는 sandbox여야 한다: %q", c.Environment)
 	}
 
-	if !requireMarket {
-		// 원장 경로를 가르는 환경만 있으면 된다.
-		return c, nil
-	}
-
 	raw := os.Getenv("IAP_CATALOG_JSON")
 	if raw == "" {
 		return IAPConfig{}, errors.New("config: IAP_CATALOG_JSON이 필요하다")
 	}
 	c.CatalogJSON = decodeMaybeBase64(raw)
+
+	if !requireMarket {
+		// Admin은 앱·entitlement 검증을 위해 카탈로그만 읽는다.
+		// 마켓 자격증명과 계정 바인딩 키는 여전히 마운트하지 않는다.
+		return c, nil
+	}
 
 	keys, err := loadBindingKeys()
 	if err != nil {

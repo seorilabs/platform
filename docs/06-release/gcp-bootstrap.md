@@ -128,7 +128,7 @@ Firestore와 **같은 리전**이어야 한다. 교차 리전 조인이 불가�
 
 ```bash
 for sa in platform-api platform-iap platform-ingest platform-admin \
-          platform-worker backoffice-admin platform-deployer; do
+          platform-worker backoffice-read backoffice-admin platform-deployer; do
   gcloud iam service-accounts create "$sa" --project=seorilabs-platform
 done
 ```
@@ -143,9 +143,10 @@ done
 | `platform-admin` | `datastore.user`, `bigquery.dataEditor` |
 | `platform-worker` | `datastore.user` |
 | `platform-deployer` | `run.admin`, `artifactregistry.writer`, `iam.serviceAccountUser` |
+| **`backoffice-read`** | **프로젝트 역할 없음** |
 | **`backoffice-admin`** | **프로젝트 역할 없음** |
 
-> **`backoffice-admin`에 프로젝트 역할을 주지 않는 것이 ADR 0001의 핵심이다.** 서비스별 `run.invoker`만 준다. RPI가 침해돼도 얻는 건 "Admin API 호출 가능"뿐이다.
+> **`backoffice-read`, `backoffice-admin`에 프로젝트 역할을 주지 않는 것이 ADR 0001의 핵심이다.** 둘 다 `platform-admin`의 `run.invoker`만 받고, 애플리케이션의 read/write allowlist가 다시 권한을 가른다. RPI가 침해돼도 Firestore를 직접 조작할 수 없다.
 >
 > **`secretmanager.secretAccessor`는 `platform-iap`에만** 준다. 마켓 자격증명 격리(R3).
 

@@ -34,6 +34,8 @@ tags:
     description: 마켓 서버 알림 수신
   - name: user
     description: 사용자 자체 조작
+  - name: admin
+    description: 백오피스 전용 운영 조회와 조작
 
 paths:
   /auth/session:
@@ -486,6 +488,300 @@ paths:
         '422': { $ref: '#/components/responses/Unprocessable' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /admin/health:
+    get:
+      tags: [admin]
+      summary: 플랫폼 운영 상태 조회
+      operationId: getAdminHealth
+      security: [{ AdminOidc: [] }]
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        $ref: '#/components/schemas/AdminHealth'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/orders/recent:
+    get:
+      tags: [admin]
+      summary: 최근 IAP 주문 조회
+      operationId: listAdminRecentOrders
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/AdminLimit'
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [orders]
+                        properties:
+                          orders:
+                            type: array
+                            items: { $ref: '#/components/schemas/AdminOrder' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/users/{reference}:
+    get:
+      tags: [admin]
+      summary: PII 없는 플랫폼 사용자 조회
+      description: |
+        `platformUserId` 또는 정확한 `supportCode`로만 조회한다.
+        이메일, 이름, 전화번호, 앱 사용자 식별자는 반환하지 않는다.
+      operationId: getAdminUser
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - name: reference
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [user]
+                        properties:
+                          user: { $ref: '#/components/schemas/AdminUser' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/users/{puid}/entitlements:
+    get:
+      tags: [admin]
+      summary: 사용자 entitlement 전체 조회
+      description: 활성 여부와 무관하게 source를 포함해 반환한다.
+      operationId: listAdminUserEntitlements
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - name: puid
+          in: path
+          required: true
+          schema: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [platformUserId, entitlements]
+                        properties:
+                          platformUserId: { type: string }
+                          entitlements:
+                            type: array
+                            items: { $ref: '#/components/schemas/AdminEntitlement' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/operator-grants:
+    get:
+      tags: [admin]
+      summary: 운영자 지급과 회수 이력 조회
+      operationId: listAdminOperatorGrants
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/AdminLimit'
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [grants, revocations]
+                        properties:
+                          grants:
+                            type: array
+                            items: { $ref: '#/components/schemas/AdminOperatorRecord' }
+                          revocations:
+                            type: array
+                            items: { $ref: '#/components/schemas/AdminOperatorRecord' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/iap/catalog:
+    get:
+      tags: [admin]
+      summary: 관리 가능한 entitlement ID 목록 조회
+      description: SKU와 마켓 자격증명은 반환하지 않는다.
+      operationId: getAdminIapCatalog
+      security: [{ AdminOidc: [] }]
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [entitlements]
+                        properties:
+                          entitlements:
+                            type: array
+                            items: { $ref: '#/components/schemas/EntitlementId' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/entitlements/grant:
+    post:
+      tags: [admin]
+      summary: 운영자 entitlement 지급
+      description: |
+        write allowlist 전용이다. 서버가 앱, 사용자 소속, 원장 환경, 카탈로그와
+        typed confirmation을 모두 검증한 뒤 원장과 감사 레코드를 한 트랜잭션으로 쓴다.
+      operationId: grantAdminEntitlement
+      security: [{ AdminOidc: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminGrantRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AdminMutationOk' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/entitlements/revoke:
+    post:
+      tags: [admin]
+      summary: 운영자 지급 source 회수
+      description: |
+        `grantRequestId`로 지정한 operator source만 revoked로 바꾼다.
+        Google Play, App Store, AppsInToss source는 절대 변경하지 않는다.
+      operationId: revokeAdminEntitlement
+      security: [{ AdminOidc: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminRevokeRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AdminMutationOk' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/iap/sandbox-reset:
+    post:
+      tags: [admin]
+      summary: App Store sandbox 원장 초기화
+      description: App Store Connect에서 구매 내역을 지운 뒤 sandbox 원장에만 반영한다.
+      operationId: resetAdminAppStoreSandbox
+      security: [{ AdminOidc: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminSandboxResetRequest' }
+      responses:
+        '200':
+          description: 반영 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [platformUserId, resetOrderKeys]
+                        properties:
+                          platformUserId: { type: string }
+                          resetOrderKeys:
+                            type: array
+                            items: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/config/maintenance:
+    post:
+      tags: [admin]
+      summary: 앱 점검 모드 변경
+      operationId: setAdminMaintenance
+      security: [{ AdminOidc: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appId, minutes]
+              additionalProperties: false
+              properties:
+                appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+                minutes: { type: integer, minimum: 0, maximum: 1440 }
+      responses:
+        '200':
+          description: 변경 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [appId, active, minutes]
+                        properties:
+                          appId: { type: string }
+                          active: { type: boolean }
+                          minutes: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
 components:
   securitySchemes:
     PlatformToken:
@@ -498,6 +794,13 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Pub/Sub push subscription이 붙이는 Google OIDC 토큰
+    AdminOidc:
+      type: http
+      scheme: bearer
+      bearerFormat: Google OIDC ID token
+      description: |
+        Cloud Run Admin audience를 대상으로 발급한 Google OIDC ID token.
+        GET은 read 또는 write allowlist, mutation은 write allowlist만 허용한다.
 
   parameters:
     SeoriApp:
@@ -534,6 +837,10 @@ components:
         1단계는 optional로 시작한다. Godot에 App Check SDK가 없고
         replay 방지(consume)가 Go SDK에 없다.
       schema: { type: string }
+    AdminLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
 
   schemas:
     EnvelopeOk:
@@ -758,6 +1065,153 @@ components:
           type: string
           enum: [processed, duplicate, ignored, ignored_invalid, test_notification]
 
+    AdminHealth:
+      type: object
+      required: [environment, deadLetterCount]
+      additionalProperties: false
+      properties:
+        environment: { $ref: '#/components/schemas/LedgerEnvironment' }
+        deadLetterCount: { type: integer, minimum: 0 }
+
+    LedgerEnvironment:
+      type: string
+      enum: [sandbox, production]
+
+    AdminMutationReason:
+      type: string
+      description: PII나 결제 자격정보를 저장하지 않는 고정 운영 사유 코드
+      enum:
+        - customer_support_compensation
+        - incorrect_grant_correction
+        - incident_recovery
+        - internal_validation
+
+    AdminUser:
+      type: object
+      required: [platformUserId, appId, supportCode, isAnonymous, createdAt, lastSeenAt]
+      additionalProperties: false
+      properties:
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        appId: { type: string }
+        supportCode: { type: string }
+        isAnonymous: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+
+    AdminOrder:
+      type: object
+      required:
+        [orderKey, appId, platformUserId, entitlementId, platform, productId, state, purchasedAt, observedAt, tombstone]
+      additionalProperties: false
+      properties:
+        orderKey: { type: string }
+        appId:
+          type: string
+          description: PII 없는 사용자 binding에서 도출. 삭제 사용자 또는 owner 없는 tombstone은 빈 문자열.
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+        platform: { type: string, enum: [google_play, app_store, apps_in_toss, operator] }
+        productId: { type: string }
+        state: { type: string, enum: [active, pending, revoked, invalid] }
+        purchasedAt: { type: string, format: date-time }
+        observedAt: { type: string, format: date-time }
+        tombstone: { type: boolean }
+
+    AdminEntitlementSource:
+      type: object
+      required: [platform, productId, state, orderKey, observedAt]
+      additionalProperties: false
+      properties:
+        platform: { type: string }
+        productId: { type: string }
+        state: { type: string }
+        orderKey: { type: string }
+        observedAt: { type: string, format: date-time }
+
+    AdminEntitlement:
+      type: object
+      required: [entitlementId, active, updatedAt, sources]
+      additionalProperties: false
+      properties:
+        entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+        active: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/AdminEntitlementSource' }
+
+    AdminOperatorRecord:
+      type: object
+      required: [requestId, platformUserId, entitlementId, actorLogin, reason, appId, createdAt, kind]
+      additionalProperties: false
+      properties:
+        requestId: { type: string }
+        grantRequestId:
+          type: string
+          description: 회수 이력에서 대상 operator 지급 requestId. 지급 이력에서는 생략한다.
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+        actorLogin:
+          type: string
+          pattern: '^(?:[A-Za-z0-9-]{1,39}|oidc_sha256:[0-9a-f]{64})$'
+        reason: { $ref: '#/components/schemas/AdminMutationReason' }
+        appId: { type: string }
+        createdAt: { type: string, format: date-time }
+        kind: { type: string, enum: [grant, revoke] }
+
+    AdminGrantRequest:
+      type: object
+      required: [requestId, appId, platformUserId, entitlementId, reason, expectedEnvironment, confirmation]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+        reason: { $ref: '#/components/schemas/AdminMutationReason' }
+        expectedEnvironment: { $ref: '#/components/schemas/LedgerEnvironment' }
+        confirmation:
+          type: string
+          maxLength: 512
+          description: '`GRANT {appId} {platformUserId} {entitlementId}`와 정확히 일치'
+
+    AdminRevokeRequest:
+      type: object
+      required:
+        [requestId, grantRequestId, appId, platformUserId, entitlementId, reason, expectedEnvironment, confirmation]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        grantRequestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+        reason: { $ref: '#/components/schemas/AdminMutationReason' }
+        expectedEnvironment: { $ref: '#/components/schemas/LedgerEnvironment' }
+        confirmation:
+          type: string
+          maxLength: 512
+          description: '`REVOKE {appId} {platformUserId} {entitlementId} {grantRequestId}`와 정확히 일치'
+
+    AdminSandboxResetRequest:
+      type: object
+      required:
+        [requestId, appId, platformUserId, reason, expectedEnvironment, confirmation, appleClearedConfirmed]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        reason: { $ref: '#/components/schemas/AdminMutationReason' }
+        expectedEnvironment:
+          type: string
+          enum: [sandbox]
+        confirmation:
+          type: string
+          maxLength: 512
+          description: '`RESET {appId} {platformUserId}`와 정확히 일치'
+        appleClearedConfirmed: { type: boolean }
+
   responses:
     BadRequest:
       description: 요청 형식 오류. 허용 필드 외 키가 있어도 여기로 온다
@@ -769,8 +1223,13 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/EnvelopeError' }
+    NotFound:
+      description: 대상을 찾지 못함
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EnvelopeError' }
     Forbidden:
-      description: 앱이 paused이거나 anonymous 신원이 금지된 경로에 접근
+      description: 권한 부족, 앱 paused, anonymous 또는 관리 allowlist 불일치
       content:
         application/json:
           schema: { $ref: '#/components/schemas/EnvelopeError' }
@@ -815,6 +1274,23 @@ components:
                 properties:
                   result:
                     $ref: '#/components/schemas/VerifyPurchaseOutcome'
+    AdminMutationOk:
+      description: 조작 완료 또는 동일 요청의 멱등 재호출
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeOk'
+              - type: object
+                properties:
+                  result:
+                    type: object
+                    required: [applied, entitlements]
+                    properties:
+                      applied: { type: boolean }
+                      entitlements:
+                        type: array
+                        items: { $ref: '#/components/schemas/EntitlementId' }
 
 security:
   - PlatformToken: []

@@ -250,13 +250,13 @@ func TestLimitOverrides(t *testing.T) {
 	}
 }
 
-// Admin API는 마켓에 묻지 않는다. 카탈로그도 키도 요구하지 않아야 한다.
+// Admin API는 마켓에 묻지 않지만 조작 allowlist로 카탈로그는 읽는다.
 //
 // 필요 없는 비밀을 마운트하면 폭발 반경만 넓어진다. R3다.
-func TestAdminNeedsOnlyEnvironment(t *testing.T) {
+func TestAdminNeedsEnvironmentAndCatalogWithoutMarketSecrets(t *testing.T) {
 	t.Setenv("IAP_LEDGER_ENVIRONMENT", EnvSandbox)
-	// 카탈로그와 키를 일부러 비워둔다
-	t.Setenv("IAP_CATALOG_JSON", "")
+	t.Setenv("IAP_CATALOG_JSON", testCatalog)
+	// 계정 바인딩 키는 마켓 검증용이므로 일부러 비워둔다.
 	t.Setenv("IAP_ACCOUNT_BINDING_KEYS", "")
 
 	c, err := loadIAP(false)
@@ -266,12 +266,18 @@ func TestAdminNeedsOnlyEnvironment(t *testing.T) {
 	if !c.IsSandbox() {
 		t.Error("환경을 읽지 못했다")
 	}
-	if len(c.CatalogJSON) != 0 || len(c.BindingKeys) != 0 {
-		t.Error("요구하지 않은 값이 채워졌다")
+	if len(c.CatalogJSON) == 0 || len(c.BindingKeys) != 0 {
+		t.Error("카탈로그와 마켓 비밀 분리가 깨졌다")
 	}
 
-	// 마켓이 필요한 role은 여전히 거부해야 한다
+	// 마켓이 필요한 role은 계정 바인딩 키 없이 여전히 거부해야 한다.
 	if _, err := loadIAP(true); err == nil {
-		t.Error("카탈로그 없이 마켓 role을 통과시켰다")
+		t.Error("마켓 비밀 없이 마켓 role을 통과시켰다")
+	}
+
+	// Admin도 entitlement 검증을 위해 카탈로그 없이는 부팅하지 않는다.
+	t.Setenv("IAP_CATALOG_JSON", "")
+	if _, err := loadIAP(false); err == nil {
+		t.Error("카탈로그 없이 admin role을 통과시켰다")
 	}
 }

@@ -28,4 +28,5 @@ ADR과 장기 의사결정을 관리한다.
 | [0007](0007-openapi-as-contract-sot.md) | 계약의 SoT는 OpenAPI다 | Accepted |
 | [0008](0008-platform-user-id-as-ledger-owner.md) | IAP 원장의 소유자 키를 platform_user_id로 한다 | Accepted |
 | [0009](0009-apple-jws-verification-go.md) | Apple JWS 검증 Go 방안 | **Proposed** — P0 실측 후 확정 |
-- [0010 — 소유의 근거는 마켓 계정이다](0010-market-account-as-ownership-anchor.md)
+| [0010](0010-market-account-as-ownership-anchor.md) | 소유의 근거는 마켓 계정이다 | Accepted |
+| [0011](0011-admin-management-boundary.md) | 플랫폼 관리 조작은 좁은 Admin 경계에서만 수행한다 | Accepted |

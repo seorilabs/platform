@@ -31,7 +31,7 @@ Accepted
 
 - 백오피스에 새 탭을 만들지 않는다. **기존 `commerce` 탭을 플랫폼 Admin API에 연결한다**
 - 백오피스 어댑터가 Firestore를 직접 조작하던 1,124줄이 API 호출로 바뀌면서 **오히려 단순해진다** — SA 키 관리, firebase-admin 초기화, 앱별 하드코딩이 사라진다
-- `backoffice-admin@` SA에는 `run.invoker` **외 어떤 권한도 주지 않는다.** RPI가 침해돼도 얻는 건 "API 호출 가능"이고, 그 위에 dry-run 토큰·rate limit·하드 상한이 서버 측에 있다
+- 백오피스 OIDC SA에는 `run.invoker` **외 어떤 권한도 주지 않는다.** RPI가 침해돼도 얻는 건 "API 호출 가능"이고, 그 위에 read/write allowlist·서버 typed confirmation·durable rate limit·하드 상한이 있다. 세부 경계는 [ADR 0011](0011-admin-management-boundary.md)에서 확정한다
 - **장애 대응 중 RPI까지 죽어 있으면 긴급 조작을 못 한다.** 이건 두 번째 백오피스를 짓는다고 해결되지 않으므로 [BREAK-GLASS 런북](../08-ops/BREAK-GLASS.md)으로 푼다
 - **확장의 전제 조건 3가지를 지키지 못하면 이 결정을 재검토한다**
   1. 백오피스 MySQL에 런타임 유저 데이터를 저장하지 않는다

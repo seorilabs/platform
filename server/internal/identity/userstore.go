@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"cloud.google.com/go/firestore"
 
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/platformerr"
@@ -43,6 +46,17 @@ type userDoc struct {
 	CreatedAt   time.Time `firestore:"createdAt"`
 	LastSeenAt  time.Time `firestore:"lastSeenAt"`
 	SupportCode string    `firestore:"supportCode"`
+}
+
+// SupportUser는 Admin API에 노출해도 되는 PII 없는 사용자 요약이다.
+// AppUserID는 Firebase UID일 수 있으므로 의도적으로 포함하지 않는다.
+type SupportUser struct {
+	PlatformUserID string    `json:"platformUserId"`
+	AppID          string    `json:"appId"`
+	SupportCode    string    `json:"supportCode"`
+	IsAnonymous    bool      `json:"isAnonymous"`
+	CreatedAt      time.Time `json:"createdAt"`
+	LastSeenAt     time.Time `json:"lastSeenAt"`
 }
 
 type refreshDoc struct {
@@ -129,9 +143,30 @@ func (r *StoreRepository) EnsureUser(
 			}
 			result = doc.PlatformUserID
 
-			// lastSeenAt만 갱신한다. 전체 덮어쓰기면 firstSeenAt이 사라진다.
+			uPath, err := userPath(result)
+			if err != nil {
+				return err
+			}
+			uExists, uSnap, err := tx.Exists(uPath)
+			if err != nil {
+				return err
+			}
+			if !uExists {
+				return errors.New("identity: 사용자 문서가 없다")
+			}
+			var user userDoc
+			if err := uSnap.DataTo(&user); err != nil {
+				return fmt.Errorf("identity: 사용자 문서 변환 실패: %w", err)
+			}
+
+			// identity 매핑과 PII 없는 운영 조회 문서의 lastSeenAt을 같은
+			// 트랜잭션에서 갱신한다.
 			doc.LastSeenAt = now
-			return tx.Set(idPath, doc)
+			user.LastSeenAt = now
+			if err := tx.Set(idPath, doc); err != nil {
+				return err
+			}
+			return tx.Set(uPath, user)
 		}
 
 		puid, err := NewPlatformUserID()
@@ -169,6 +204,88 @@ func (r *StoreRepository) EnsureUser(
 		return "", platformerr.Wrap(err, platformerr.CodeInternal, "사용자를 확인하지 못했어요")
 	}
 	return result, nil
+}
+
+// LookupSupportUser는 platformUserId 또는 정확한 supportCode로 사용자를
+// 찾는다. 이메일·이름·전화번호·Firebase UID는 반환하지 않는다.
+func (r *StoreRepository) LookupSupportUser(ctx context.Context, reference string) (SupportUser, error) {
+	reference = strings.TrimSpace(reference)
+	if reference == "" || len(reference) > 64 {
+		return SupportUser{}, platformerr.New(platformerr.CodeRequestInvalid,
+			"사용자 조회 값이 올바르지 않아요")
+	}
+
+	if strings.HasPrefix(reference, "pu_") {
+		p, err := userPath(reference)
+		if err != nil {
+			return SupportUser{}, platformerr.New(platformerr.CodeRequestInvalid,
+				"사용자 조회 값이 올바르지 않아요")
+		}
+		snap, err := r.store.Get(ctx, p)
+		if errors.Is(err, store.ErrNotFound) {
+			return SupportUser{}, platformerr.New(platformerr.CodeUserNotFound,
+				"사용자를 찾을 수 없어요")
+		}
+		if err != nil {
+			return SupportUser{}, platformerr.Wrap(err, platformerr.CodeInternal,
+				"사용자를 조회하지 못했어요")
+		}
+		return supportUserFromSnapshot(reference, snap)
+	}
+
+	code := strings.ToUpper(reference)
+	col, err := fspath.Parse(usersCollection)
+	if err != nil {
+		return SupportUser{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자를 조회하지 못했어요")
+	}
+	iter, err := r.store.Query(ctx, col, func(q firestore.Query) firestore.Query {
+		return q.Where("supportCode", "==", code).Limit(2)
+	})
+	if err != nil {
+		return SupportUser{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자를 조회하지 못했어요")
+	}
+	defer iter.Stop()
+
+	first, err := iter.Next()
+	if store.IsDone(err) {
+		return SupportUser{}, platformerr.New(platformerr.CodeUserNotFound,
+			"사용자를 찾을 수 없어요")
+	}
+	if err != nil {
+		return SupportUser{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자를 조회하지 못했어요")
+	}
+	if _, err := iter.Next(); !store.IsDone(err) {
+		if err != nil {
+			return SupportUser{}, platformerr.Wrap(err, platformerr.CodeInternal,
+				"사용자를 조회하지 못했어요")
+		}
+		return SupportUser{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"지원 코드가 여러 사용자와 연결돼 있어요")
+	}
+	return supportUserFromSnapshot(first.Ref.ID, first)
+}
+
+func supportUserFromSnapshot(puid string, snap *firestore.DocumentSnapshot) (SupportUser, error) {
+	var doc userDoc
+	if err := snap.DataTo(&doc); err != nil {
+		return SupportUser{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자를 조회하지 못했어요")
+	}
+	if puid == "" || doc.AppID == "" || doc.SupportCode == "" {
+		return SupportUser{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"사용자 문서가 올바르지 않아요")
+	}
+	return SupportUser{
+		PlatformUserID: puid,
+		AppID:          doc.AppID,
+		SupportCode:    doc.SupportCode,
+		IsAnonymous:    doc.Anonymous,
+		CreatedAt:      doc.CreatedAt,
+		LastSeenAt:     doc.LastSeenAt,
+	}, nil
 }
 
 // supportPrefix는 app_id에서 지원 코드 접두사를 만든다.

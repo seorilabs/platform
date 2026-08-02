@@ -44,9 +44,10 @@ const (
 
 // 앱 레지스트리
 const (
-	CodeAppUnknown  Code = "app_unknown"
-	CodeAppPaused   Code = "app_paused"
-	CodeUserBlocked Code = "user_blocked"
+	CodeAppUnknown   Code = "app_unknown"
+	CodeAppPaused    Code = "app_paused"
+	CodeUserBlocked  Code = "user_blocked"
+	CodeUserNotFound Code = "user_not_found"
 )
 
 // 한도
@@ -80,6 +81,7 @@ const (
 	CodePurchaseNotFound           Code = "purchase_not_found"
 	CodePurchaseOwnedByAnotherUser Code = "purchase_owned_by_another_user" // 불변식 4
 	CodePurchaseReplayMismatch     Code = "purchase_replay_mismatch"
+	CodeOperatorReplayMismatch     Code = "operator_replay_mismatch"
 )
 
 // 웹훅 이벤트
@@ -164,9 +166,10 @@ var statusByCode = map[Code]int{
 	CodeAppCheckAppMismatch: http.StatusForbidden,
 
 	// 앱 레지스트리
-	CodeAppUnknown:  http.StatusForbidden,
-	CodeAppPaused:   http.StatusForbidden,
-	CodeUserBlocked: http.StatusForbidden,
+	CodeAppUnknown:   http.StatusForbidden,
+	CodeAppPaused:    http.StatusForbidden,
+	CodeUserBlocked:  http.StatusForbidden,
+	CodeUserNotFound: http.StatusNotFound,
 
 	// 한도
 	CodeRateLimited: http.StatusTooManyRequests,
@@ -192,6 +195,7 @@ var statusByCode = map[Code]int{
 	CodePurchaseNotFound:           http.StatusUnprocessableEntity,
 	CodePurchaseOwnedByAnotherUser: http.StatusConflict,
 	CodePurchaseReplayMismatch:     http.StatusConflict,
+	CodeOperatorReplayMismatch:     http.StatusConflict,
 
 	// 웹훅 이벤트
 	CodeNotificationInvalid:        http.StatusUnauthorized,

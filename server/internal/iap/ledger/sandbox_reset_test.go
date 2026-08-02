@@ -173,6 +173,49 @@ func TestGrantResultValidAllowsSandboxBlock(t *testing.T) {
 	}
 }
 
+func TestSandboxResetInputAndPayloadBinding(t *testing.T) {
+	base := SandboxResetInput{
+		RequestID:      "reset-1",
+		PlatformUserID: "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		AppID:          "app-a",
+		ActorLogin:     "operator",
+		Reason:         AdminReasonInternalValidation,
+	}
+	if err := base.validate(); err != nil {
+		t.Fatalf("유효한 입력 거부: %v", err)
+	}
+	doc := sandboxResetRequestDoc{
+		RequestID: base.RequestID, PlatformUserID: base.PlatformUserID,
+		AppID: base.AppID, ActorLogin: base.ActorLogin, Reason: base.Reason,
+	}
+	if !sameSandboxResetRequest(doc, base) {
+		t.Fatal("같은 reset payload를 다르다고 판정했다")
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*SandboxResetInput)
+	}{
+		{"requestId", func(in *SandboxResetInput) { in.RequestID = "" }},
+		{"사용자", func(in *SandboxResetInput) { in.PlatformUserID = "" }},
+		{"앱", func(in *SandboxResetInput) { in.AppID = "" }},
+		{"이메일 actor", func(in *SandboxResetInput) { in.ActorLogin = "person@example.com" }},
+		{"자유 서술 reason", func(in *SandboxResetInput) { in.Reason = "테스트 초기화" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed := base
+			tt.mutate(&changed)
+			if code := platformerr.CodeOf(changed.validate()); code != platformerr.CodeRequestInvalid {
+				t.Errorf("validation code=%q", code)
+			}
+			if sameSandboxResetRequest(doc, changed) {
+				t.Error("같은 requestId의 다른 reset payload를 허용했다")
+			}
+		})
+	}
+}
+
 // 마켓 계정이 같으면 같은 사람이다.
 //
 // 앱을 지우면 익명 uid가 새로 생기지만 구글·애플 계정은 그대로다.

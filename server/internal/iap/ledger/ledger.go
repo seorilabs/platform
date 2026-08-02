@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"sort"
 	"time"
 
@@ -355,6 +356,56 @@ func blockingSandboxResetAt(
 // 잘못 지정한 것이므로 진행하지 않고 멈춘다.
 const maxSandboxResetOrders = 20
 
+// SandboxResetInput은 App Store sandbox 초기화의 영구 멱등 payload다.
+// 자유 서술이나 OIDC 이메일 원문은 이 경계에 들어오지 않는다.
+type SandboxResetInput struct {
+	RequestID      string
+	PlatformUserID string
+	AppID          string
+	ActorLogin     string
+	Reason         string
+}
+
+type sandboxResetRequestDoc struct {
+	RequestID      string    `firestore:"requestId"`
+	PlatformUserID string    `firestore:"platformUserId"`
+	AppID          string    `firestore:"appId"`
+	ActorLogin     string    `firestore:"actorLogin"`
+	Reason         string    `firestore:"reason"`
+	OrderKeys      []string  `firestore:"orderKeys"`
+	ResetAt        time.Time `firestore:"resetAt"`
+}
+
+func (in SandboxResetInput) validate() error {
+	switch {
+	case !operatorRequestIDPattern.MatchString(in.RequestID):
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 요청 식별자가 올바르지 않아요")
+	case !operatorPUIDPattern.MatchString(in.PlatformUserID):
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 대상 사용자가 올바르지 않아요")
+	case !operatorAppIDPattern.MatchString(in.AppID):
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 대상 앱이 올바르지 않아요")
+	case !operatorActorPattern.MatchString(in.ActorLogin):
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 실행자가 올바르지 않아요")
+	case !ValidAdminMutationReason(in.Reason):
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"허용된 운영 사유 코드가 필요해요")
+	default:
+		return nil
+	}
+}
+
+func sameSandboxResetRequest(doc sandboxResetRequestDoc, in SandboxResetInput) bool {
+	return doc.RequestID == in.RequestID &&
+		doc.PlatformUserID == in.PlatformUserID &&
+		doc.AppID == in.AppID &&
+		doc.ActorLogin == in.ActorLogin &&
+		doc.Reason == in.Reason
+}
+
 // MarkSandboxReset은 App Store sandbox 구매내역 초기화를 원장에 남긴다.
 //
 // Apple 쪽 구매내역은 App Store Connect에서 사람이 지운다. 이 함수는
@@ -367,102 +418,209 @@ const maxSandboxResetOrders = 20
 // 이 도구 하나를 위해 결제 경로의 쓰기 비용을 올린다.
 func (l *Ledger) MarkSandboxReset(
 	ctx context.Context,
-	puid, requestID string,
+	in SandboxResetInput,
 ) ([]string, error) {
 	// 불변식 9의 연장이다. production 원장에서는 존재하지 않는 기능이어야 한다.
 	if l.env != domain.EnvSandbox {
 		return nil, platformerr.New(platformerr.CodeLedgerStateInvalid,
 			"sandbox 원장에서만 초기화할 수 있어요")
 	}
-	if puid == "" || requestID == "" {
-		return nil, platformerr.New(platformerr.CodeRequestInvalid,
-			"초기화 요청이 올바르지 않아요")
+	if err := in.validate(); err != nil {
+		return nil, err
 	}
 
-	list, err := l.ListUserEntitlements(ctx, puid)
+	resetPath, err := l.paths.sandboxResetRequest(in.RequestID)
+	if err != nil {
+		return nil, err
+	}
+	// 일반 재시도는 entitlement query 없이 영구 요청 레코드에서 끝낸다.
+	// 트랜잭션 직전 경합은 아래에서 같은 검사를 다시 한다.
+	if snap, err := l.store.Get(ctx, resetPath); err == nil {
+		var prev sandboxResetRequestDoc
+		if err := snap.DataTo(&prev); err != nil {
+			return nil, platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+				"sandbox 초기화 기록을 읽지 못했어요")
+		}
+		if !sameSandboxResetRequest(prev, in) {
+			return nil, platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"같은 requestId의 이전 초기화 요청과 내용이 달라요")
+		}
+		return append([]string{}, prev.OrderKeys...), nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+
+	list, err := l.ListUserEntitlements(ctx, in.PlatformUserID)
 	if err != nil {
 		return nil, err
 	}
 
-	orderKeys := make([]string, 0, len(list))
+	orderKeySet := make(map[string]bool, len(list))
 	for _, ent := range list {
 		for _, src := range ent.Sources {
 			if src.Platform == string(domain.PlatformAppStore) {
-				orderKeys = append(orderKeys, src.OrderKey)
+				orderKeySet[src.OrderKey] = true
 			}
 		}
 	}
-	if len(orderKeys) > maxSandboxResetOrders {
-		return nil, platformerr.New(platformerr.CodeRequestInvalid,
-			"초기화 대상이 너무 많아요")
+	orderKeys := make([]string, 0, len(orderKeySet))
+	for key := range orderKeySet {
+		orderKeys = append(orderKeys, key)
 	}
-
 	sort.Strings(orderKeys)
-	for _, orderKey := range orderKeys {
-		if err := l.markOneSandboxReset(ctx, puid, requestID, orderKey); err != nil {
-			return nil, err
-		}
-	}
-	return orderKeys, nil
-}
 
-func (l *Ledger) markOneSandboxReset(ctx context.Context, puid, requestID, orderKey string) error {
-	return l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
-		now := l.now()
-
-		orderPath, err := l.paths.order(orderKey)
+	result := []string{}
+	err = l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		result = []string{}
+		resetExists, resetSnap, err := tx.Exists(resetPath)
 		if err != nil {
 			return err
 		}
-		exists, snap, err := tx.Exists(orderPath)
+		grantPath, err := l.paths.operatorGrant(in.RequestID)
 		if err != nil {
 			return err
 		}
-		if !exists {
-			return platformerr.New(platformerr.CodePurchaseNotFound, "주문을 찾을 수 없어요")
-		}
-
-		var order orderDoc
-		if err := snap.DataTo(&order); err != nil {
-			return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid, "원장을 읽지 못했어요")
-		}
-		if order.Platform != domain.PlatformAppStore {
-			return platformerr.New(platformerr.CodePlatformInvalid,
-				"App Store 주문만 초기화할 수 있어요")
-		}
-		if order.PlatformUserID != puid {
-			return platformerr.New(platformerr.CodePurchaseOwnedByAnotherUser,
-				"다른 계정의 주문이에요")
-		}
-
-		intPath, err := l.paths.internalEntitlement(puid, order.EntitlementID)
+		grantExists, _, err := tx.Exists(grantPath)
 		if err != nil {
 			return err
 		}
-		ent, err := l.readEntitlement(tx, intPath, order.EntitlementID)
+		revokePath, err := l.paths.operatorRevocation(in.RequestID)
 		if err != nil {
 			return err
 		}
-
-		src := ent.Sources[orderKey]
-		src.Platform = order.Platform
-		src.ProductID = order.ProductID
-		src.State = domain.StateRevoked
-		src.PurchasedAt = order.PurchasedAt
-		src.ObservedAt = now
-		src.UpdatedAt = now
-		ent.Sources[orderKey] = src
-
-		if err := l.writeEntitlement(tx, puid, ent, now); err != nil {
+		revokeExists, _, err := tx.Exists(revokePath)
+		if err != nil {
 			return err
 		}
+		if grantExists || revokeExists {
+			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+				"requestId가 다른 운영 조작에 이미 사용됐어요")
+		}
+		if resetExists {
+			var prev sandboxResetRequestDoc
+			if err := resetSnap.DataTo(&prev); err != nil {
+				return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+					"sandbox 초기화 기록을 읽지 못했어요")
+			}
+			if !sameSandboxResetRequest(prev, in) {
+				return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+					"같은 requestId의 이전 초기화 요청과 내용이 달라요")
+			}
+			result = append([]string{}, prev.OrderKeys...)
+			return nil
+		}
+		if len(orderKeys) > maxSandboxResetOrders {
+			return platformerr.New(platformerr.CodeRequestInvalid,
+				"초기화 대상이 너무 많아요")
+		}
 
-		order.State = domain.StateRevoked
-		order.ObservedAt = now
-		order.UpdatedAt = now
-		order.SandboxReset = &sandboxResetMark{RequestID: requestID, ResetAt: now}
-		return tx.Set(orderPath, order)
+		// 모든 주문과 entitlement를 먼저 읽는다. Firestore 트랜잭션은
+		// 첫 쓰기 이후 읽기를 허용하지 않는다.
+		orders := make(map[string]orderDoc, len(orderKeys))
+		entitlementIDs := make(map[string]bool, len(orderKeys))
+		for _, orderKey := range orderKeys {
+			orderPath, err := l.paths.order(orderKey)
+			if err != nil {
+				return err
+			}
+			exists, snap, err := tx.Exists(orderPath)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return platformerr.New(platformerr.CodePurchaseNotFound,
+					"초기화할 주문을 찾을 수 없어요")
+			}
+			var order orderDoc
+			if err := snap.DataTo(&order); err != nil {
+				return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+					"초기화할 주문을 읽지 못했어요")
+			}
+			if order.Platform != domain.PlatformAppStore {
+				return platformerr.New(platformerr.CodePlatformInvalid,
+					"App Store 주문만 초기화할 수 있어요")
+			}
+			if order.PlatformUserID != in.PlatformUserID {
+				return platformerr.New(platformerr.CodePurchaseOwnedByAnotherUser,
+					"다른 계정의 주문이에요")
+			}
+			orders[orderKey] = order
+			entitlementIDs[order.EntitlementID] = true
+		}
+
+		entitlementsByID := make(map[string]entitlementDoc, len(entitlementIDs))
+		sortedEntitlementIDs := make([]string, 0, len(entitlementIDs))
+		for entitlementID := range entitlementIDs {
+			intPath, err := l.paths.internalEntitlement(in.PlatformUserID, entitlementID)
+			if err != nil {
+				return err
+			}
+			ent, err := l.readEntitlement(tx, intPath, entitlementID)
+			if err != nil {
+				return err
+			}
+			entitlementsByID[entitlementID] = ent
+			sortedEntitlementIDs = append(sortedEntitlementIDs, entitlementID)
+		}
+		sort.Strings(sortedEntitlementIDs)
+
+		now := l.now().UTC()
+		for _, orderKey := range orderKeys {
+			order := orders[orderKey]
+			ent := entitlementsByID[order.EntitlementID]
+			src, ok := ent.Sources[orderKey]
+			if !ok || src.Platform != domain.PlatformAppStore {
+				return platformerr.New(platformerr.CodeLedgerStateInvalid,
+					"초기화할 App Store source가 올바르지 않아요")
+			}
+			src.ProductID = order.ProductID
+			src.State = domain.StateRevoked
+			src.PurchasedAt = order.PurchasedAt
+			src.ObservedAt = now
+			src.UpdatedAt = now
+			ent.Sources[orderKey] = src
+			entitlementsByID[order.EntitlementID] = ent
+
+			order.State = domain.StateRevoked
+			order.ObservedAt = now
+			order.UpdatedAt = now
+			order.SandboxReset = &sandboxResetMark{RequestID: in.RequestID, ResetAt: now}
+			orders[orderKey] = order
+		}
+
+		for _, entitlementID := range sortedEntitlementIDs {
+			if err := l.writeEntitlement(tx, in.PlatformUserID,
+				entitlementsByID[entitlementID], now); err != nil {
+				return err
+			}
+		}
+		for _, orderKey := range orderKeys {
+			orderPath, err := l.paths.order(orderKey)
+			if err != nil {
+				return err
+			}
+			if err := tx.Set(orderPath, orders[orderKey]); err != nil {
+				return err
+			}
+		}
+		if err := tx.Create(resetPath, sandboxResetRequestDoc{
+			RequestID:      in.RequestID,
+			PlatformUserID: in.PlatformUserID,
+			AppID:          in.AppID,
+			ActorLogin:     in.ActorLogin,
+			Reason:         in.Reason,
+			OrderKeys:      append([]string{}, orderKeys...),
+			ResetAt:        now,
+		}); err != nil {
+			return err
+		}
+		result = append([]string{}, orderKeys...)
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // sameMarketAccount는 같은 마켓 계정이 제시한 구매인지 본다.

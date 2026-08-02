@@ -69,7 +69,9 @@ granted        = !alreadyGranted
 
 ### 5. 원장 문서 삭제 금지
 
-`processed_orders`, `processed_iap_events`, `pending_refund_reviews`는 **영구 보존**한다. `iap_completion_outbox`만 완료·회수 시 삭제한다.
+`processed_orders`, `processed_iap_events`, `pending_refund_reviews`, 운영자
+지급·회수·sandbox reset 요청 원장은 **영구 보존**한다.
+`iap_completion_outbox`만 완료·회수 시 삭제한다.
 
 미지의 환불은 소유자 없는 tombstone 문서를 먼저 만든다.
 
@@ -138,6 +140,9 @@ IAP 쪽 기존 계약은 닫혀 있으므로 그대로 두고, **플랫폼 SDK�
 | `pending_refund_reviews/{hash}` | sha256 | `platform`, `orderId`, `dueAt` — 24시간 |
 | `iap_rate_limits/{…}` | | `windowStartedAt`, `count` |
 | `operator_entitlement_grants/{requestId}` | requestId | 운영자 지급 감사 원장. **영구** |
+| `operator_entitlement_revocations/{requestId}` | requestId | 대상 `grantRequestId`를 포함한 운영자 회수 감사 원장. **영구** |
+| `sandbox_reset_requests/{requestId}` | requestId | 고정 payload·대상 orderKey·resetAt. **영구 멱등 원장** |
+| `admin_mutation_limits/{oidcSha256}` | sha256 | Admin 조작 분·시·일 durable rate gate |
 
 `sources.{orderKey}` = `{platform, productId, state, purchasedAt, observedAt, updatedAt}`.
 
@@ -288,4 +293,6 @@ Dead-letter 조건은 시도 횟수 초과, age 초과, 레코드 파손.
 
 **source 스키마를 통합한다.** 현재 백오피스가 운영자 source를 서버와 별도로 정의하고 있다.
 
-**결제 관련 작업은 전부 dry-run + typed confirmation 등급 이상**으로 둔다.
+**결제 관련 작업은 전부 서버가 앱·사용자·환경·카탈로그를 미리 검증하고,
+요청 내용으로 계산한 typed confirmation과 일치해야만 실행**한다. OIDC write
+allowlist와 durable rate gate도 함께 적용한다. → ADR 0011

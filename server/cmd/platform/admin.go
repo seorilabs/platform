@@ -27,25 +27,40 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		return err
 	}
 
-	// 허용 목록을 비워두면 audience가 맞는 어떤 Google 계정이든
-	// 부를 수 있다. 반드시 좁힌다.
-	allowed := splitList(os.Getenv("ADMIN_ALLOWED_ACCOUNTS"))
-	if len(allowed) == 0 {
-		return errors.New("admin role에 ADMIN_ALLOWED_ACCOUNTS가 필요하다")
+	// 조회와 조작 자격증명을 분리한다. 조회 자격증명이 유출돼도 원장을
+	// 바꿀 수 없어야 한다. 예전 단일 목록에는 fallback하지 않는다.
+	readAllowed := splitList(os.Getenv("ADMIN_READ_ALLOWED_ACCOUNTS"))
+	writeAllowed := splitList(os.Getenv("ADMIN_WRITE_ALLOWED_ACCOUNTS"))
+	if len(readAllowed) == 0 || len(writeAllowed) == 0 {
+		return errors.New("admin role에 ADMIN_READ_ALLOWED_ACCOUNTS와 ADMIN_WRITE_ALLOWED_ACCOUNTS가 모두 필요하다")
+	}
+	if os.Getenv("ADMIN_ALLOWED_ACCOUNTS") != "" {
+		slog.Warn("ADMIN_ALLOWED_ACCOUNTS는 더 이상 사용하지 않는다")
 	}
 
-	auth, err := admin.NewAuthenticator(validator, allowed)
+	auth, err := admin.NewAuthenticator(validator, readAllowed, writeAllowed)
 	if err != nil {
 		return err
 	}
 
 	// RemoteConfig도 함께 넘긴다. break-glass의 점검 모드가 여기로 온다.
-	handler, err := admin.NewHandler(d.iap.ledger, d.config, auth, auditAdapter{col: d.events})
+	handler, err := admin.NewHandler(
+		d.iap.ledger,
+		d.config,
+		d.adminUsers,
+		d.registry,
+		d.iap.catalog,
+		auth,
+		auditAdapter{col: d.events},
+	)
 	if err != nil {
 		return err
 	}
 	handler.Register(mux)
 
-	slog.Info("Admin API 준비 완료", "allowed_accounts", len(allowed))
+	slog.Info("Admin API 준비 완료",
+		"read_allowed_accounts", len(readAllowed),
+		"write_allowed_accounts", len(writeAllowed),
+	)
 	return nil
 }

@@ -376,7 +376,7 @@ func TestSandboxResetBlocksRepurchase(t *testing.T) {
 	defer done()
 
 	ctx := context.Background()
-	puid := uniqueID("pu_sandbox")
+	puid := uniqueOperatorPUID()
 	entID := "sp_galaxy_gecko"
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -390,7 +390,10 @@ func TestSandboxResetBlocksRepurchase(t *testing.T) {
 	}
 
 	// 운영자가 App Store sandbox 구매내역을 지웠다.
-	if _, err := l.MarkSandboxReset(ctx, puid, uniqueID("req")); err != nil {
+	if _, err := l.MarkSandboxReset(ctx, SandboxResetInput{
+		RequestID: uniqueID("req"), PlatformUserID: puid, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}); err != nil {
 		t.Fatalf("초기화 표식 실패: %v", err)
 	}
 
@@ -432,7 +435,7 @@ func TestSandboxResetAllowsLaterPurchase(t *testing.T) {
 	defer done()
 
 	ctx := context.Background()
-	puid := uniqueID("pu_sandbox_new")
+	puid := uniqueOperatorPUID()
 	entID := "sp_galaxy_gecko"
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -446,8 +449,18 @@ func TestSandboxResetAllowsLaterPurchase(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("최초 지급 실패: %v", err)
 	}
-	if _, err := l.MarkSandboxReset(ctx, puid, uniqueID("req")); err != nil {
+	reset := SandboxResetInput{
+		RequestID: uniqueID("req"), PlatformUserID: puid, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}
+	initialKeys, err := l.MarkSandboxReset(ctx, reset)
+	if err != nil {
 		t.Fatalf("초기화 표식 실패: %v", err)
+	}
+	changedReset := reset
+	changedReset.Reason = AdminReasonIncidentRecovery
+	if _, err := l.MarkSandboxReset(ctx, changedReset); platformerr.CodeOf(err) != platformerr.CodeOperatorReplayMismatch {
+		t.Fatalf("같은 requestId의 다른 초기화 payload code=%q", platformerr.CodeOf(err))
 	}
 
 	// 초기화 이후 시각에 산 새 거래다. canonicalId도 새로 발급된다.
@@ -466,6 +479,23 @@ func TestSandboxResetAllowsLaterPurchase(t *testing.T) {
 	}
 	if !res.Granted {
 		t.Errorf("granted=%v, want true", res.Granted)
+	}
+
+	// HTTP 응답 유실로 같은 requestId를 재시도해도 최초 결과만 돌려주고,
+	// 초기화 이후의 새 구매는 건드리지 않는다.
+	retryKeys, err := l.MarkSandboxReset(ctx, reset)
+	if err != nil {
+		t.Fatalf("초기화 멱등 재시도 실패: %v", err)
+	}
+	if len(retryKeys) != len(initialKeys) || retryKeys[0] != initialKeys[0] {
+		t.Fatalf("초기화 결과가 바뀌었다: first=%v retry=%v", initialKeys, retryKeys)
+	}
+	active, err := l.ListActive(ctx, puid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0] != entID {
+		t.Fatalf("멱등 재시도가 새 구매를 회수했다: %v", active)
 	}
 }
 

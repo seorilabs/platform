@@ -35,6 +35,7 @@ const playScope = "https://www.googleapis.com/auth/androidpublisher"
 type iapParts struct {
 	service   *verify.Service
 	ledger    *ledger.Ledger
+	catalog   *catalog.Catalog
 	verifiers map[domain.Platform]verify.Verifier
 	enabled   []domain.Platform
 }
@@ -106,6 +107,7 @@ func newIAPService(
 	return &iapParts{
 		service:   svc,
 		ledger:    led,
+		catalog:   cat,
 		verifiers: byPlatform,
 		enabled:   enabled,
 	}, nil
@@ -113,21 +115,30 @@ func newIAPService(
 
 // newAdminIAP는 검증기 없이 원장만 조립한다.
 //
-// Admin API는 원장을 읽고 운영자 지급을 쓴다. 마켓에 물어볼 일이 없다.
-// 그래서 마켓 자격증명도 카탈로그도 필요 없다 — 필요한 것은
-// 원장 경로를 가르는 환경 하나뿐이다.
-func newAdminIAP(cfg config.Config, st *store.Client) *iapParts {
+// Admin API는 원장을 읽고 운영자 지급을 쓴다. 앱에 허용된 entitlement인지
+// 확인할 카탈로그는 필요하지만 마켓에 물어볼 일이 없어 자격증명과 계정
+// 바인딩 키는 조립하지 않는다.
+func newAdminIAP(cfg config.Config, st *store.Client) (*iapParts, error) {
 	env := domain.EnvProduction
 	if cfg.IAP.IsSandbox() {
 		env = domain.EnvSandbox
 	}
 
-	slog.Info("Admin 원장 준비 완료", "environment", cfg.IAP.Environment)
+	cat, err := catalog.Parse(cfg.IAP.CatalogJSON, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Info("Admin 원장 준비 완료",
+		"environment", cfg.IAP.Environment,
+		"entitlements", len(cat.IDs()),
+	)
 
 	return &iapParts{
 		ledger:    ledger.New(st, env),
+		catalog:   cat,
 		verifiers: map[domain.Platform]verify.Verifier{},
-	}
+	}, nil
 }
 
 // newVerifiers는 자격증명이 있는 마켓의 검증기를 만든다.

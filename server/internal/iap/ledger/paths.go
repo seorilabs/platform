@@ -29,8 +29,10 @@ const (
 	completionOutbx = "iap_completion_outbox"
 	refundReviews   = "pending_refund_reviews"
 
-	operatorGrants      = "operator_entitlement_grants"
-	operatorRevocations = "operator_entitlement_revocations"
+	operatorGrants       = "operator_entitlement_grants"
+	operatorRevocations  = "operator_entitlement_revocations"
+	sandboxResetRequests = "sandbox_reset_requests"
+	adminMutationLimits  = "admin_mutation_limits"
 )
 
 // pathBuilder는 환경 prefix를 붙여 경로를 만든다.
@@ -120,4 +122,14 @@ func (b pathBuilder) operatorRecord(collection, requestID string) (fspath.Path, 
 
 func (b pathBuilder) operatorCollection(collection string) (fspath.Path, error) {
 	return b.parse(collection)
+}
+
+// sandboxResetRequest는 App Store sandbox 초기화 요청의 영구 멱등 기록이다.
+func (b pathBuilder) sandboxResetRequest(requestID string) (fspath.Path, error) {
+	return b.parse(sandboxResetRequests + "/" + requestID)
+}
+
+// adminMutationLimit는 인증된 OIDC principal별 durable rate gate다.
+func (b pathBuilder) adminMutationLimit(principalHash string) (fspath.Path, error) {
+	return b.parse(adminMutationLimits + "/" + principalHash)
 }
