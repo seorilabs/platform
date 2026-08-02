@@ -11,6 +11,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 
+	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
@@ -22,6 +23,7 @@ var (
 	operatorPUIDPattern        = regexp.MustCompile(`^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
 	operatorAppIDPattern       = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
 	operatorEntitlementPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+	operatorOrderKeyPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 const (
@@ -93,6 +95,97 @@ type OperatorResult struct {
 	Applied bool
 	// Entitlements는 조작 후 활성 목록이다.
 	Entitlements []string
+}
+
+// FindOperatorReplay는 신규 조작의 mutable precondition과 rate gate를 타기
+// 전에 영구 감사 원장에서 exact retry를 찾는다. commit 뒤 응답만 유실된
+// 요청은 앱 pause나 사용자 binding 변경과 무관하게 같은 결과를 읽을 수 있어야
+// 한다. 신규 요청과의 경합은 실제 OperatorGrant/OperatorRevoke 트랜잭션이 다시
+// 검증하므로 이 읽기는 mutation 권한을 부여하지 않는다.
+func (l *Ledger) FindOperatorReplay(
+	ctx context.Context,
+	in OperatorInput,
+	revoke bool,
+) (OperatorResult, bool, error) {
+	if err := in.validate(); err != nil {
+		return OperatorResult{}, false, err
+	}
+	if revoke {
+		if !operatorRequestIDPattern.MatchString(in.GrantRequestID) {
+			return OperatorResult{}, false, platformerr.New(platformerr.CodeRequestInvalid,
+				"회수할 지급 requestId가 필요해요")
+		}
+	} else if in.GrantRequestID != "" {
+		return OperatorResult{}, false, platformerr.New(platformerr.CodeRequestInvalid,
+			"지급 요청에는 grantRequestId를 넣을 수 없어요")
+	}
+
+	var recordPath, oppositePath fspath.Path
+	var err error
+	if revoke {
+		recordPath, err = l.paths.operatorRevocation(in.RequestID)
+		if err == nil {
+			oppositePath, err = l.paths.operatorGrant(in.RequestID)
+		}
+	} else {
+		recordPath, err = l.paths.operatorGrant(in.RequestID)
+		if err == nil {
+			oppositePath, err = l.paths.operatorRevocation(in.RequestID)
+		}
+	}
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	resetPath, err := l.paths.sandboxResetRequest(in.RequestID)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+
+	recordSnap, recordExists, err := l.getOptional(ctx, recordPath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	_, oppositeExists, err := l.getOptional(ctx, oppositePath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	_, resetExists, err := l.getOptional(ctx, resetPath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	if oppositeExists || resetExists {
+		return OperatorResult{}, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
+			"requestId가 다른 운영 조작에 이미 사용됐어요")
+	}
+	if !recordExists {
+		return OperatorResult{}, false, nil
+	}
+
+	var prev operatorDoc
+	if err := recordSnap.DataTo(&prev); err != nil {
+		return OperatorResult{}, false, platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+			"운영 기록을 읽지 못했어요")
+	}
+	if !sameOperatorRequest(prev, in) {
+		return OperatorResult{}, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
+			"같은 requestId의 이전 운영 요청과 내용이 달라요")
+	}
+	result, err := l.operatorResult(ctx, in.PlatformUserID, false)
+	return result, err == nil, err
+}
+
+func (l *Ledger) getOptional(
+	ctx context.Context,
+	path fspath.Path,
+) (*firestore.DocumentSnapshot, bool, error) {
+	snap, err := l.store.Get(ctx, path)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return snap, true, nil
 }
 
 func (in OperatorInput) validate() error {
@@ -564,9 +657,10 @@ func (l *Ledger) listOperatorRecords(
 			return nil, platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
 				"운영 기록을 읽지 못했어요")
 		}
-		// 자유 서술 reason이나 이메일 원문 actor가 있는 레거시 레코드는
-		// 마이그레이션 전까지 fail-closed해 브라우저로 노출하지 않는다.
-		if !ValidAdminMutationReason(doc.Reason) || !operatorActorPattern.MatchString(doc.ActorLogin) {
+		// 자유 서술 reason, 이메일 원문 actor, 계약 형식 밖의 식별자가 있는
+		// 레거시 레코드는 마이그레이션 전까지 fail-closed해 브라우저로
+		// 노출하지 않는다.
+		if !validOperatorRecord(doc, kind) {
 			return nil, platformerr.New(platformerr.CodeLedgerStateInvalid,
 				"운영 기록에 노출할 수 없는 감사 값이 있어요")
 		}
@@ -582,6 +676,25 @@ func (l *Ledger) listOperatorRecords(
 			CreatedAt:      doc.CreatedAt,
 			Kind:           kind,
 		})
+	}
+}
+
+func validOperatorRecord(doc operatorDoc, kind string) bool {
+	if !operatorRequestIDPattern.MatchString(doc.RequestID) ||
+		!operatorPUIDPattern.MatchString(doc.PlatformUserID) ||
+		!operatorEntitlementPattern.MatchString(doc.EntitlementID) ||
+		!operatorActorPattern.MatchString(doc.ActorLogin) ||
+		!ValidAdminMutationReason(doc.Reason) ||
+		!operatorAppIDPattern.MatchString(doc.AppID) || doc.CreatedAt.IsZero() {
+		return false
+	}
+	switch kind {
+	case "grant":
+		return doc.GrantRequestID == ""
+	case "revoke":
+		return operatorRequestIDPattern.MatchString(doc.GrantRequestID)
+	default:
+		return false
 	}
 }
 

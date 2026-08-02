@@ -84,3 +84,43 @@ func TestOperatorPurchaseUsesGrantRequestAsSourceKey(t *testing.T) {
 		t.Error("operator source가 grantRequestId로 고정되지 않았다")
 	}
 }
+
+func TestValidOperatorRecordFailsClosed(t *testing.T) {
+	base := newOperatorDoc(validOperatorInput(), time.Unix(1, 0).UTC())
+	if !validOperatorRecord(base, "grant") {
+		t.Fatal("정상 지급 기록을 거부했다")
+	}
+	revoke := base
+	revoke.GrantRequestID = "grant-1"
+	if !validOperatorRecord(revoke, "revoke") {
+		t.Fatal("정상 회수 기록을 거부했다")
+	}
+
+	tests := []struct {
+		name   string
+		kind   string
+		mutate func(*operatorDoc)
+	}{
+		{"requestId PII", "grant", func(doc *operatorDoc) { doc.RequestID = "person@example.com" }},
+		{"grantRequestId PII", "revoke", func(doc *operatorDoc) { doc.GrantRequestID = "person@example.com" }},
+		{"PUID PII", "grant", func(doc *operatorDoc) { doc.PlatformUserID = "person@example.com" }},
+		{"entitlement PII", "grant", func(doc *operatorDoc) { doc.EntitlementID = "person@example.com" }},
+		{"actor 이메일", "grant", func(doc *operatorDoc) { doc.ActorLogin = "person@example.com" }},
+		{"reason 자유 서술", "grant", func(doc *operatorDoc) { doc.Reason = "customer asked" }},
+		{"appId PII", "grant", func(doc *operatorDoc) { doc.AppID = "person@example.com" }},
+		{"createdAt 없음", "grant", func(doc *operatorDoc) { doc.CreatedAt = time.Time{} }},
+		{"지급에 grantRequestId", "grant", func(doc *operatorDoc) { doc.GrantRequestID = "grant-1" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := base
+			if tt.kind == "revoke" {
+				doc.GrantRequestID = "grant-1"
+			}
+			tt.mutate(&doc)
+			if validOperatorRecord(doc, tt.kind) {
+				t.Error("브라우저 응답에 부적합한 기록을 허용했다")
+			}
+		})
+	}
+}

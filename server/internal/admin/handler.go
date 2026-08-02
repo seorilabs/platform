@@ -24,6 +24,9 @@ var (
 	adminAppIDPattern        = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
 	adminPlatformUserPattern = regexp.MustCompile(`^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
 	adminEntitlementPattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+	adminSupportCodePattern  = regexp.MustCompile(`^[A-Z]{1,3}-[0-9A-HJKMNP-TV-Z]{8}$`)
+	adminOrderKeyPattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	adminProductIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]{1,256}$`)
 )
 
 // Ledger는 운영 조회와 조작이다.
@@ -34,6 +37,8 @@ type Ledger interface {
 	ListUserEntitlements(ctx context.Context, puid string) ([]ledger.UserEntitlement, error)
 	ListOperatorGrants(ctx context.Context, limit int) ([]ledger.OperatorRecord, error)
 	ListOperatorRevocations(ctx context.Context, limit int) ([]ledger.OperatorRecord, error)
+	FindOperatorReplay(ctx context.Context, in ledger.OperatorInput, revoke bool) (ledger.OperatorResult, bool, error)
+	FindSandboxResetReplay(ctx context.Context, in ledger.SandboxResetInput) ([]string, bool, error)
 	OperatorGrant(ctx context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error)
 	OperatorRevoke(ctx context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error)
 	MarkSandboxReset(ctx context.Context, in ledger.SandboxResetInput) ([]string, error)
@@ -219,6 +224,10 @@ func (h *Handler) recentOrders(w http.ResponseWriter, r *http.Request) error {
 	appByUser := make(map[string]string, len(orders))
 	result := make([]adminOrder, 0, len(orders))
 	for i := range orders {
+		if !validAdminOrderSummary(orders[i]) {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"주문 원장에 브라우저로 노출할 수 없는 값이 있어요")
+		}
 		puid := orders[i].PlatformUserID
 		appID := ""
 		if puid != "" {
@@ -231,7 +240,7 @@ func (h *Handler) recentOrders(w http.ResponseWriter, r *http.Request) error {
 						return lookupErr
 					}
 				} else {
-					if user.PlatformUserID != puid {
+					if user.PlatformUserID != puid || !adminAppIDPattern.MatchString(user.AppID) {
 						return platformerr.New(platformerr.CodeLedgerStateInvalid,
 							"주문의 사용자 binding이 올바르지 않아요")
 					}
@@ -259,11 +268,41 @@ func (h *Handler) recentOrders(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func validAdminOrderSummary(order ledger.OrderSummary) bool {
+	if !adminOrderKeyPattern.MatchString(order.OrderKey) ||
+		!domain.Platform(order.Platform).Valid() {
+		return false
+	}
+	switch domain.State(order.State) {
+	case domain.StateActive, domain.StatePending, domain.StateRevoked, domain.StateInvalid:
+	default:
+		return false
+	}
+	if order.Tombstone {
+		return order.PlatformUserID == "" && order.EntitlementID == "" && order.ProductID == ""
+	}
+	return adminPlatformUserPattern.MatchString(order.PlatformUserID) &&
+		adminEntitlementPattern.MatchString(order.EntitlementID) &&
+		adminProductIDPattern.MatchString(order.ProductID)
+}
+
 // user는 platformUserId 또는 정확한 supportCode로 PII 없는 요약을 찾는다.
 func (h *Handler) user(w http.ResponseWriter, r *http.Request) error {
-	user, err := h.users.LookupSupportUser(r.Context(), r.PathValue("reference"))
+	reference := r.PathValue("reference")
+	if !adminPlatformUserPattern.MatchString(reference) &&
+		!adminSupportCodePattern.MatchString(reference) {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"정확한 platformUserId 또는 supportCode가 필요해요")
+	}
+	user, err := h.users.LookupSupportUser(r.Context(), reference)
 	if err != nil {
 		return err
+	}
+	if !adminPlatformUserPattern.MatchString(user.PlatformUserID) ||
+		!adminAppIDPattern.MatchString(user.AppID) ||
+		!adminSupportCodePattern.MatchString(user.SupportCode) {
+		return platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"사용자 지원 문서가 올바르지 않아요")
 	}
 	httpx.WriteOK(w, http.StatusOK, map[string]any{"user": adminUser{
 		PlatformUserID: user.PlatformUserID,
@@ -293,8 +332,16 @@ func (h *Handler) userEntitlements(w http.ResponseWriter, r *http.Request) error
 
 	result := make([]adminEntitlement, 0, len(list))
 	for _, ent := range list {
+		if !adminEntitlementPattern.MatchString(ent.EntitlementID) || ent.UpdatedAt.IsZero() {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"entitlement 원장에 브라우저로 노출할 수 없는 값이 있어요")
+		}
 		sources := make([]adminEntitlementSource, 0, len(ent.Sources))
 		for _, src := range ent.Sources {
+			if !validAdminEntitlementSource(src) {
+				return platformerr.New(platformerr.CodeLedgerStateInvalid,
+					"entitlement source에 브라우저로 노출할 수 없는 값이 있어요")
+			}
 			sources = append(sources, adminEntitlementSource{
 				Platform: src.Platform, ProductID: src.ProductID, State: src.State,
 				OrderKey: src.OrderKey, Observed: src.Observed,
@@ -313,6 +360,20 @@ func (h *Handler) userEntitlements(w http.ResponseWriter, r *http.Request) error
 		"entitlements":   result,
 	})
 	return nil
+}
+
+func validAdminEntitlementSource(src ledger.EntitlementSource) bool {
+	if !domain.Platform(src.Platform).Valid() ||
+		!adminProductIDPattern.MatchString(src.ProductID) ||
+		!adminOrderKeyPattern.MatchString(src.OrderKey) || src.Observed.IsZero() {
+		return false
+	}
+	switch domain.State(src.State) {
+	case domain.StateActive, domain.StatePending, domain.StateRevoked, domain.StateInvalid:
+		return true
+	default:
+		return false
+	}
 }
 
 // operatorGrants는 운영자 지급·회수 이력이다. 기존 production-grants에 대응한다.
@@ -412,18 +473,17 @@ func (h *Handler) applyOperator(
 	apply func(context.Context, ledger.OperatorInput) (ledger.OperatorResult, error),
 ) error {
 	actor := ActorFrom(r.Context())
-	if err := h.validateOperatorRequest(r.Context(), req, revoke); err != nil {
-		h.audit(r.Context(), action, req, actorLogin(actor), string(platformerr.CodeOf(err)))
-		return err
-	}
-	if err := h.ledger.CheckAdminMutationRate(r.Context(), actor.Email); err != nil {
-		h.audit(r.Context(), action, req, actorLogin(actor), string(platformerr.CodeOf(err)))
-		return err
-	}
-
-	// 누가 눌렀는지를 백오피스가 헤더로 넘긴다.
-	// 없으면 서비스 계정으로 대체한다 — 최소한 어느 시스템인지는 남는다.
 	login := actorLogin(actor)
+	if err := validateOperatorRequestShape(req, revoke); err != nil {
+		h.audit(r.Context(), action, req, login, string(platformerr.CodeOf(err)))
+		return err
+	}
+	if h.ledger.Environment() != domain.Environment(req.ExpectedEnvironment) {
+		err := platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"요청한 환경과 Admin 원장 환경이 달라요")
+		h.audit(r.Context(), action, req, login, string(platformerr.CodeOf(err)))
+		return err
+	}
 
 	in := ledger.OperatorInput{
 		RequestID:      req.RequestID,
@@ -433,6 +493,26 @@ func (h *Handler) applyOperator(
 		Reason:         req.Reason,
 		AppID:          req.AppID,
 		GrantRequestID: req.GrantRequestID,
+	}
+	// commit 뒤 응답만 유실된 요청은 mutable app/user/catalog 상태나 rate
+	// gate보다 먼저 원장을 읽는다. 같은 requestId의 결과 조회가 앱 pause나
+	// 즉시 재시도 429 때문에 영구히 막히면 멱등 복구가 성립하지 않는다.
+	if replay, found, err := h.ledger.FindOperatorReplay(r.Context(), in, revoke); err != nil {
+		h.audit(r.Context(), action, req, login, string(platformerr.CodeOf(err)))
+		return err
+	} else if found {
+		h.audit(r.Context(), action, req, login, "already_applied")
+		writeOperatorResult(w, replay)
+		return nil
+	}
+
+	if err := h.validateOperatorContext(r.Context(), req); err != nil {
+		h.audit(r.Context(), action, req, login, string(platformerr.CodeOf(err)))
+		return err
+	}
+	if err := h.ledger.CheckAdminMutationRate(r.Context(), actor.Email); err != nil {
+		h.audit(r.Context(), action, req, login, string(platformerr.CodeOf(err)))
+		return err
 	}
 
 	res, err := apply(r.Context(), in)
@@ -447,12 +527,15 @@ func (h *Handler) applyOperator(
 		outcome = "already_applied"
 	}
 	h.audit(r.Context(), action, req, login, outcome)
+	writeOperatorResult(w, res)
+	return nil
+}
 
+func writeOperatorResult(w http.ResponseWriter, res ledger.OperatorResult) {
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
 		"applied":      res.Applied,
 		"entitlements": res.Entitlements,
 	})
-	return nil
 }
 
 func actorLogin(actor Actor) string {
@@ -460,17 +543,15 @@ func actorLogin(actor Actor) string {
 		return actor.Login
 	}
 	if actor.Email == "" {
-		return "oidc-principal"
+		// 인증된 principal이 없는데 감사 주체를 만들어 내지 않는다.
+		// 정상 HTTP 경로에서는 allowlist 검증 전에 빈 이메일이 거부된다.
+		return ""
 	}
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(actor.Email))))
 	return "oidc_sha256:" + hex.EncodeToString(sum[:])
 }
 
-func (h *Handler) validateOperatorRequest(
-	ctx context.Context,
-	req operatorRequest,
-	revoke bool,
-) error {
+func validateOperatorRequestShape(req operatorRequest, revoke bool) error {
 	if !adminRequestIDPattern.MatchString(req.RequestID) ||
 		!adminPlatformUserPattern.MatchString(req.PlatformUserID) ||
 		!adminEntitlementPattern.MatchString(req.EntitlementID) ||
@@ -486,12 +567,10 @@ func (h *Handler) validateOperatorRequest(
 		return platformerr.New(platformerr.CodeRequestInvalid,
 			"지급 요청에는 grantRequestId를 넣을 수 없어요")
 	}
-	if err := h.validateIAPContext(ctx, req.AppID, req.PlatformUserID, req.ExpectedEnvironment); err != nil {
-		return err
-	}
-	if !h.catalog.Has(req.EntitlementID) {
-		return platformerr.New(platformerr.CodeProductNotAllowed,
-			"카탈로그에 없는 entitlement예요")
+	if req.ExpectedEnvironment != string(domain.EnvSandbox) &&
+		req.ExpectedEnvironment != string(domain.EnvProduction) {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"expectedEnvironment가 올바르지 않아요")
 	}
 
 	want := fmt.Sprintf("GRANT %s %s %s", req.AppID, req.PlatformUserID, req.EntitlementID)
@@ -502,6 +581,17 @@ func (h *Handler) validateOperatorRequest(
 	if req.Confirmation != want {
 		return platformerr.New(platformerr.CodeRequestInvalid,
 			"typed confirmation이 요청 내용과 맞지 않아요")
+	}
+	return nil
+}
+
+func (h *Handler) validateOperatorContext(ctx context.Context, req operatorRequest) error {
+	if err := h.validateIAPContext(ctx, req.AppID, req.PlatformUserID, req.ExpectedEnvironment); err != nil {
+		return err
+	}
+	if !h.catalog.Has(req.EntitlementID) {
+		return platformerr.New(platformerr.CodeProductNotAllowed,
+			"카탈로그에 없는 entitlement예요")
 	}
 	return nil
 }
@@ -590,8 +680,9 @@ func (h *Handler) resetAppStoreSandbox(w http.ResponseWriter, r *http.Request) e
 		return platformerr.New(platformerr.CodeEnvironmentMismatch,
 			"sandbox 초기화는 expectedEnvironment가 sandbox여야 해요")
 	}
-	if err := h.validateIAPContext(r.Context(), req.AppID, req.PlatformUserID, req.ExpectedEnvironment); err != nil {
-		return err
+	if h.ledger.Environment() != domain.EnvSandbox {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"sandbox 초기화 요청과 Admin 원장 환경이 달라요")
 	}
 	wantConfirmation := fmt.Sprintf("RESET %s %s", req.AppID, req.PlatformUserID)
 	if req.Confirmation != wantConfirmation {
@@ -601,29 +692,48 @@ func (h *Handler) resetAppStoreSandbox(w http.ResponseWriter, r *http.Request) e
 
 	actor := ActorFrom(r.Context())
 	login := actorLogin(actor)
-	if err := h.ledger.CheckAdminMutationRate(r.Context(), actor.Email); err != nil {
-		h.auditSandboxReset(r.Context(), req, login, string(platformerr.CodeOf(err)), 0)
-		return err
-	}
-
-	orderKeys, err := h.ledger.MarkSandboxReset(r.Context(), ledger.SandboxResetInput{
+	in := ledger.SandboxResetInput{
 		RequestID:      req.RequestID,
 		PlatformUserID: req.PlatformUserID,
 		AppID:          req.AppID,
 		ActorLogin:     login,
 		Reason:         req.Reason,
-	})
+	}
+	// exact retry는 mutable 앱·사용자 상태와 rate gate보다 먼저 원장에서
+	// 확정한다. 초기화 commit 뒤 응답 유실도 같은 requestId로 복구해야 한다.
+	if orderKeys, found, err := h.ledger.FindSandboxResetReplay(r.Context(), in); err != nil {
+		h.auditSandboxReset(r.Context(), req, login, string(platformerr.CodeOf(err)), 0)
+		return err
+	} else if found {
+		h.auditSandboxReset(r.Context(), req, login, "already_applied", len(orderKeys))
+		writeSandboxResetResult(w, req.PlatformUserID, orderKeys)
+		return nil
+	}
+
+	if err := h.validateIAPContext(r.Context(), req.AppID, req.PlatformUserID, req.ExpectedEnvironment); err != nil {
+		h.auditSandboxReset(r.Context(), req, login, string(platformerr.CodeOf(err)), 0)
+		return err
+	}
+	if err := h.ledger.CheckAdminMutationRate(r.Context(), actor.Email); err != nil {
+		h.auditSandboxReset(r.Context(), req, login, string(platformerr.CodeOf(err)), 0)
+		return err
+	}
+
+	orderKeys, err := h.ledger.MarkSandboxReset(r.Context(), in)
 	if err != nil {
 		h.auditSandboxReset(r.Context(), req, login, string(platformerr.CodeOf(err)), 0)
 		return err
 	}
 	h.auditSandboxReset(r.Context(), req, login, "ok", len(orderKeys))
+	writeSandboxResetResult(w, req.PlatformUserID, orderKeys)
+	return nil
+}
 
+func writeSandboxResetResult(w http.ResponseWriter, puid string, orderKeys []string) {
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
-		"platformUserId": req.PlatformUserID,
+		"platformUserId": puid,
 		"resetOrderKeys": orderKeys,
 	})
-	return nil
 }
 
 func (h *Handler) auditSandboxReset(
@@ -706,8 +816,8 @@ type Config interface {
 // 장애 중에 자유 텍스트 입력이나 외부 LLM 호출에 의존하면 안 된다.
 type maintenanceRequest struct {
 	AppID string `json:"appId"`
-	// Minutes가 0 이하면 점검 모드를 끈다.
-	Minutes int `json:"minutes"`
+	// 0은 점검 해제라는 유효한 값이므로 pointer로 필드 누락과 구분한다.
+	Minutes *int `json:"minutes"`
 }
 
 func (h *Handler) setMaintenance(w http.ResponseWriter, r *http.Request) error {
@@ -720,10 +830,12 @@ func (h *Handler) setMaintenance(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.DecodeStrict(w, r, &req); err != nil {
 		return err
 	}
-	if !adminAppIDPattern.MatchString(req.AppID) || req.Minutes < 0 || req.Minutes > 1440 {
+	if !adminAppIDPattern.MatchString(req.AppID) || req.Minutes == nil ||
+		*req.Minutes < 0 || *req.Minutes > 1440 {
 		return platformerr.New(platformerr.CodeRequestInvalid,
 			"앱 식별자와 0~1440분의 점검 시간이 필요해요")
 	}
+	minutes := *req.Minutes
 	app, err := h.apps.Get(r.Context(), req.AppID)
 	if err != nil {
 		return err
@@ -737,28 +849,28 @@ func (h *Handler) setMaintenance(w http.ResponseWriter, r *http.Request) error {
 	if err := h.ledger.CheckAdminMutationRate(r.Context(), actor.Email); err != nil {
 		if h.auditor != nil {
 			h.auditor.Record(r.Context(), "config.maintenance", req.AppID, "",
-				string(platformerr.CodeOf(err)), map[string]any{"minutes": req.Minutes, "actor": login})
+				string(platformerr.CodeOf(err)), map[string]any{"minutes": minutes, "actor": login})
 		}
 		return err
 	}
 
-	if err := h.config.SetMaintenance(r.Context(), req.AppID, req.Minutes, login); err != nil {
+	if err := h.config.SetMaintenance(r.Context(), req.AppID, minutes, login); err != nil {
 		return err
 	}
 
 	outcome := "off"
-	if req.Minutes > 0 {
+	if minutes > 0 {
 		outcome = "on"
 	}
 	if h.auditor != nil {
 		h.auditor.Record(r.Context(), "config.maintenance", req.AppID, "", outcome,
-			map[string]any{"minutes": req.Minutes, "actor": login})
+			map[string]any{"minutes": minutes, "actor": login})
 	}
 
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
 		"appId":   req.AppID,
-		"active":  req.Minutes > 0,
-		"minutes": req.Minutes,
+		"active":  minutes > 0,
+		"minutes": minutes,
 	})
 	return nil
 }

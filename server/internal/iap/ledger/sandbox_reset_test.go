@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -211,6 +212,44 @@ func TestSandboxResetInputAndPayloadBinding(t *testing.T) {
 			}
 			if sameSandboxResetRequest(doc, changed) {
 				t.Error("같은 requestId의 다른 reset payload를 허용했다")
+			}
+		})
+	}
+}
+
+func TestValidSandboxResetRecordFailsClosed(t *testing.T) {
+	base := sandboxResetRequestDoc{
+		RequestID:      "reset-1",
+		PlatformUserID: "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		AppID:          "app-a",
+		ActorLogin:     "operator",
+		Reason:         AdminReasonInternalValidation,
+		OrderKeys:      []string{strings.Repeat("a", 64), strings.Repeat("b", 64)},
+		ResetAt:        time.Unix(1, 0).UTC(),
+	}
+	if !validSandboxResetRecord(base) {
+		t.Fatal("정상 sandbox reset 기록을 거부했다")
+	}
+	for _, tt := range []struct {
+		name   string
+		mutate func(*sandboxResetRequestDoc)
+	}{
+		{"requestId PII", func(doc *sandboxResetRequestDoc) { doc.RequestID = "person@example.com" }},
+		{"PUID PII", func(doc *sandboxResetRequestDoc) { doc.PlatformUserID = "person@example.com" }},
+		{"actor 이메일", func(doc *sandboxResetRequestDoc) { doc.ActorLogin = "person@example.com" }},
+		{"reason 자유 서술", func(doc *sandboxResetRequestDoc) { doc.Reason = "customer asked" }},
+		{"orderKey PII", func(doc *sandboxResetRequestDoc) { doc.OrderKeys = []string{"person@example.com"} }},
+		{"orderKey 중복", func(doc *sandboxResetRequestDoc) {
+			doc.OrderKeys = []string{strings.Repeat("a", 64), strings.Repeat("a", 64)}
+		}},
+		{"resetAt 없음", func(doc *sandboxResetRequestDoc) { doc.ResetAt = time.Time{} }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := base
+			doc.OrderKeys = append([]string{}, base.OrderKeys...)
+			tt.mutate(&doc)
+			if validSandboxResetRecord(doc) {
+				t.Error("브라우저 응답에 부적합한 reset 기록을 허용했다")
 			}
 		})
 	}

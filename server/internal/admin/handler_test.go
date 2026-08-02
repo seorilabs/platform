@@ -53,11 +53,19 @@ type fakeLedger struct {
 	grantCalls  []ledger.OperatorInput
 	revokeCalls []ledger.OperatorInput
 	applied     bool
+	replayCalls []ledger.OperatorInput
+	replay      ledger.OperatorResult
+	replayFound bool
+	replayErr   error
 
-	resetKeys  []string
-	resetCalls []ledger.SandboxResetInput
-	rateCalls  []string
-	rateErr    error
+	resetKeys        []string
+	resetCalls       []ledger.SandboxResetInput
+	resetReplayCalls []ledger.SandboxResetInput
+	resetReplayKeys  []string
+	resetReplayFound bool
+	resetReplayErr   error
+	rateCalls        []string
+	rateErr          error
 	// env가 비어 있으면 sandbox로 본다. production 거부를 볼 때만 채운다.
 	env domain.Environment
 }
@@ -73,6 +81,21 @@ func (f *fakeLedger) ListOperatorGrants(context.Context, int) ([]ledger.Operator
 }
 func (f *fakeLedger) ListOperatorRevocations(context.Context, int) ([]ledger.OperatorRecord, error) {
 	return f.revocations, f.err
+}
+func (f *fakeLedger) FindOperatorReplay(
+	_ context.Context,
+	in ledger.OperatorInput,
+	_ bool,
+) (ledger.OperatorResult, bool, error) {
+	f.replayCalls = append(f.replayCalls, in)
+	return f.replay, f.replayFound, f.replayErr
+}
+func (f *fakeLedger) FindSandboxResetReplay(
+	_ context.Context,
+	in ledger.SandboxResetInput,
+) ([]string, bool, error) {
+	f.resetReplayCalls = append(f.resetReplayCalls, in)
+	return f.resetReplayKeys, f.resetReplayFound, f.resetReplayErr
 }
 func (f *fakeLedger) OperatorGrant(_ context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error) {
 	f.grantCalls = append(f.grantCalls, in)
@@ -123,11 +146,13 @@ type maintenanceCall struct {
 }
 
 type fakeUsers struct {
-	user identity.SupportUser
-	err  error
+	user       identity.SupportUser
+	err        error
+	references []string
 }
 
 func (f *fakeUsers) LookupSupportUser(_ context.Context, reference string) (identity.SupportUser, error) {
+	f.references = append(f.references, reference)
 	if f.err != nil {
 		return identity.SupportUser{}, f.err
 	}
@@ -137,7 +162,7 @@ func (f *fakeUsers) LookupSupportUser(_ context.Context, reference string) (iden
 	return identity.SupportUser{
 		PlatformUserID: reference,
 		AppID:          "a",
-		SupportCode:    "A-TESTCODE",
+		SupportCode:    "A-TESTC0DE",
 		IsAnonymous:    true,
 		CreatedAt:      time.Unix(1, 0).UTC(),
 		LastSeenAt:     time.Unix(2, 0).UTC(),
@@ -294,7 +319,7 @@ func TestAllRoutesRequireAuth(t *testing.T) {
 
 	routes := []struct{ method, path, body string }{
 		{http.MethodGet, "/v1/admin/orders/recent", ""},
-		{http.MethodGet, "/v1/admin/users/A-TESTCODE", ""},
+		{http.MethodGet, "/v1/admin/users/A-TESTC0DE", ""},
 		{http.MethodGet, "/v1/admin/users/" + testPUID + "/entitlements", ""},
 		{http.MethodGet, "/v1/admin/operator-grants", ""},
 		{http.MethodGet, "/v1/admin/iap/catalog", ""},
@@ -414,7 +439,10 @@ func TestAllowedServiceAccountPasses(t *testing.T) {
 
 func TestRecentOrders(t *testing.T) {
 	l := &fakeLedger{orders: []ledger.OrderSummary{
-		{OrderKey: "ok1", PlatformUserID: testPUID, EntitlementID: "sp_a", State: "active"},
+		{
+			OrderKey: strings.Repeat("a", 64), PlatformUserID: testPUID,
+			EntitlementID: "sp_a", Platform: "google_play", ProductID: "sku_a", State: "active",
+		},
 	}}
 	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
 
@@ -437,13 +465,66 @@ func TestRecentOrders(t *testing.T) {
 	}
 }
 
+func TestRecentOrdersRejectsUnsafeOwnerBinding(t *testing.T) {
+	tests := []struct {
+		name  string
+		order ledger.OrderSummary
+	}{
+		{
+			name: "PUID 자리에 PII가 들어간 tombstone",
+			order: ledger.OrderSummary{
+				OrderKey: strings.Repeat("b", 64), PlatformUserID: "person@example.com",
+				Platform: "app_store", State: "revoked", Tombstone: true,
+			},
+		},
+		{
+			name: "일반 주문인데 owner가 없음",
+			order: ledger.OrderSummary{
+				OrderKey: strings.Repeat("c", 64), EntitlementID: "sp_a",
+				Platform: "app_store", ProductID: "sku_a", State: "active",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHandler(t, &fakeLedger{orders: []ledger.OrderSummary{tt.order}},
+				&fakeValidator{email: backofficeSA}, &fakeAuditor{})
+			w := serve(t, h, http.MethodGet, "/v1/admin/orders/recent", "", "tok", "reader")
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), "person@example.com") {
+				t.Fatalf("잘못된 원장 값이 응답에 노출됐다: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+func TestRecentOrdersAllowsOwnerlessTombstone(t *testing.T) {
+	h := newHandler(t, &fakeLedger{orders: []ledger.OrderSummary{{
+		OrderKey: strings.Repeat("d", 64), Platform: "app_store", State: "revoked", Tombstone: true,
+	}}}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodGet, "/v1/admin/orders/recent", "", "tok", "reader")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	orders, _ := result["orders"].([]any)
+	order, _ := orders[0].(map[string]any)
+	if order["platformUserId"] != "" || order["appId"] != "" {
+		t.Errorf("ownerless tombstone = %v", order)
+	}
+}
+
 func TestUserEntitlements(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
 	l := &fakeLedger{entitlements: []ledger.UserEntitlement{
-		{EntitlementID: "sp_a", Active: true, Sources: []ledger.EntitlementSource{{
-			Platform: "operator", ProductID: "sp_a", State: "active", OrderKey: "order-a",
+		{EntitlementID: "sp_a", Active: true, UpdatedAt: now, Sources: []ledger.EntitlementSource{{
+			Platform: "operator", ProductID: "sp_a", State: "active",
+			OrderKey: strings.Repeat("a", 64), Observed: now,
 		}}},
 		// 비활성도 준다. 왜 없는지를 봐야 CS가 가능하다
-		{EntitlementID: "sp_b", Active: false},
+		{EntitlementID: "sp_b", Active: false, UpdatedAt: now},
 	}}
 	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
 
@@ -467,6 +548,25 @@ func TestUserEntitlements(t *testing.T) {
 	assertExactJSONKeys(t, source, "platform", "productId", "state", "orderKey", "observedAt")
 }
 
+func TestUserEntitlementsRejectsUnsafeLedgerValues(t *testing.T) {
+	l := &fakeLedger{entitlements: []ledger.UserEntitlement{{
+		EntitlementID: "sp_a",
+		UpdatedAt:     time.Unix(1, 0).UTC(),
+		Sources: []ledger.EntitlementSource{{
+			Platform: "app_store", ProductID: "person@example.com", State: "active",
+			OrderKey: strings.Repeat("a", 64), Observed: time.Unix(1, 0).UTC(),
+		}},
+	}}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodGet, "/v1/admin/users/"+testPUID+"/entitlements", "", "tok", "reader")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "person@example.com") {
+		t.Fatalf("unsafe source가 응답에 노출됐다: %s", w.Body.String())
+	}
+}
+
 func TestIAPCatalogReturnsOnlyEntitlementIDs(t *testing.T) {
 	h := newHandler(t, &fakeLedger{}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
 	w := serve(t, h, http.MethodGet, "/v1/admin/iap/catalog", "", "tok", "reader")
@@ -487,7 +587,7 @@ func TestUserLookupExposesOnlySupportFields(t *testing.T) {
 	user := identity.SupportUser{
 		PlatformUserID: testPUID,
 		AppID:          "a",
-		SupportCode:    "A-TESTCODE",
+		SupportCode:    "A-TESTC0DE",
 		IsAnonymous:    true,
 		CreatedAt:      time.Unix(1, 0).UTC(),
 		LastSeenAt:     time.Unix(2, 0).UTC(),
@@ -506,7 +606,7 @@ func TestUserLookupExposesOnlySupportFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := serve(t, h, http.MethodGet, "/v1/admin/users/A-TESTCODE", "", "tok", "reader")
+	w := serve(t, h, http.MethodGet, "/v1/admin/users/A-TESTC0DE", "", "tok", "reader")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
 	}
@@ -520,6 +620,56 @@ func TestUserLookupExposesOnlySupportFields(t *testing.T) {
 	}
 	assertExactJSONKeys(t, got,
 		"platformUserId", "appId", "supportCode", "isAnonymous", "createdAt", "lastSeenAt")
+}
+
+func TestUserLookupRejectsUnsafeStoredSupportFields(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA}, []string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHandler(
+		&fakeLedger{}, &fakeConfig{}, &fakeUsers{user: identity.SupportUser{
+			PlatformUserID: testPUID,
+			AppID:          "a",
+			SupportCode:    "person@example.com",
+		}}, &fakeApps{}, &fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := serve(t, h, http.MethodGet, "/v1/admin/users/A-TESTC0DE", "", "tok", "reader")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "person@example.com") {
+		t.Fatalf("잘못된 지원 문서 값이 응답에 노출됐다: %s", w.Body.String())
+	}
+}
+
+func TestUserLookupRejectsPIIReferenceBeforeRepository(t *testing.T) {
+	users := &fakeUsers{}
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA}, []string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHandler(
+		&fakeLedger{}, &fakeConfig{}, users, &fakeApps{},
+		&fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := serve(t, h, http.MethodGet, "/v1/admin/users/person@example.com", "", "tok", "reader")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(users.references) != 0 {
+		t.Fatalf("PII reference가 repository에 도달했다: %v", users.references)
+	}
 }
 
 func TestOperatorHistoryUsesExplicitResponseDTO(t *testing.T) {
@@ -689,6 +839,79 @@ func TestActorFallsBackToHashedOIDCPrincipal(t *testing.T) {
 				t.Errorf("actorLogin = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestActorLoginFailsClosedWithoutVerifiedPrincipal(t *testing.T) {
+	if got := actorLogin(Actor{}); got != "" {
+		t.Errorf("actorLogin = %q, want empty fail-closed value", got)
+	}
+}
+
+func TestExactOperatorReplayBypassesMutablePreconditionsAndRate(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA}, []string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &fakeLedger{
+		replay:      ledger.OperatorResult{Applied: false, Entitlements: []string{"sp_a"}},
+		replayFound: true,
+		rateErr:     platformerr.New(platformerr.CodeRateLimited, "limit"),
+	}
+	h, err := NewHandler(
+		l, &fakeConfig{},
+		&fakeUsers{err: platformerr.New(platformerr.CodeUserNotFound, "deleted")},
+		&fakeApps{err: platformerr.New(platformerr.CodeAppPaused, "paused")},
+		&fakeCatalog{allowed: false}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := serve(t, h, http.MethodPost, "/v1/admin/entitlements/grant",
+		grantBody("same-request", testPUID, "sp_a", testGrantReason), "tok", "syous")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	if result["applied"] != false {
+		t.Errorf("applied=%v", result["applied"])
+	}
+	if len(l.replayCalls) != 1 || len(l.rateCalls) != 0 || len(l.grantCalls) != 0 {
+		t.Fatalf("replay=%d rate=%d grant=%d", len(l.replayCalls), len(l.rateCalls), len(l.grantCalls))
+	}
+}
+
+func TestExactSandboxReplayBypassesMutablePreconditionsAndRate(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA}, []string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &fakeLedger{
+		resetReplayKeys:  []string{"order-key"},
+		resetReplayFound: true,
+		rateErr:          platformerr.New(platformerr.CodeRateLimited, "limit"),
+	}
+	h, err := NewHandler(
+		l, &fakeConfig{},
+		&fakeUsers{err: platformerr.New(platformerr.CodeUserNotFound, "deleted")},
+		&fakeApps{err: platformerr.New(platformerr.CodeAppPaused, "paused")},
+		&fakeCatalog{allowed: false}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := serve(t, h, http.MethodPost, "/v1/admin/iap/sandbox-reset",
+		sandboxResetBody("same-reset", testPUID, testResetReason, true), "tok", "syous")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(l.resetReplayCalls) != 1 || len(l.rateCalls) != 0 || len(l.resetCalls) != 0 {
+		t.Fatalf("replay=%d rate=%d reset=%d",
+			len(l.resetReplayCalls), len(l.rateCalls), len(l.resetCalls))
 	}
 }
 
@@ -926,6 +1149,21 @@ func TestMaintenanceToggle(t *testing.T) {
 		}
 		if len(cfg.calls) != 0 {
 			t.Error("앱 없이 점검 모드를 건드렸다")
+		}
+	})
+
+	t.Run("minutes 필드가 없으면 점검 해제로 해석하지 않고 거부", func(t *testing.T) {
+		cfg := &fakeConfig{}
+		h := newWithConfig(t, cfg, &fakeAuditor{})
+
+		w := serve(t, h, http.MethodPost, "/v1/admin/config/maintenance",
+			`{"appId":"lizard-tycoon"}`, "tok", "syous")
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+		if len(cfg.calls) != 0 {
+			t.Error("minutes 없는 요청이 점검 모드를 건드렸다")
 		}
 	})
 

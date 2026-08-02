@@ -457,8 +457,15 @@ func TestSandboxResetAllowsLaterPurchase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("초기화 표식 실패: %v", err)
 	}
+	replayKeys, found, err := l.FindSandboxResetReplay(ctx, reset)
+	if err != nil || !found || len(replayKeys) != len(initialKeys) {
+		t.Fatalf("초기화 replay 조회 keys=%v found=%v err=%v", replayKeys, found, err)
+	}
 	changedReset := reset
 	changedReset.Reason = AdminReasonIncidentRecovery
+	if _, _, err := l.FindSandboxResetReplay(ctx, changedReset); platformerr.CodeOf(err) != platformerr.CodeOperatorReplayMismatch {
+		t.Fatalf("다른 초기화 replay payload code=%q", platformerr.CodeOf(err))
+	}
 	if _, err := l.MarkSandboxReset(ctx, changedReset); platformerr.CodeOf(err) != platformerr.CodeOperatorReplayMismatch {
 		t.Fatalf("같은 requestId의 다른 초기화 payload code=%q", platformerr.CodeOf(err))
 	}

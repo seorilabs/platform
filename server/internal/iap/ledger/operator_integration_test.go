@@ -53,6 +53,34 @@ func TestOperatorGrantIsAtomicAndPayloadBound(t *testing.T) {
 	}
 }
 
+func TestFindOperatorReplayReadsCommittedResultBeforePreconditions(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+	ctx := context.Background()
+
+	req := validOperatorInput()
+	req.RequestID = uniqueID("operator-replay")
+	req.PlatformUserID = uniqueOperatorPUID()
+	if _, err := l.OperatorGrant(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	res, found, err := l.FindOperatorReplay(ctx, req, false)
+	if err != nil || !found || res.Applied {
+		t.Fatalf("replay result=%+v found=%v err=%v", res, found, err)
+	}
+
+	changed := req
+	changed.Reason = AdminReasonIncidentRecovery
+	if _, _, err := l.FindOperatorReplay(ctx, changed, false); platformerr.CodeOf(err) != platformerr.CodeOperatorReplayMismatch {
+		t.Fatalf("changed replay code=%q", platformerr.CodeOf(err))
+	}
+	fresh := req
+	fresh.RequestID = uniqueID("operator-fresh")
+	if _, found, err := l.FindOperatorReplay(ctx, fresh, false); err != nil || found {
+		t.Fatalf("fresh found=%v err=%v", found, err)
+	}
+}
+
 func TestOperatorRevokeTargetsOnlyOperatorGrantSource(t *testing.T) {
 	l, done := newTestLedger(t)
 	defer done()

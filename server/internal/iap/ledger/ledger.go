@@ -406,6 +406,87 @@ func sameSandboxResetRequest(doc sandboxResetRequestDoc, in SandboxResetInput) b
 		doc.Reason == in.Reason
 }
 
+func validSandboxResetRecord(doc sandboxResetRequestDoc) bool {
+	if !operatorRequestIDPattern.MatchString(doc.RequestID) ||
+		!operatorPUIDPattern.MatchString(doc.PlatformUserID) ||
+		!operatorAppIDPattern.MatchString(doc.AppID) ||
+		!operatorActorPattern.MatchString(doc.ActorLogin) ||
+		!ValidAdminMutationReason(doc.Reason) || doc.ResetAt.IsZero() {
+		return false
+	}
+	previous := ""
+	for _, orderKey := range doc.OrderKeys {
+		if !operatorOrderKeyPattern.MatchString(orderKey) ||
+			(previous != "" && orderKey <= previous) {
+			return false
+		}
+		previous = orderKey
+	}
+	return true
+}
+
+// FindSandboxResetReplay는 sandbox reset의 exact retry를 mutable app/user
+// precondition과 rate gate보다 먼저 영구 요청 레코드에서 찾는다.
+func (l *Ledger) FindSandboxResetReplay(
+	ctx context.Context,
+	in SandboxResetInput,
+) ([]string, bool, error) {
+	if l.env != domain.EnvSandbox {
+		return nil, false, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"sandbox 원장에서만 초기화 결과를 조회할 수 있어요")
+	}
+	if err := in.validate(); err != nil {
+		return nil, false, err
+	}
+	resetPath, err := l.paths.sandboxResetRequest(in.RequestID)
+	if err != nil {
+		return nil, false, err
+	}
+	grantPath, err := l.paths.operatorGrant(in.RequestID)
+	if err != nil {
+		return nil, false, err
+	}
+	revokePath, err := l.paths.operatorRevocation(in.RequestID)
+	if err != nil {
+		return nil, false, err
+	}
+
+	resetSnap, resetExists, err := l.getOptional(ctx, resetPath)
+	if err != nil {
+		return nil, false, err
+	}
+	_, grantExists, err := l.getOptional(ctx, grantPath)
+	if err != nil {
+		return nil, false, err
+	}
+	_, revokeExists, err := l.getOptional(ctx, revokePath)
+	if err != nil {
+		return nil, false, err
+	}
+	if grantExists || revokeExists {
+		return nil, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
+			"requestId가 다른 운영 조작에 이미 사용됐어요")
+	}
+	if !resetExists {
+		return nil, false, nil
+	}
+
+	var prev sandboxResetRequestDoc
+	if err := resetSnap.DataTo(&prev); err != nil {
+		return nil, false, platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
+			"sandbox 초기화 기록을 읽지 못했어요")
+	}
+	if !validSandboxResetRecord(prev) {
+		return nil, false, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"sandbox 초기화 기록에 노출할 수 없는 값이 있어요")
+	}
+	if !sameSandboxResetRequest(prev, in) {
+		return nil, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
+			"같은 requestId의 이전 초기화 요청과 내용이 달라요")
+	}
+	return append([]string{}, prev.OrderKeys...), true, nil
+}
+
 // MarkSandboxReset은 App Store sandbox 구매내역 초기화를 원장에 남긴다.
 //
 // Apple 쪽 구매내역은 App Store Connect에서 사람이 지운다. 이 함수는
@@ -440,6 +521,10 @@ func (l *Ledger) MarkSandboxReset(
 		if err := snap.DataTo(&prev); err != nil {
 			return nil, platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
 				"sandbox 초기화 기록을 읽지 못했어요")
+		}
+		if !validSandboxResetRecord(prev) {
+			return nil, platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"sandbox 초기화 기록에 노출할 수 없는 값이 있어요")
 		}
 		if !sameSandboxResetRequest(prev, in) {
 			return nil, platformerr.New(platformerr.CodeOperatorReplayMismatch,
@@ -501,6 +586,10 @@ func (l *Ledger) MarkSandboxReset(
 			if err := resetSnap.DataTo(&prev); err != nil {
 				return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
 					"sandbox 초기화 기록을 읽지 못했어요")
+			}
+			if !validSandboxResetRecord(prev) {
+				return platformerr.New(platformerr.CodeLedgerStateInvalid,
+					"sandbox 초기화 기록에 노출할 수 없는 값이 있어요")
 			}
 			if !sameSandboxResetRequest(prev, in) {
 				return platformerr.New(platformerr.CodeOperatorReplayMismatch,

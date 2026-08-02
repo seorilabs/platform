@@ -247,11 +247,25 @@ func (a auditAdapter) Record(
 	if a.col == nil {
 		return
 	}
-	a.col.Audit(ctx, events.AuditRow{
+	a.col.Audit(ctx, newAuditRow(action, appID, puid, outcome, detail))
+}
+
+// newAuditRow는 detail에만 있던 운영자와 멱등 키를 BigQuery의 검색 가능한
+// 고정 컬럼에도 올린다. detail JSON만 채우면 장애 대응 SQL이 매 행의 JSON을
+// 파싱해야 하고 request_id 기준 재시도 추적도 인덱스 경계를 잃는다.
+func newAuditRow(action, appID, puid, outcome string, detail map[string]any) events.AuditRow {
+	row := events.AuditRow{
 		Action:         events.AuditAction(action),
 		AppID:          appID,
 		PlatformUserID: puid,
 		Outcome:        outcome,
 		Detail:         detail,
-	})
+	}
+	if actor, ok := detail["actor"].(string); ok {
+		row.Actor = actor
+	}
+	if requestID, ok := detail["request_id"].(string); ok {
+		row.RequestID = requestID
+	}
+	return row
 }

@@ -48,6 +48,19 @@ func TestWriteOK(t *testing.T) {
 	}
 }
 
+func TestRequestLogPathNeverUsesRawPathParameters(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/admin/users/person@example.com", nil)
+	r.Pattern = "GET /v1/admin/users/{reference}"
+	if got := requestLogPath(r); got != r.Pattern || strings.Contains(got, "person@example.com") {
+		t.Errorf("log path = %q", got)
+	}
+
+	unmatched := httptest.NewRequest(http.MethodGet, "/person@example.com", nil)
+	if got := requestLogPath(unmatched); got != "<unmatched>" || strings.Contains(got, "person@example.com") {
+		t.Errorf("unmatched log path = %q", got)
+	}
+}
+
 func TestWriteError(t *testing.T) {
 	tests := []struct {
 		name       string

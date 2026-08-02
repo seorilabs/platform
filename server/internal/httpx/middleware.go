@@ -45,7 +45,7 @@ func Recover() Middleware {
 				slog.ErrorContext(r.Context(), "패닉 복구",
 					"panic", rec,
 					"method", r.Method,
-					"path", r.URL.Path,
+					"path", requestLogPath(r),
 					"stack", string(debug.Stack()),
 				)
 				// 헤더를 이미 보냈으면 상태를 바꿀 수 없다.
@@ -137,7 +137,7 @@ func AccessLog() Middleware {
 
 			attrs := []any{
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", requestLogPath(r),
 				"status", rec.status,
 				"latency_ms", time.Since(start).Milliseconds(),
 			}
@@ -160,6 +160,16 @@ func AccessLog() Middleware {
 			slog.Log(r.Context(), level, "요청", attrs...)
 		})
 	}
+}
+
+// requestLogPath는 URL path parameter 원문 대신 ServeMux route pattern을
+// 남긴다. 사용자 조회 reference에 이메일 같은 PII를 잘못 붙여 넣어도 access,
+// error, panic 로그에 원문이 남아서는 안 된다.
+func requestLogPath(r *http.Request) string {
+	if r.Pattern != "" {
+		return r.Pattern
+	}
+	return "<unmatched>"
 }
 
 // Timeout은 요청 컨텍스트에 상한을 건다.
