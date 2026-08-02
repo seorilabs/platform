@@ -52,13 +52,30 @@ jobs:
       - name: go build
         run: go build ./...
 
+      # race detector는 cgo를 요구하고 cgo는 C 컴파일러를 요구한다.
+      # ARC 러너 이미지에는 gcc가 없다. org 재사용 워크플로가 fontconfig에
+      # 쓰는 방식대로 없을 때만 설치한다.
+      - name: Ensure C compiler for race detector
+        run: |
+          set -euo pipefail
+          if command -v gcc >/dev/null 2>&1; then
+            echo "gcc already available"; exit 0
+          fi
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "gcc missing and apt-get unavailable" >&2; exit 1
+          fi
+          sudo_cmd=""; command -v sudo >/dev/null 2>&1 && sudo_cmd="sudo"
+          ${sudo_cmd} apt-get update
+          ${sudo_cmd} apt-get install -y gcc
+          gcc --version | head -1
+
       # -race는 데이터 경합을 잡는다. 원장이 Firestore 트랜잭션과
       # goroutine을 함께 쓰므로 이게 없으면 경합이 CI를 통과한다.
       #
-      # ARC 러너는 CGO_ENABLED가 0이라 -race가 거부된다. race detector는
-      # cgo를 요구한다. 로컬 macOS는 기본이 1이라 여기서만 드러났다.
-      # 배포 산출물은 deploy.yml이 CGO_ENABLED=0으로 따로 만들므로
-      # 여기서 켜도 정적 바이너리에는 영향이 없다.
+      # ARC 러너는 CGO_ENABLED가 0이라 여기서 켠다. 로컬 macOS는 기본이
+      # 1이라 워크플로를 만들 때 드러나지 않았다. 배포 산출물은
+      # deploy.yml이 CGO_ENABLED=0으로 따로 만들므로 distroless에 올라가는
+      # 정적 바이너리에는 영향이 없다.
       - name: go test
         env:
           CGO_ENABLED: 1
