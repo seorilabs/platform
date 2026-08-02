@@ -228,7 +228,7 @@ func (v *Verifier) doJSON(ctx context.Context, method, endpoint string, body []b
 		return platformerr.Wrap(err, platformerr.CodeProviderUnavailable,
 			"Play에 연결하지 못했어요")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {

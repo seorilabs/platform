@@ -84,7 +84,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	sink := registry.NewStoreSource(st)
 	for _, a := range apps {

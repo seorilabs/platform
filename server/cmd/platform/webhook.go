@@ -59,8 +59,8 @@ func registerWebhooks(mux *http.ServeMux, cfg config.Config, d *deps) error {
 		// audience는 push subscription에 설정한 값과 같아야 한다.
 		audience := os.Getenv("IAP_PLAY_RTDN_AUDIENCE")
 
-		switch {
-		case audience == "":
+		switch audience {
+		case "":
 			// 검증할 수 없으면 열지 않는다. 인증 없는 알림
 			// 엔드포인트는 아무나 환불을 흉내 낼 수 있는 통로다.
 			slog.Warn("Play 알림 audience가 없어 웹훅을 열지 않는다")

@@ -190,7 +190,7 @@ func (h *AppleHandler) parse(signedPayload string) (notification, error) {
 // NotificationPayload는 RegisteredClaims를 품고 있어 iat에 들어온다.
 func appleSignedDate(p *appstore.NotificationPayload) time.Time {
 	if p.IssuedAt != nil {
-		return p.IssuedAt.Time.UTC()
+		return p.IssuedAt.UTC()
 	}
 	return time.Time{}
 }

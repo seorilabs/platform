@@ -264,7 +264,7 @@ func (v *Verifier) fetchOrderStatus(ctx context.Context, orderID, userKey string
 		return nil, platformerr.Wrap(err, platformerr.CodeProviderUnavailable,
 			"AppsInToss에 연결하지 못했어요")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {

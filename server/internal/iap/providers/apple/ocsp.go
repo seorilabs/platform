@@ -144,7 +144,7 @@ func (r *revocationChecker) query(
 	if err != nil {
 		return false, time.Time{}, err
 	}
-	defer rsp.Body.Close()
+	defer func() { _ = rsp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(rsp.Body, ocspMaxResponseBytes))
 	if err != nil {

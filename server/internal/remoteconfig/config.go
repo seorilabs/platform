@@ -160,7 +160,7 @@ func (d Document) Resolve(t Target) Resolved {
 // 같은 버전이라도 타겟이 다르면 결과가 다르므로 함께 넣는다.
 func (d Document) ETag(t Target) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%d|%s|%s|%s", d.AppID, d.Version, t.Platform, t.AppVersion, t.Locale)
+	_, _ = fmt.Fprintf(h, "%s|%d|%s|%s|%s", d.AppID, d.Version, t.Platform, t.AppVersion, t.Locale)
 	return `W/"` + hex.EncodeToString(h.Sum(nil))[:16] + `"`
 }
 

@@ -224,7 +224,12 @@ func newPlayHTTPClient(ctx context.Context, cfg config.PlayConfig) (*http.Client
 		return client, nil
 	}
 
-	creds, err := google.CredentialsFromJSON(ctx, cfg.ServiceAccountJSON, playScope)
+	creds, err := google.CredentialsFromJSONWithTypeAndParams(
+		ctx,
+		cfg.ServiceAccountJSON,
+		google.ServiceAccount,
+		google.CredentialsParams{Scopes: []string{playScope}},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("iap: Play 전용 자격증명을 읽지 못했다: %w", err)
 	}
