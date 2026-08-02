@@ -260,6 +260,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '502': { $ref: '#/components/responses/ProviderError' }
@@ -298,6 +300,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '502': { $ref: '#/components/responses/ProviderError' }
@@ -336,6 +340,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '502': { $ref: '#/components/responses/ProviderError' }
 
@@ -357,6 +363,7 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
                         type: object
@@ -503,11 +510,14 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
                         $ref: '#/components/schemas/AdminHealth'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /admin/orders/recent:
     get:
@@ -526,6 +536,7 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
                         type: object
@@ -536,6 +547,8 @@ paths:
                             items: { $ref: '#/components/schemas/AdminOrder' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /admin/users/{reference}:
     get:
@@ -563,6 +576,7 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
                         type: object
@@ -572,6 +586,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /admin/users/{puid}/entitlements:
     get:
@@ -594,6 +610,7 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
                         type: object
@@ -605,6 +622,8 @@ paths:
                             items: { $ref: '#/components/schemas/AdminEntitlement' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /admin/operator-grants:
     get:
@@ -623,6 +642,7 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
                         type: object
@@ -636,14 +656,21 @@ paths:
                             items: { $ref: '#/components/schemas/AdminOperatorRecord' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
-  /admin/iap/catalog:
+  /admin/apps/{appId}/iap/catalog:
     get:
       tags: [admin]
-      summary: 관리 가능한 entitlement ID 목록 조회
-      description: SKU와 마켓 자격증명은 반환하지 않는다.
-      operationId: getAdminIapCatalog
+      summary: 앱별 관리 가능 entitlement ID 목록 조회
+      description: 전역 SKU 카탈로그와 앱 레지스트리 allowlist의 교집합만 반환한다.
+      operationId: getAdminAppIapCatalog
       security: [{ AdminOidc: [] }]
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
       responses:
         '200':
           description: 조회 성공
@@ -653,16 +680,24 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
                         type: object
-                        required: [entitlements]
+                        required: [appId, entitlements]
+                        additionalProperties: false
                         properties:
+                          appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
                           entitlements:
                             type: array
                             items: { $ref: '#/components/schemas/EntitlementId' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /admin/entitlements/grant:
     post:
@@ -681,13 +716,18 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/AdminGrantRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AdminMutationOk' }
+        '200': { $ref: '#/components/responses/AdminGrantMutationOk' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /admin/entitlements/revoke:
     post:
@@ -706,19 +746,33 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/AdminRevokeRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AdminMutationOk' }
+        '200': { $ref: '#/components/responses/AdminRevokeMutationOk' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /admin/iap/sandbox-reset:
     post:
       tags: [admin]
       summary: App Store sandbox 원장 초기화
-      description: App Store Connect에서 구매 내역을 지운 뒤 sandbox 원장에만 반영한다.
+      description: |
+        App Store Connect에서 구매 내역을 지운 뒤 sandbox 원장에만 반영한다.
+
+        첫 트랜잭션에서 immutable reset intent와 사용자 barrier를 함께 확정한
+        시점이 요청 시작의 선형화 지점이다. 이 뒤 처리 실패는
+        `sandbox_reset_pending`이며 새 requestId를 만들지 말고 같은 requestId로
+        이 요청을 재호출하거나 resume API를 호출해야 한다.
+
+        같은 requestId가 `closed_not_started`로 영구 종결됐다면
+        `sandbox_reset_closed`로 거부하고 새 intent를 만들지 않는다.
       operationId: resetAdminAppStoreSandbox
       security: [{ AdminOidc: [] }]
       parameters:
@@ -729,30 +783,121 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/AdminSandboxResetRequest' }
       responses:
+        '200': { $ref: '#/components/responses/AdminSandboxResetMutationOk' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/SandboxResetConflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/SandboxResetUnavailable' }
+
+  /admin/iap/sandbox-resets/{requestId}:
+    get:
+      tags: [admin]
+      summary: App Store sandbox 초기화 상태 조회
+      description: |
+        영구 reset intent나 not-started closure가 없으면 `sandbox_reset_not_found`를 반환한다.
+        HTTP 응답에는 platformUserId와 resetOrderKeys를 노출하지 않는다.
+      operationId: getAdminAppStoreSandboxReset
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+      responses:
         '200':
-          description: 반영 성공
+          description: 상태 조회 성공
           content:
             application/json:
               schema:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
-                        type: object
-                        required: [platformUserId, resetOrderKeys]
-                        additionalProperties: false
-                        properties:
-                          platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
-                          resetOrderKeys:
-                            type: array
-                            items: { type: string, pattern: '^[0-9a-f]{64}$' }
+                        $ref: '#/components/schemas/AdminSandboxResetStatusResult'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/SandboxResetNotFound' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /admin/iap/sandbox-resets/{requestId}/resume:
+    post:
+      tags: [admin]
+      summary: 준비 상태의 App Store sandbox 초기화 재개
+      description: |
+        첫 트랜잭션에서 영구 확정됐지만 완료되지 않은 reset intent를 재개한다.
+        `completed` 상태의 같은 요청은 저장된 결과를 멱등 반환한다.
+        `closed_not_started` 상태는 `sandbox_reset_closed`로 거부한다.
+        새 reset intent를 만들거나 mutable 앱·사용자 precondition을 다시 평가하지 않는다.
+      operationId: resumeAdminAppStoreSandboxReset
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        - $ref: '#/components/parameters/AdminActor'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminSandboxResetResumeRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AdminSandboxResetMutationOk' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/SandboxResetNotFound' }
+        '409': { $ref: '#/components/responses/SandboxResetResumeConflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/SandboxResetPending' }
+
+  /admin/iap/sandbox-resets/{requestId}/close-not-started:
+    post:
+      tags: [admin]
+      summary: 시작되지 않은 App Store sandbox 초기화 영구 종결
+      description: |
+        상태 조회에서 durable intent가 없음을 확인한 requestId를 영구 종결한다.
+        closure가 먼저 commit되면 같은 requestId로 reset intent를 나중에 만들 수 없다.
+        같은 appId의 exact closure 재호출은 `applied=false`로 멱등 반환한다.
+      operationId: closeAdminAppStoreSandboxResetNotStarted
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        - $ref: '#/components/parameters/AdminActor'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminSandboxResetCloseNotStartedRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AdminSandboxResetCloseNotStartedOk' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/SandboxResetCloseConflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /admin/config/maintenance:
     post:
@@ -771,7 +916,7 @@ paths:
               required: [appId, minutes]
               additionalProperties: false
               properties:
-                appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+                appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
                 minutes: { type: integer, minimum: 0, maximum: 1440 }
       responses:
         '200':
@@ -782,19 +927,25 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/EnvelopeOk'
                   - type: object
+                    required: [result]
                     properties:
                       result:
                         type: object
                         required: [appId, active, minutes]
                         additionalProperties: false
                         properties:
-                          appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+                          appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
                           active: { type: boolean }
                           minutes: { type: integer }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
 components:
   securitySchemes:
@@ -826,7 +977,7 @@ components:
         헤더를 바꿔도 토큰의 aud 불일치로 거부된다.
       schema:
         type: string
-        pattern: '^[a-z0-9-]{1,64}$'
+        pattern: '^[a-z0-9][a-z0-9-]{0,63}$'
     SeoriSdk:
       name: X-Seori-Sdk
       in: header
@@ -862,8 +1013,9 @@ components:
       description: |
         작업을 승인한 GitHub login. 권한 판단에는 쓰지 않으며 형식만 검증한다.
         없거나 형식이 다르면 OIDC principal의 SHA-256 참조를 저장한다.
-        grant, revoke, sandbox reset의 멱등 payload 일부이므로 unknown 결과를 같은
-        requestId로 재시도할 때는 최초 값을 그대로 보내야 한다.
+        grant, revoke, 최초 sandbox reset POST와 close-not-started의 멱등 payload
+        일부이므로 unknown 결과를 같은 원 endpoint로 재시도할 때는 최초 값을 그대로
+        보내야 한다. reset resume는 저장된 최초 payload를 사용한다.
       schema:
         type: string
         pattern: '^[A-Za-z0-9-]{1,39}$'
@@ -917,7 +1069,7 @@ components:
       properties:
         appId:
           type: string
-          pattern: '^[a-z0-9-]{1,64}$'
+          pattern: '^[a-z0-9][a-z0-9-]{0,63}$'
         credential:
           type: object
           required: [kind, value]
@@ -1118,7 +1270,7 @@ components:
       additionalProperties: false
       properties:
         platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
-        appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
         supportCode: { type: string, pattern: '^[A-Z]{1,3}-[0-9A-HJKMNP-TV-Z]{8}$' }
         isAnonymous: { type: boolean }
         createdAt: { type: string, format: date-time }
@@ -1134,7 +1286,7 @@ components:
         appId:
           description: PII 없는 사용자 binding에서 도출. 삭제 사용자 또는 owner 없는 tombstone은 빈 문자열.
           oneOf:
-            - { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+            - { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
             - { type: string, enum: [''] }
         platformUserId:
           description: 일반 주문은 정확한 PUID. owner 없는 tombstone만 빈 문자열.
@@ -1196,7 +1348,7 @@ components:
           type: string
           pattern: '^(?:[A-Za-z0-9-]{1,39}|oidc_sha256:[0-9a-f]{64})$'
         reason: { $ref: '#/components/schemas/AdminMutationReason' }
-        appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
         createdAt: { type: string, format: date-time }
         kind: { type: string, enum: [grant, revoke] }
 
@@ -1206,7 +1358,7 @@ components:
       additionalProperties: false
       properties:
         requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
-        appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
         platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
         entitlementId: { $ref: '#/components/schemas/EntitlementId' }
         reason: { $ref: '#/components/schemas/AdminMutationReason' }
@@ -1224,7 +1376,7 @@ components:
       properties:
         requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
         grantRequestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
-        appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
         platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
         entitlementId: { $ref: '#/components/schemas/EntitlementId' }
         reason: { $ref: '#/components/schemas/AdminMutationReason' }
@@ -1241,7 +1393,7 @@ components:
       additionalProperties: false
       properties:
         requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
-        appId: { type: string, pattern: '^[a-z0-9-]{1,64}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
         platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
         reason: { $ref: '#/components/schemas/AdminMutationReason' }
         expectedEnvironment:
@@ -1251,7 +1403,106 @@ components:
           type: string
           maxLength: 512
           description: '`RESET {appId} {platformUserId}`와 정확히 일치'
-        appleClearedConfirmed: { type: boolean }
+        appleClearedConfirmed: { type: boolean, enum: [true] }
+
+    AdminSandboxResetResumeRequest:
+      type: object
+      required: [appId, confirmation]
+      additionalProperties: false
+      properties:
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        confirmation:
+          type: string
+          maxLength: 512
+          description: '`RESUME RESET {appId} {requestId}`와 정확히 일치'
+
+    AdminSandboxResetCloseNotStartedRequest:
+      type: object
+      required: [appId, confirmation]
+      additionalProperties: false
+      properties:
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        confirmation:
+          type: string
+          maxLength: 512
+          description: '`CLOSE RESET {appId} {requestId}`와 정확히 일치'
+
+    AdminSandboxResetMutationResult:
+      type: object
+      required:
+        [requestId, appId, platformUserId, expectedEnvironment, operation, resetOrderKeys]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        expectedEnvironment: { type: string, enum: [sandbox] }
+        operation: { type: string, enum: [sandbox_reset] }
+        resetOrderKeys:
+          type: array
+          items: { type: string, pattern: '^[0-9a-f]{64}$' }
+
+    AdminSandboxResetStatusResult:
+      type: object
+      required: [requestId, appId, expectedEnvironment, operation, state]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        expectedEnvironment: { type: string, enum: [sandbox] }
+        operation: { type: string, enum: [sandbox_reset] }
+        state:
+          type: string
+          enum: [prepared, completed, closed_not_started]
+
+    AdminSandboxResetCloseNotStartedResult:
+      type: object
+      required: [requestId, appId, expectedEnvironment, operation, state, applied]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        expectedEnvironment: { type: string, enum: [sandbox] }
+        operation: { type: string, enum: [sandbox_reset] }
+        state: { type: string, enum: [closed_not_started] }
+        applied:
+          type: boolean
+          description: 최초 closure 생성이면 true, exact 멱등 재호출이면 false
+
+    AdminGrantMutationResult:
+      type: object
+      required:
+        [applied, entitlements, requestId, appId, platformUserId, entitlementId, expectedEnvironment, operation]
+      additionalProperties: false
+      properties:
+        applied: { type: boolean }
+        entitlements:
+          type: array
+          items: { $ref: '#/components/schemas/EntitlementId' }
+        requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+        expectedEnvironment: { $ref: '#/components/schemas/LedgerEnvironment' }
+        operation: { type: string, enum: [grant] }
+
+    AdminRevokeMutationResult:
+      type: object
+      required:
+        [applied, entitlements, requestId, appId, platformUserId, entitlementId, expectedEnvironment, operation, grantRequestId]
+      additionalProperties: false
+      properties:
+        applied: { type: boolean }
+        entitlements:
+          type: array
+          items: { $ref: '#/components/schemas/EntitlementId' }
+        requestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
+        entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+        expectedEnvironment: { $ref: '#/components/schemas/LedgerEnvironment' }
+        operation: { type: string, enum: [revoke] }
+        grantRequestId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
 
   responses:
     BadRequest:
@@ -1289,6 +1540,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/EnvelopeError' }
+    UnsupportedMediaType:
+      description: Content-Type이 application/json이 아님
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EnvelopeError' }
     RateLimited:
       description: 한도 초과
       content:
@@ -1304,6 +1560,125 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/EnvelopeError' }
+    SandboxResetConflict:
+      description: |
+        같은 requestId의 payload가 다르거나(`operator_replay_mismatch`), 같은 사용자의
+        다른 reset intent가 이미 준비 상태이거나(`sandbox_reset_busy`), requestId가
+        미시작으로 영구 종결됨(`sandbox_reset_closed`)
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeError'
+              - type: object
+                properties:
+                  error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                      code:
+                        type: string
+                        enum: [operator_replay_mismatch, sandbox_reset_busy, sandbox_reset_closed]
+                      message: { type: string }
+    SandboxResetResumeConflict:
+      description: |
+        요청 appId가 영구 reset target과 다르거나(`operator_replay_mismatch`),
+        requestId가 미시작으로 영구 종결됨(`sandbox_reset_closed`)
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeError'
+              - type: object
+                properties:
+                  error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                      code:
+                        type: string
+                        enum: [operator_replay_mismatch, sandbox_reset_closed]
+                      message: { type: string }
+    SandboxResetCloseConflict:
+      description: |
+        같은 requestId의 closure payload가 다르거나 다른 운영 조작에 사용됨
+        (`operator_replay_mismatch`), 또는 reset intent나 completion이 이미 확정됨
+        (`sandbox_reset_already_started`)
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeError'
+              - type: object
+                properties:
+                  error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                      code:
+                        type: string
+                        enum: [operator_replay_mismatch, sandbox_reset_already_started]
+                      message: { type: string }
+    SandboxResetNotFound:
+      description: |
+        영구 reset intent와 미시작 closure가 모두 없음.
+        `error.code`는 `sandbox_reset_not_found`
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeError'
+              - type: object
+                properties:
+                  error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                      code:
+                        type: string
+                        enum: [sandbox_reset_not_found]
+                      message: { type: string }
+          example:
+            ok: false
+            error:
+              code: sandbox_reset_not_found
+              message: sandbox reset 요청을 찾을 수 없습니다
+    SandboxResetPending:
+      description: |
+        영구 reset intent는 확정됐지만 효과 적용을 완료하지 못함.
+        `error.code`는 `sandbox_reset_pending`이며 같은 requestId로만 재개해야 한다.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeError'
+              - type: object
+                properties:
+                  error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                      code:
+                        type: string
+                        enum: [sandbox_reset_pending]
+                      message: { type: string }
+          example:
+            ok: false
+            error:
+              code: sandbox_reset_pending
+              message: sandbox reset 적용이 준비 상태입니다
+    SandboxResetUnavailable:
+      description: |
+        intent 확정 전 설정·원장 오류이거나 intent 확정 뒤 효과 적용이 미완료됨.
+        후자는 `error.code=sandbox_reset_pending`이며 같은 requestId로만 재개해야 한다.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EnvelopeError' }
+    InternalServerError:
+      description: 원장 상태 오류 또는 예기치 않은 내부 실패
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EnvelopeError' }
     VerifyPurchaseOk:
       description: 검증 완료
       content:
@@ -1312,10 +1687,11 @@ components:
             allOf:
               - $ref: '#/components/schemas/EnvelopeOk'
               - type: object
+                required: [result]
                 properties:
                   result:
                     $ref: '#/components/schemas/VerifyPurchaseOutcome'
-    AdminMutationOk:
+    AdminGrantMutationOk:
       description: 조작 완료 또는 동일 요청의 멱등 재호출
       content:
         application/json:
@@ -1323,16 +1699,46 @@ components:
             allOf:
               - $ref: '#/components/schemas/EnvelopeOk'
               - type: object
+                required: [result]
                 properties:
                   result:
-                    type: object
-                    required: [applied, entitlements]
-                    additionalProperties: false
-                    properties:
-                      applied: { type: boolean }
-                      entitlements:
-                        type: array
-                        items: { $ref: '#/components/schemas/EntitlementId' }
+                    $ref: '#/components/schemas/AdminGrantMutationResult'
+    AdminRevokeMutationOk:
+      description: 회수 완료 또는 동일 요청의 멱등 재호출
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeOk'
+              - type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: '#/components/schemas/AdminRevokeMutationResult'
+    AdminSandboxResetMutationOk:
+      description: 초기화 완료, prepared 요청의 재개 완료 또는 completed 요청의 멱등 재호출
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeOk'
+              - type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: '#/components/schemas/AdminSandboxResetMutationResult'
+    AdminSandboxResetCloseNotStartedOk:
+      description: 미시작 영구 종결 완료 또는 동일 요청의 멱등 재호출
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeOk'
+              - type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: '#/components/schemas/AdminSandboxResetCloseNotStartedResult'
 
 security:
   - PlatformToken: []

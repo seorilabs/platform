@@ -96,6 +96,11 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	if err != nil {
 		return nil, err
 	}
+	closeStore := func() {
+		if closeErr := st.Close(); closeErr != nil {
+			slog.Error("Firestore 종료 실패", "err", closeErr)
+		}
+	}
 
 	reg := registry.New(registry.NewStoreSource(st))
 
@@ -109,13 +114,13 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	// Admin은 Config에 비밀이 잘못 들어와도 issuer를 만들지 않는다.
 	if cfg.Role == config.RoleAPI || cfg.Role == config.RoleIAP {
 		if len(cfg.SessionSecret) == 0 {
-			st.Close()
+			closeStore()
 			return nil, errors.New("identity role에 세션 비밀키가 필요하다")
 		}
 		keys := identity.NewKeyCache(nil)
 		issuer, err := identity.NewSessionIssuer(cfg.SessionSecret, cfg.SessionTTL)
 		if err != nil {
-			st.Close()
+			closeStore()
 			return nil, err
 		}
 
@@ -142,7 +147,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		cfg.Role == config.RoleIAP || cfg.Role == config.RoleAdmin {
 		col, err := events.NewCollector(ctx, cfg.ProjectID, cfg.BigQueryDataset)
 		if err != nil {
-			st.Close()
+			closeStore()
 			return nil, err
 		}
 		d.events = col
@@ -154,7 +159,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	case config.RoleIAP, config.RoleWorker:
 		svc, err := newIAPService(ctx, cfg, st, d.events)
 		if err != nil {
-			st.Close()
+			closeStore()
 			return nil, err
 		}
 		d.iap = svc
@@ -165,7 +170,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		// 자격증명을 붙이면 폭발 반경이 admin까지 넓어진다.
 		d.iap, err = newAdminIAP(cfg, st)
 		if err != nil {
-			st.Close()
+			closeStore()
 			return nil, err
 		}
 	}
@@ -213,17 +218,17 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 	// 헬스체크는 계약이 아니라 인프라 관심사다. spec/openapi.yaml에 두지 않는다.
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ok")
+		_, _ = fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
 		// 레지스트리를 읽을 수 있어야 요청을 받을 준비가 된 것이다.
 		if _, err := d.registry.List(r.Context()); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintln(w, "not ready")
+			_, _ = fmt.Fprintln(w, "not ready")
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ready")
+		_, _ = fmt.Fprintln(w, "ready")
 	})
 
 	switch cfg.Role {

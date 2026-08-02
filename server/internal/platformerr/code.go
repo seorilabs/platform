@@ -82,6 +82,11 @@ const (
 	CodePurchaseOwnedByAnotherUser Code = "purchase_owned_by_another_user" // 불변식 4
 	CodePurchaseReplayMismatch     Code = "purchase_replay_mismatch"
 	CodeOperatorReplayMismatch     Code = "operator_replay_mismatch"
+	CodeSandboxResetBusy           Code = "sandbox_reset_busy"
+	CodeSandboxResetPending        Code = "sandbox_reset_pending"
+	CodeSandboxResetNotFound       Code = "sandbox_reset_not_found"
+	CodeSandboxResetClosed         Code = "sandbox_reset_closed"
+	CodeSandboxResetAlreadyStarted Code = "sandbox_reset_already_started"
 )
 
 // 웹훅 이벤트
@@ -196,6 +201,11 @@ var statusByCode = map[Code]int{
 	CodePurchaseOwnedByAnotherUser: http.StatusConflict,
 	CodePurchaseReplayMismatch:     http.StatusConflict,
 	CodeOperatorReplayMismatch:     http.StatusConflict,
+	CodeSandboxResetBusy:           http.StatusConflict,
+	CodeSandboxResetPending:        http.StatusServiceUnavailable,
+	CodeSandboxResetNotFound:       http.StatusNotFound,
+	CodeSandboxResetClosed:         http.StatusConflict,
+	CodeSandboxResetAlreadyStarted: http.StatusConflict,
 
 	// 웹훅 이벤트
 	CodeNotificationInvalid:        http.StatusUnauthorized,
@@ -259,7 +269,8 @@ func IsRetryable(c Code) bool {
 		CodePlatformUnavailable,
 		CodeCatalogUnavailable,
 		CodeRuntimeConfigInvalid,
-		CodeSecretConfigInvalid:
+		CodeSecretConfigInvalid,
+		CodeSandboxResetPending:
 		return true
 	default:
 		return false

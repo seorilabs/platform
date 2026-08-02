@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +22,7 @@ import (
 
 var (
 	adminRequestIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-	adminAppIDPattern        = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+	adminAppIDPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	adminPlatformUserPattern = regexp.MustCompile(`^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
 	adminEntitlementPattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 	adminSupportCodePattern  = regexp.MustCompile(`^[A-Z]{1,3}-[0-9A-HJKMNP-TV-Z]{8}$`)
@@ -39,6 +40,9 @@ type Ledger interface {
 	ListOperatorRevocations(ctx context.Context, limit int) ([]ledger.OperatorRecord, error)
 	FindOperatorReplay(ctx context.Context, in ledger.OperatorInput, revoke bool) (ledger.OperatorResult, bool, error)
 	FindSandboxResetReplay(ctx context.Context, in ledger.SandboxResetInput) ([]string, bool, error)
+	GetSandboxResetStatus(ctx context.Context, requestID string) (ledger.SandboxResetStatus, error)
+	ResumeSandboxReset(ctx context.Context, requestID string) ([]string, error)
+	CloseSandboxResetNotStarted(ctx context.Context, in ledger.SandboxResetClosureInput) (bool, error)
 	OperatorGrant(ctx context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error)
 	OperatorRevoke(ctx context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error)
 	MarkSandboxReset(ctx context.Context, in ledger.SandboxResetInput) ([]string, error)
@@ -107,12 +111,13 @@ func NewHandler(
 func (h *Handler) Register(mux *http.ServeMux) {
 	readRoutes := map[string]httpx.Handler{
 		// 조회 — 등급 A
-		"GET /v1/admin/orders/recent":             h.recentOrders,
-		"GET /v1/admin/users/{reference}":         h.user,
-		"GET /v1/admin/users/{puid}/entitlements": h.userEntitlements,
-		"GET /v1/admin/operator-grants":           h.operatorGrants,
-		"GET /v1/admin/iap/catalog":               h.iapCatalog,
-		"GET /v1/admin/health":                    h.health,
+		"GET /v1/admin/orders/recent":                  h.recentOrders,
+		"GET /v1/admin/users/{reference}":              h.user,
+		"GET /v1/admin/users/{puid}/entitlements":      h.userEntitlements,
+		"GET /v1/admin/operator-grants":                h.operatorGrants,
+		"GET /v1/admin/apps/{appId}/iap/catalog":       h.iapCatalog,
+		"GET /v1/admin/iap/sandbox-resets/{requestId}": h.sandboxResetStatus,
+		"GET /v1/admin/health":                         h.health,
 	}
 	writeRoutes := map[string]httpx.Handler{
 		// 조작 — 등급 C. reason과 requestId가 필수다
@@ -120,7 +125,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"POST /v1/admin/entitlements/revoke": h.revokeEntitlement,
 
 		// sandbox 원장에서만 동작한다. production에서는 거부한다
-		"POST /v1/admin/iap/sandbox-reset": h.resetAppStoreSandbox,
+		"POST /v1/admin/iap/sandbox-reset":                                h.resetAppStoreSandbox,
+		"POST /v1/admin/iap/sandbox-resets/{requestId}/resume":            h.resumeAppStoreSandboxReset,
+		"POST /v1/admin/iap/sandbox-resets/{requestId}/close-not-started": h.closeAppStoreSandboxResetNotStarted,
 
 		// break-glass. 백오피스가 죽어도 점검 모드는 켤 수 있어야 한다
 		"POST /v1/admin/config/maintenance": h.setMaintenance,
@@ -134,13 +141,52 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	}
 }
 
-// iapCatalog는 조작 폼이 선택할 entitlement ID만 준다. SKU와 마켓
-// 자격증명은 Admin API가 알거나 노출할 이유가 없다.
-func (h *Handler) iapCatalog(w http.ResponseWriter, _ *http.Request) error {
+// iapCatalog는 선택한 앱에 허용된 entitlement ID만 준다. 전역 SKU
+// 카탈로그와 앱 레지스트리 allowlist의 교집합이라 다른 앱 지급에 쓸 수 없다.
+func (h *Handler) iapCatalog(w http.ResponseWriter, r *http.Request) error {
+	appID := r.PathValue("appId")
+	entitlements, err := h.appEntitlements(r.Context(), appID)
+	if err != nil {
+		return err
+	}
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
-		"entitlements": h.catalog.IDs(),
+		"appId":        appID,
+		"entitlements": entitlements,
 	})
 	return nil
+}
+
+func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, error) {
+	if !adminAppIDPattern.MatchString(appID) {
+		return nil, platformerr.New(platformerr.CodeRequestInvalid,
+			"appId 형식이 올바르지 않아요")
+	}
+	app, err := h.apps.Get(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if err := app.EnsureUsable(); err != nil {
+		return nil, err
+	}
+	if !app.FeatureEnabled("iap") || len(app.IAP.EntitlementIDs) == 0 {
+		return nil, platformerr.New(platformerr.CodeAuthForbidden,
+			"이 앱은 IAP 관리가 활성화되지 않았어요")
+	}
+	if domain.Environment(app.IAP.LedgerEnvironment) != h.ledger.Environment() {
+		return nil, platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"앱 레지스트리와 Admin 원장 환경이 달라요")
+	}
+
+	result := append([]string(nil), app.IAP.EntitlementIDs...)
+	for _, entitlementID := range result {
+		// registry 검증을 우회한 잘못된 Firestore 문서도 여기서 fail-close한다.
+		if !adminEntitlementPattern.MatchString(entitlementID) || !h.catalog.Has(entitlementID) {
+			return nil, platformerr.New(platformerr.CodeCatalogIncomplete,
+				"앱 entitlement allowlist와 SKU 카탈로그가 일치하지 않아요")
+		}
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 // health는 운영 상태 요약이다.
@@ -458,10 +504,8 @@ func (h *Handler) revokeEntitlement(w http.ResponseWriter, r *http.Request) erro
 	if err := httpx.DecodeStrict(w, r, &req); err != nil {
 		return err
 	}
-	return h.applyOperator(w, r, operatorRequest{
-		operatorMutationRequest: req.operatorMutationRequest,
-		GrantRequestID:          req.GrantRequestID,
-	}, "iap.operator_revoke", true, h.ledger.OperatorRevoke)
+	return h.applyOperator(w, r, operatorRequest(req),
+		"iap.operator_revoke", true, h.ledger.OperatorRevoke)
 }
 
 func (h *Handler) applyOperator(
@@ -502,7 +546,7 @@ func (h *Handler) applyOperator(
 		return err
 	} else if found {
 		h.audit(r.Context(), action, req, login, "already_applied")
-		writeOperatorResult(w, replay)
+		writeOperatorResult(w, replay, req, revoke)
 		return nil
 	}
 
@@ -527,15 +571,34 @@ func (h *Handler) applyOperator(
 		outcome = "already_applied"
 	}
 	h.audit(r.Context(), action, req, login, outcome)
-	writeOperatorResult(w, res)
+	writeOperatorResult(w, res, req, revoke)
 	return nil
 }
 
-func writeOperatorResult(w http.ResponseWriter, res ledger.OperatorResult) {
-	httpx.WriteOK(w, http.StatusOK, map[string]any{
-		"applied":      res.Applied,
-		"entitlements": res.Entitlements,
-	})
+func writeOperatorResult(
+	w http.ResponseWriter,
+	res ledger.OperatorResult,
+	req operatorRequest,
+	revoke bool,
+) {
+	operation := "grant"
+	if revoke {
+		operation = "revoke"
+	}
+	result := map[string]any{
+		"applied":             res.Applied,
+		"entitlements":        res.Entitlements,
+		"requestId":           req.RequestID,
+		"appId":               req.AppID,
+		"platformUserId":      req.PlatformUserID,
+		"entitlementId":       req.EntitlementID,
+		"expectedEnvironment": req.ExpectedEnvironment,
+		"operation":           operation,
+	}
+	if revoke {
+		result["grantRequestId"] = req.GrantRequestID
+	}
+	httpx.WriteOK(w, http.StatusOK, result)
 }
 
 func actorLogin(actor Actor) string {
@@ -586,12 +649,17 @@ func validateOperatorRequestShape(req operatorRequest, revoke bool) error {
 }
 
 func (h *Handler) validateOperatorContext(ctx context.Context, req operatorRequest) error {
-	if err := h.validateIAPContext(ctx, req.AppID, req.PlatformUserID, req.ExpectedEnvironment); err != nil {
+	app, err := h.validateIAPContext(ctx, req.AppID, req.PlatformUserID, req.ExpectedEnvironment)
+	if err != nil {
 		return err
 	}
-	if !h.catalog.Has(req.EntitlementID) {
+	if !app.EntitlementAllowed(req.EntitlementID) {
 		return platformerr.New(platformerr.CodeProductNotAllowed,
-			"카탈로그에 없는 entitlement예요")
+			"이 앱에 허용되지 않은 entitlement예요")
+	}
+	if !h.catalog.Has(req.EntitlementID) {
+		return platformerr.New(platformerr.CodeCatalogIncomplete,
+			"앱 entitlement allowlist와 SKU 카탈로그가 일치하지 않아요")
 	}
 	return nil
 }
@@ -599,42 +667,42 @@ func (h *Handler) validateOperatorContext(ctx context.Context, req operatorReque
 func (h *Handler) validateIAPContext(
 	ctx context.Context,
 	appID, puid, expectedEnvironment string,
-) error {
+) (registry.App, error) {
 	env := domain.Environment(expectedEnvironment)
 	if env != domain.EnvSandbox && env != domain.EnvProduction {
-		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+		return registry.App{}, platformerr.New(platformerr.CodeEnvironmentMismatch,
 			"expectedEnvironment가 올바르지 않아요")
 	}
 	if h.ledger.Environment() != env {
-		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+		return registry.App{}, platformerr.New(platformerr.CodeEnvironmentMismatch,
 			"요청한 환경과 Admin 원장 환경이 달라요")
 	}
 
 	app, err := h.apps.Get(ctx, appID)
 	if err != nil {
-		return err
+		return registry.App{}, err
 	}
 	if err := app.EnsureUsable(); err != nil {
-		return err
+		return registry.App{}, err
 	}
-	if !app.FeatureEnabled("iap") {
-		return platformerr.New(platformerr.CodeAuthForbidden,
+	if !app.FeatureEnabled("iap") || len(app.IAP.EntitlementIDs) == 0 {
+		return registry.App{}, platformerr.New(platformerr.CodeAuthForbidden,
 			"이 앱은 IAP 관리가 활성화되지 않았어요")
 	}
 	if string(app.IAP.LedgerEnvironment) != expectedEnvironment {
-		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+		return registry.App{}, platformerr.New(platformerr.CodeEnvironmentMismatch,
 			"앱 레지스트리와 요청한 원장 환경이 달라요")
 	}
 
 	user, err := h.users.LookupSupportUser(ctx, puid)
 	if err != nil {
-		return err
+		return registry.App{}, err
 	}
 	if user.PlatformUserID != puid || user.AppID != appID {
-		return platformerr.New(platformerr.CodeAuthForbidden,
+		return registry.App{}, platformerr.New(platformerr.CodeAuthForbidden,
 			"사용자가 이 앱에 속하지 않아요")
 	}
-	return nil
+	return app, nil
 }
 
 // sandboxResetRequest는 App Store sandbox 초기화 요청이다.
@@ -654,6 +722,225 @@ type sandboxResetRequest struct {
 	ExpectedEnvironment   string `json:"expectedEnvironment"`
 	Confirmation          string `json:"confirmation"`
 	AppleClearedConfirmed bool   `json:"appleClearedConfirmed"`
+}
+
+// sandboxResetResumeRequest는 이미 영구 기록된 reset intent를 재개한다.
+//
+// platformUserId와 reason은 클라이언트가 다시 보내지 않는다. 재개 대상은
+// immutable intent가 결정해야 응답 유실 뒤 사람이 payload를 잘못 재구성해도
+// 다른 사용자로 바뀌지 않는다.
+type sandboxResetResumeRequest struct {
+	AppID        string `json:"appId"`
+	Confirmation string `json:"confirmation"`
+}
+
+// sandboxResetCloseNotStartedRequest는 reset intent가 없던 unknown 실행을
+// 영구 종결한다. PUID나 자유 서술을 받지 않아 closure는 PII-free다.
+type sandboxResetCloseNotStartedRequest struct {
+	AppID        string `json:"appId"`
+	Confirmation string `json:"confirmation"`
+}
+
+type sandboxResetStatusResult struct {
+	RequestID           string `json:"requestId"`
+	AppID               string `json:"appId"`
+	ExpectedEnvironment string `json:"expectedEnvironment"`
+	Operation           string `json:"operation"`
+	State               string `json:"state"`
+}
+
+// sandboxResetStatus는 durable reset intent가 준비 단계인지 완료 단계인지
+// 보여준다. 백오피스는 이 상태를 확인하지 않고 unknown 실행을
+// not_applied로 닫으면 안 된다.
+func (h *Handler) sandboxResetStatus(w http.ResponseWriter, r *http.Request) error {
+	requestID := r.PathValue("requestId")
+	if !adminRequestIDPattern.MatchString(requestID) {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"초기화 요청 식별자가 올바르지 않아요")
+	}
+	if h.ledger.Environment() != domain.EnvSandbox {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"sandbox 초기화 상태는 sandbox 원장에서만 조회할 수 있어요")
+	}
+
+	status, err := h.ledger.GetSandboxResetStatus(r.Context(), requestID)
+	if err != nil {
+		return err
+	}
+	result, err := makeSandboxResetStatusResult(requestID, status)
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusOK, result)
+	return nil
+}
+
+// resumeAppStoreSandboxReset은 phase 1 intent가 남은 reset의 phase 2를
+// 재개한다. mutable 앱·사용자 상태와 rate gate는 다시 검사하지 않는다.
+// intent가 이미 요청 시작을 확정했기 때문에 여기서 새 precondition을
+// 적용하면 reset과 Grant의 선후관계가 깨질 수 있다.
+func (h *Handler) resumeAppStoreSandboxReset(w http.ResponseWriter, r *http.Request) error {
+	requestID := r.PathValue("requestId")
+	var req sandboxResetResumeRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if !adminRequestIDPattern.MatchString(requestID) || !adminAppIDPattern.MatchString(req.AppID) {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"재개 요청에 올바른 requestId와 appId가 필요해요")
+	}
+	wantConfirmation := fmt.Sprintf("RESUME RESET %s %s", req.AppID, requestID)
+	if req.Confirmation != wantConfirmation {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"typed confirmation이 재개 요청과 맞지 않아요")
+	}
+	if h.ledger.Environment() != domain.EnvSandbox {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"sandbox 초기화는 sandbox 원장에서만 재개할 수 있어요")
+	}
+
+	// status의 appId와 immutable target을 먼저 묶는다. 경로의 requestId만
+	// 알고 다른 앱 confirmation으로 재개하는 것을 허용하지 않는다.
+	status, err := h.ledger.GetSandboxResetStatus(r.Context(), requestID)
+	if err != nil {
+		return err
+	}
+	if _, err := makeSandboxResetStatusResult(requestID, status); err != nil {
+		return err
+	}
+	if status.AppID != req.AppID {
+		return platformerr.New(platformerr.CodeOperatorReplayMismatch,
+			"재개 요청의 appId가 최초 초기화 요청과 달라요")
+	}
+	if status.State == ledger.SandboxResetClosedNotStarted {
+		return platformerr.New(platformerr.CodeSandboxResetClosed,
+			"미시작으로 종결한 sandbox 초기화는 재개할 수 없어요")
+	}
+
+	login := actorLogin(ActorFrom(r.Context()))
+	orderKeys, err := h.ledger.ResumeSandboxReset(r.Context(), requestID)
+	if err != nil {
+		h.auditSandboxResetResume(r.Context(), status, login,
+			string(platformerr.CodeOf(err)), 0)
+		return err
+	}
+	if err := validateSandboxResetOrderKeys(orderKeys); err != nil {
+		h.auditSandboxResetResume(r.Context(), status, login,
+			string(platformerr.CodeOf(err)), 0)
+		return err
+	}
+	h.auditSandboxResetResume(r.Context(), status, login, "ok", len(orderKeys))
+	writeSandboxResetResultValues(w, status.RequestID, status.AppID,
+		status.PlatformUserID, orderKeys)
+	return nil
+}
+
+// closeAppStoreSandboxResetNotStarted는 상태 조회와 로컬 unlock 사이 늦게
+// 도착한 reset이 다시 시작되지 않도록 requestId를 원장에 영구 fence한다.
+// mutable 앱·사용자 상태를 재검사하지 않는 이유는 복구 종결 가능성이 앱 pause나
+// 사용자 삭제에 따라 사라지면 unknown 실행을 안전하게 닫을 수 없기 때문이다.
+func (h *Handler) closeAppStoreSandboxResetNotStarted(w http.ResponseWriter, r *http.Request) error {
+	requestID := r.PathValue("requestId")
+	var req sandboxResetCloseNotStartedRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if !adminRequestIDPattern.MatchString(requestID) || !adminAppIDPattern.MatchString(req.AppID) {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"종결 요청에 올바른 requestId와 appId가 필요해요")
+	}
+	wantConfirmation := fmt.Sprintf("CLOSE RESET %s %s", req.AppID, requestID)
+	if req.Confirmation != wantConfirmation {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"typed confirmation이 종결 요청과 맞지 않아요")
+	}
+	if h.ledger.Environment() != domain.EnvSandbox {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"sandbox 초기화 종결은 sandbox 원장에서만 수행할 수 있어요")
+	}
+
+	login := actorLogin(ActorFrom(r.Context()))
+	in := ledger.SandboxResetClosureInput{
+		RequestID:  requestID,
+		AppID:      req.AppID,
+		ActorLogin: login,
+	}
+	applied, err := h.ledger.CloseSandboxResetNotStarted(r.Context(), in)
+	if err != nil {
+		h.auditSandboxResetCloseNotStarted(r.Context(), in,
+			string(platformerr.CodeOf(err)), false)
+		return err
+	}
+	outcome := "already_closed"
+	if applied {
+		outcome = "ok"
+	}
+	h.auditSandboxResetCloseNotStarted(r.Context(), in, outcome, applied)
+	httpx.WriteOK(w, http.StatusOK, map[string]any{
+		"requestId":           requestID,
+		"appId":               req.AppID,
+		"expectedEnvironment": string(domain.EnvSandbox),
+		"operation":           "sandbox_reset",
+		"state":               string(ledger.SandboxResetClosedNotStarted),
+		"applied":             applied,
+	})
+	return nil
+}
+
+func makeSandboxResetStatusResult(
+	requestID string,
+	status ledger.SandboxResetStatus,
+) (sandboxResetStatusResult, error) {
+	state := string(status.State)
+	if status.RequestID != requestID ||
+		!adminRequestIDPattern.MatchString(status.RequestID) ||
+		!adminAppIDPattern.MatchString(status.AppID) {
+		return sandboxResetStatusResult{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"sandbox 초기화 상태의 대상 binding이 올바르지 않아요")
+	}
+	switch status.State {
+	case ledger.SandboxResetClosedNotStarted:
+		if status.PlatformUserID != "" || !status.ResetAt.IsZero() || len(status.OrderKeys) != 0 {
+			return sandboxResetStatusResult{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"미시작 종결 상태에 reset 대상이나 결과가 포함됐어요")
+		}
+	case ledger.SandboxResetPrepared, ledger.SandboxResetCompleted:
+		if !adminPlatformUserPattern.MatchString(status.PlatformUserID) || status.ResetAt.IsZero() {
+			return sandboxResetStatusResult{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"sandbox 초기화 상태의 대상 binding이 올바르지 않아요")
+		}
+		if status.State == ledger.SandboxResetPrepared && len(status.OrderKeys) != 0 {
+			return sandboxResetStatusResult{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"준비 중인 sandbox 초기화에 완료 결과가 포함됐어요")
+		}
+		if err := validateSandboxResetOrderKeys(status.OrderKeys); err != nil {
+			return sandboxResetStatusResult{}, err
+		}
+	default:
+		return sandboxResetStatusResult{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"sandbox 초기화 상태 값이 올바르지 않아요")
+	}
+
+	return sandboxResetStatusResult{
+		RequestID:           status.RequestID,
+		AppID:               status.AppID,
+		ExpectedEnvironment: string(domain.EnvSandbox),
+		Operation:           "sandbox_reset",
+		State:               state,
+	}, nil
+}
+
+func validateSandboxResetOrderKeys(orderKeys []string) error {
+	previous := ""
+	for _, orderKey := range orderKeys {
+		if !adminOrderKeyPattern.MatchString(orderKey) ||
+			(previous != "" && orderKey <= previous) {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"sandbox 초기화 결과의 주문 식별자가 올바르지 않아요")
+		}
+		previous = orderKey
+	}
+	return nil
 }
 
 // resetAppStoreSandbox는 sandbox 구매내역 초기화를 원장에 반영한다.
@@ -705,12 +992,12 @@ func (h *Handler) resetAppStoreSandbox(w http.ResponseWriter, r *http.Request) e
 		h.auditSandboxReset(r.Context(), req, login, string(platformerr.CodeOf(err)), 0)
 		return err
 	} else if found {
-		h.auditSandboxReset(r.Context(), req, login, "already_applied", len(orderKeys))
-		writeSandboxResetResult(w, req.PlatformUserID, orderKeys)
+		h.auditSandboxReset(r.Context(), req, login, "replayed_or_resumed", len(orderKeys))
+		writeSandboxResetResult(w, req, orderKeys)
 		return nil
 	}
 
-	if err := h.validateIAPContext(r.Context(), req.AppID, req.PlatformUserID, req.ExpectedEnvironment); err != nil {
+	if _, err := h.validateIAPContext(r.Context(), req.AppID, req.PlatformUserID, req.ExpectedEnvironment); err != nil {
 		h.auditSandboxReset(r.Context(), req, login, string(platformerr.CodeOf(err)), 0)
 		return err
 	}
@@ -725,15 +1012,64 @@ func (h *Handler) resetAppStoreSandbox(w http.ResponseWriter, r *http.Request) e
 		return err
 	}
 	h.auditSandboxReset(r.Context(), req, login, "ok", len(orderKeys))
-	writeSandboxResetResult(w, req.PlatformUserID, orderKeys)
+	writeSandboxResetResult(w, req, orderKeys)
 	return nil
 }
 
-func writeSandboxResetResult(w http.ResponseWriter, puid string, orderKeys []string) {
+func writeSandboxResetResult(w http.ResponseWriter, req sandboxResetRequest, orderKeys []string) {
+	writeSandboxResetResultValues(w, req.RequestID, req.AppID, req.PlatformUserID, orderKeys)
+}
+
+func writeSandboxResetResultValues(
+	w http.ResponseWriter,
+	requestID, appID, platformUserID string,
+	orderKeys []string,
+) {
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
-		"platformUserId": puid,
-		"resetOrderKeys": orderKeys,
+		"requestId":           requestID,
+		"appId":               appID,
+		"platformUserId":      platformUserID,
+		"expectedEnvironment": string(domain.EnvSandbox),
+		"operation":           "sandbox_reset",
+		"resetOrderKeys":      append([]string{}, orderKeys...),
 	})
+}
+
+func (h *Handler) auditSandboxResetResume(
+	ctx context.Context,
+	status ledger.SandboxResetStatus,
+	login, outcome string,
+	count int,
+) {
+	if h.auditor == nil {
+		return
+	}
+	h.auditor.Record(ctx, "iap.sandbox_reset_resume", status.AppID,
+		status.PlatformUserID, outcome, map[string]any{
+			"request_id":  status.RequestID,
+			"environment": string(domain.EnvSandbox),
+			"actor":       login,
+			"state":       string(status.State),
+			"order_count": count,
+		})
+}
+
+func (h *Handler) auditSandboxResetCloseNotStarted(
+	ctx context.Context,
+	in ledger.SandboxResetClosureInput,
+	outcome string,
+	applied bool,
+) {
+	if h.auditor == nil {
+		return
+	}
+	h.auditor.Record(ctx, "iap.sandbox_reset_close_not_started", in.AppID,
+		"", outcome, map[string]any{
+			"request_id":  in.RequestID,
+			"environment": string(domain.EnvSandbox),
+			"actor":       in.ActorLogin,
+			"applied":     applied,
+		})
 }
 
 func (h *Handler) auditSandboxReset(

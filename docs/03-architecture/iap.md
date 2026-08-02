@@ -63,18 +63,24 @@ granted        = !alreadyGranted
 
 > **늦게 끝난 grant가 환불을 되돌리지 못한다.** 이게 이 규칙의 존재 이유다.
 
+단, cross-`platform_user_id`의 `active → active` 복원은 소유권 이동까지
+무시하지 않는다. 소유권만 새 사용자로 옮기고 order/source의 기존 최신
+`state`, `purchasedAt`, `observedAt`은 보존한다.
+
 ### 4. 검증된 마켓 토큰은 단일 소유자로 원자적 이전
 
 현재 로그인한 마켓 계정이 반환하고 서버가 마켓 API로 다시 검증한 구매
 토큰을 소유 근거로 삼는다. 기존 `platform_user_id`가 다르면 이전 소유자의
 source 제거와 새 소유자 지급을 **한 트랜잭션**에서 처리하고
-`iap.transferred` 감사 이벤트를 남긴다. 계정 바인딩 불일치는 부정 신호로
-기록하되 복원을 막지 않는다. → ADR 0010
+append-only `iap_ownership_transfers` 복구 증거를 같은 트랜잭션에 남긴다.
+`iap.transferred` 감사 이벤트는 운영 검색용 projection이다. 계정 바인딩
+불일치는 부정 신호로 기록하되 복원을 막지 않는다. → ADR 0010
 
 ### 5. 원장 문서 삭제 금지
 
 `processed_orders`, `processed_iap_events`, `pending_refund_reviews`, 운영자
-지급·회수·sandbox reset 요청 원장은 **영구 보존**한다.
+지급·회수·sandbox reset intent·completion·미시작 closure, sandbox reset barrier,
+소유권 이전 증거 원장은 **영구 보존**한다.
 `iap_completion_outbox`만 완료·회수 시 삭제한다.
 
 미지의 환불은 소유자 없는 tombstone 문서를 먼저 만든다.
@@ -105,6 +111,8 @@ active = sources 중 하나라도 state == "active"
 ### 10. 알림은 기존 소유자만 재조정한다
 
 **웹훅 알림만으로 신규 지급을 하지 않는다.** 이미 아는 주문의 상태를 조정할 뿐이다.
+소유자는 상태 반영 transaction 안에서 다시 검증한다. 조회와 반영 사이에 앱 복원으로
+소유자가 바뀌면 현재 소유자를 재조회하며, 웹훅이 사용자 간 소유권을 이전하지 않는다.
 
 ### 11. 계정참조 HMAC
 
@@ -138,17 +146,60 @@ IAP 쪽 기존 계약은 닫혀 있으므로 그대로 두고, **플랫폼 SDK�
 |---|---|---|
 | `users/{puid}/entitlements/{entId}` | entId | `active`, `updatedAt` — **읽기 전용 projection** |
 | `iap_users/{puid}/entitlements/{entId}` | entId | `active`, `sources.{orderKey}` — **내부 원장** |
-| `processed_orders/{orderKey}` | sha256 | `puid`, `entitlementId`, `platform`, `productId`, `providerOrderId`, `platformAccountIdHash`, `state`, `observedAt`, `tombstone`, `providerCompletion{…}` |
+| `processed_orders/{orderKey}` | sha256 | `puid`, `entitlementId`, `platform`, `productId`, `providerOrderId`, `platformAccountIdHash`, `state`, `observedAt`, `tombstone`, `transferSequence` |
 | `processed_iap_events/{eventKey}` | sha256 | `provider`, `status`, `attemptCount`, `leaseId`, `claimExpiresAt` |
 | `iap_completion_outbox/{orderKey}` | orderKey | `platform`, `action`, `status`, `attemptCount`, `nextAttemptAt`, `leaseId` |
 | `pending_refund_reviews/{hash}` | sha256 | `platform`, `orderId`, `dueAt` — 24시간 |
 | `iap_rate_limits/{…}` | | `windowStartedAt`, `count` |
 | `operator_entitlement_grants/{requestId}` | requestId | 운영자 지급 감사 원장. **영구** |
 | `operator_entitlement_revocations/{requestId}` | requestId | 대상 `grantRequestId`를 포함한 운영자 회수 감사 원장. **영구** |
-| `sandbox_reset_requests/{requestId}` | requestId | 고정 payload·대상 orderKey·resetAt. **영구 멱등 원장** |
+| `sandbox_reset_requests/{requestId}` | requestId | 고정 payload·`resetAt`·최초 barrier revision. create-only **영구 intent** |
+| `sandbox_reset_completions/{requestId}` | requestId | 정렬된 대상 orderKey·`completedAt`. create-only **영구 completion** |
+| `sandbox_reset_barriers/{puid}` | puid | `revision`, active request/cutoff, 마지막 완료 request/cutoff, `updatedAt`. sandbox App Store Grant/reset 직렬화용이며 **삭제 금지** |
+| `iap_ownership_transfers/{orderKey}-{sequence}` | orderKey+sequence | 이전·신규 puid, entitlement, platform, state, observedAt. 토큰·provider order ID·마켓 계정 참조 없이 **append-only 영구 복구 증거** |
 | `admin_mutation_limits/{oidcSha256}` | sha256 | Admin 조작 분·시·일 durable rate gate |
 
 `sources.{orderKey}` = `{platform, productId, state, purchasedAt, observedAt, updatedAt}`.
+
+### Sandbox reset durable intent
+
+App Store sandbox reset의 "시작"은 HTTP 요청 수신 시각이 아니라
+`sandbox_reset_requests`와 active barrier가 **같은 prepare 트랜잭션에서
+commit된 시점**이다. → ADR 0012
+
+```text
+prepare transaction  →  immutable intent + active barrier
+apply transaction    →  order/source revoke + projection
+                       + immutable completion + completed barrier
+close transaction    →  intent 부재 requestId의 immutable closure
+```
+
+apply가 실패해도 intent와 active barrier를 지우지 않는다. 따라서 그 cutoff보다
+오래된 App Store 거래는 계속 fail-closed하며, 호출자는 같은 `requestId`의 원 요청
+또는 resume API로만 재개한다. completion까지 commit된 뒤에는 같은 requestId가
+저장된 order key 결과를 멱등 반환한다.
+
+cross-PUID 복원은 이전 소유자와 새 소유자의 barrier를 모두 읽고 touch한다.
+active 또는 마지막 완료 cutoff에 걸린 pre-reset 거래는 소유권 이전도 막고,
+cutoff 이후 구매만 신규 거래로 허용한다. 이 경계에서는 이전 증거도 만들지 않는다.
+
+Admin 계약은 다음 상태를 구분한다.
+
+| HTTP | error code / state | 의미와 후속 조치 |
+|---|---|---|
+| 200 | `prepared` | intent 확정, 효과 미완료. 수동 종결 금지, 같은 requestId로 resume |
+| 200 | `completed` | 효과와 completion 확정. `applied`로 종결 가능 |
+| 200 | `closed_not_started` | 미시작 closure 확정. 이때만 `not_applied`로 종결 가능 |
+| 404 | `sandbox_reset_not_found` | intent와 closure 모두 없음. close를 먼저 commit하고 수동 종결은 보류 |
+| 409 | `sandbox_reset_busy` | 같은 사용자의 다른 prepared reset이 진행 중 |
+| 409 | `sandbox_reset_closed` | 미시작으로 종결한 requestId의 reset 또는 resume가 늦게 도착함 |
+| 409 | `sandbox_reset_already_started` | intent 또는 completion이 먼저 확정되어 close할 수 없음 |
+| 503 | `sandbox_reset_pending` | prepare 이후 apply 실패. 새 requestId 금지, 같은 요청 재개 |
+
+상태 조회 응답에는 PUID와 order key를 노출하지 않는다. resume는
+`RESUME RESET {appId} {requestId}` typed confirmation과 Admin write allowlist를
+요구한다. 404 관찰만으로는 늦은 prepare를 막지 못하므로
+`CLOSE RESET {appId} {requestId}` 확인 문자열로 closure를 먼저 commit해야 한다.
 
 ### 소유자 키는 platform_user_id
 
@@ -193,6 +244,12 @@ Apple 환경 설정과 불일치하면 **부팅을 실패시킨다**(503). 자�
 ### SKU 카탈로그
 
 canonical JSON을 런타임에 주입한다. `entitlementId`는 `^[A-Za-z0-9._-]{1,128}$`, 최대 100개.
+
+전역 `IAP_CATALOG_JSON`은 마켓 SKU→entitlement 매핑의 원장이다. 앱별 운영
+경계는 `registry/apps/*.json`의 `iap.entitlement_ids`가 담당한다.
+`features.iap=true`이면 앱 목록은 비어 있을 수 없고, Admin 조회와 조작은 두
+목록의 교집합만 허용한다. 앱 목록에는 있지만 전역 카탈로그에 없는 값은 설정
+불일치이므로 503으로 fail-closed한다.
 
 `확정 필요` / `TBD` / `TODO` / 빈값 placeholder가 있으면 **503으로 부팅을 막는다.** 중복 SKU는 500.
 

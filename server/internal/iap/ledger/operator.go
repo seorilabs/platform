@@ -21,7 +21,7 @@ var (
 	operatorRequestIDPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 	operatorActorPattern       = regexp.MustCompile(`^(?:[A-Za-z0-9-]{1,39}|oidc_sha256:[0-9a-f]{64})$`)
 	operatorPUIDPattern        = regexp.MustCompile(`^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
-	operatorAppIDPattern       = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+	operatorAppIDPattern       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	operatorEntitlementPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 	operatorOrderKeyPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
@@ -140,6 +140,14 @@ func (l *Ledger) FindOperatorReplay(
 	if err != nil {
 		return OperatorResult{}, false, err
 	}
+	resetCompletionPath, err := l.paths.sandboxResetCompletion(in.RequestID)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	resetClosurePath, err := l.paths.sandboxResetClosure(in.RequestID)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
 
 	recordSnap, recordExists, err := l.getOptional(ctx, recordPath)
 	if err != nil {
@@ -153,7 +161,15 @@ func (l *Ledger) FindOperatorReplay(
 	if err != nil {
 		return OperatorResult{}, false, err
 	}
-	if oppositeExists || resetExists {
+	_, resetCompletionExists, err := l.getOptional(ctx, resetCompletionPath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	_, resetClosureExists, err := l.getOptional(ctx, resetClosurePath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	if oppositeExists || resetExists || resetCompletionExists || resetClosureExists {
 		return OperatorResult{}, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
 			"requestId가 다른 운영 조작에 이미 사용됐어요")
 	}
@@ -254,7 +270,23 @@ func (l *Ledger) OperatorGrant(ctx context.Context, in OperatorInput) (OperatorR
 		if err != nil {
 			return err
 		}
-		if oppositeExists || resetExists {
+		resetCompletionPath, err := l.paths.sandboxResetCompletion(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetCompletionExists, _, err := tx.Exists(resetCompletionPath)
+		if err != nil {
+			return err
+		}
+		resetClosurePath, err := l.paths.sandboxResetClosure(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetClosureExists, _, err := tx.Exists(resetClosurePath)
+		if err != nil {
+			return err
+		}
+		if oppositeExists || resetExists || resetCompletionExists || resetClosureExists {
 			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
 				"requestId가 다른 운영 조작에 이미 사용됐어요")
 		}
@@ -373,7 +405,23 @@ func (l *Ledger) OperatorRevoke(ctx context.Context, in OperatorInput) (Operator
 		if err != nil {
 			return err
 		}
-		if requestGrantExists || resetExists {
+		resetCompletionPath, err := l.paths.sandboxResetCompletion(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetCompletionExists, _, err := tx.Exists(resetCompletionPath)
+		if err != nil {
+			return err
+		}
+		resetClosurePath, err := l.paths.sandboxResetClosure(in.RequestID)
+		if err != nil {
+			return err
+		}
+		resetClosureExists, _, err := tx.Exists(resetClosurePath)
+		if err != nil {
+			return err
+		}
+		if requestGrantExists || resetExists || resetCompletionExists || resetClosureExists {
 			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
 				"requestId가 다른 운영 조작에 이미 사용됐어요")
 		}

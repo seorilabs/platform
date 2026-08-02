@@ -198,9 +198,11 @@ func (s *Service) VerifyPurchase(
 	case domain.StateRevoked:
 		// 알림이 아니라 클라이언트 검증에서 revoked가 온 경우다.
 		// 이미 환불된 구매를 다시 제시한 것이므로 원장에 반영만 한다.
-		if _, err := s.ledger.Grant(ctx, in); err != nil {
+		res, err := s.ledger.Grant(ctx, in)
+		if err != nil {
 			return Outcome{}, err
 		}
+		s.auditTransfer(ctx, appID, puid, in, res)
 		list, _ := s.ledger.ListActive(ctx, puid)
 		return Outcome{
 			Status:        "revoked",
@@ -242,13 +244,7 @@ func (s *Service) grantAndComplete(
 	// 같은 마켓 계정의 다른 platform_user에게서 옮겨왔다.
 	// 되돌릴 수 없는 조작이라 별도 action으로 남긴다. iap.granted에
 	// 섞으면 나중에 "이 유저가 언제 무엇을 잃었나"를 찾을 수 없다.
-	if res.TransferredFrom != "" {
-		s.audit(ctx, "iap.transferred", appID, puid, "ok", map[string]any{
-			"platform":         string(in.Purchase.Platform),
-			"entitlement_id":   in.EntitlementID,
-			"transferred_from": res.TransferredFrom,
-		})
-	}
+	s.auditTransfer(ctx, appID, puid, in, res)
 
 	out := Outcome{
 		Status:        "verified",
@@ -263,6 +259,25 @@ func (s *Service) grantAndComplete(
 	out.Completion = &action
 
 	return out, nil
+}
+
+// auditTransfer는 active/revoked 경로의 검색용 감사 projection을 통일한다.
+// 복구 가능한 최소 증거는 ledger transaction에 먼저 영구 저장되므로,
+// 이 비동기 감사 기록이 실패해도 이전 소유권을 잃지 않는다. 불변식 4, 5.
+func (s *Service) auditTransfer(
+	ctx context.Context,
+	appID, puid string,
+	in ledger.GrantInput,
+	res domain.GrantResult,
+) {
+	if res.TransferredFrom == "" {
+		return
+	}
+	s.audit(ctx, "iap.transferred", appID, puid, "ok", map[string]any{
+		"platform":         string(in.Purchase.Platform),
+		"entitlement_id":   in.EntitlementID,
+		"transferred_from": res.TransferredFrom,
+	})
 }
 
 // completeSandboxReset은 초기화 이전 거래를 기기에서 떼어낸다.

@@ -10,6 +10,8 @@
 package ledger
 
 import (
+	"fmt"
+
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 )
@@ -24,15 +26,17 @@ const (
 	internalUsers = "iap_users"
 	entitlements  = "entitlements"
 
-	processedOrders = "processed_orders"
-	processedEvents = "processed_iap_events"
-	completionOutbx = "iap_completion_outbox"
-	refundReviews   = "pending_refund_reviews"
-
-	operatorGrants       = "operator_entitlement_grants"
-	operatorRevocations  = "operator_entitlement_revocations"
-	sandboxResetRequests = "sandbox_reset_requests"
-	adminMutationLimits  = "admin_mutation_limits"
+	processedOrders         = "processed_orders"
+	processedEvents         = "processed_iap_events"
+	completionOutbx         = "iap_completion_outbox"
+	operatorGrants          = "operator_entitlement_grants"
+	operatorRevocations     = "operator_entitlement_revocations"
+	sandboxResetRequests    = "sandbox_reset_requests"
+	sandboxResetCompletions = "sandbox_reset_completions"
+	sandboxResetClosures    = "sandbox_reset_closures"
+	sandboxResetBarriers    = "sandbox_reset_barriers"
+	ownershipTransfers      = "iap_ownership_transfers"
+	adminMutationLimits     = "admin_mutation_limits"
 )
 
 // pathBuilder는 환경 prefix를 붙여 경로를 만든다.
@@ -91,13 +95,6 @@ func (b pathBuilder) outboxes() (fspath.Path, error) {
 	return b.parse(completionOutbx)
 }
 
-// refundReview는 Play 환불 검토 대기 원장이다.
-//
-// 자동으로 응답하지 않고 기록만 한다. 24시간 안에 사람이 판단해야 한다.
-func (b pathBuilder) refundReview(tokenHash string) (fspath.Path, error) {
-	return b.parse(refundReviews + "/" + tokenHash)
-}
-
 // operatorGrant는 운영자 지급 감사 원장이다. 영구 보존한다.
 //
 // 다른 원장과 같이 환경 prefix를 붙인다. 한때 환경과 무관하게
@@ -113,20 +110,39 @@ func (b pathBuilder) operatorRevocation(requestID string) (fspath.Path, error) {
 	return b.parse(operatorRevocations + "/" + requestID)
 }
 
-// operatorRecord는 컬렉션 이름으로 감사 원장 경로를 만든다.
-//
-// 지급과 회수가 같은 흐름을 타므로 컬렉션만 갈아끼운다.
-func (b pathBuilder) operatorRecord(collection, requestID string) (fspath.Path, error) {
-	return b.parse(collection + "/" + requestID)
-}
-
 func (b pathBuilder) operatorCollection(collection string) (fspath.Path, error) {
 	return b.parse(collection)
 }
 
-// sandboxResetRequest는 App Store sandbox 초기화 요청의 영구 멱등 기록이다.
+// sandboxResetRequest는 App Store sandbox 초기화의 immutable intent다.
 func (b pathBuilder) sandboxResetRequest(requestID string) (fspath.Path, error) {
 	return b.parse(sandboxResetRequests + "/" + requestID)
+}
+
+// sandboxResetCompletion은 초기화 결과의 immutable 완료 기록이다.
+// intent와 분리해 prepared 상태를 잃지 않고 같은 requestId로 재개한다.
+func (b pathBuilder) sandboxResetCompletion(requestID string) (fspath.Path, error) {
+	return b.parse(sandboxResetCompletions + "/" + requestID)
+}
+
+// sandboxResetClosure는 상태 조회에서 intent 부재를 확인한 운영자가 같은
+// requestId를 영구 종결했다는 PII-free create-only 기록이다.
+func (b pathBuilder) sandboxResetClosure(requestID string) (fspath.Path, error) {
+	return b.parse(sandboxResetClosures + "/" + requestID)
+}
+
+// sandboxResetBarrier는 sandbox App Store Grant와 reset을 사용자 단위로
+// 직렬화하는 영구 coordination 문서다. reset 요청 이력은 별도 append-only
+// request 문서에 남기고, 이 문서는 최신 cutoff와 revision만 유지한다.
+func (b pathBuilder) sandboxResetBarrier(puid string) (fspath.Path, error) {
+	return b.parse(sandboxResetBarriers + "/" + puid)
+}
+
+// ownershipTransfer는 소유권 이전의 append-only 복구 증거다.
+// order별 sequence를 ID에 넣어 transaction 재시도에는 멱등이고, 같은 주문이
+// 여러 번 이동해도 이전 증거를 덮어쓰지 않는다.
+func (b pathBuilder) ownershipTransfer(orderKey string, sequence int64) (fspath.Path, error) {
+	return b.parse(ownershipTransfers + "/" + fmt.Sprintf("%s-%020d", orderKey, sequence))
 }
 
 // adminMutationLimit는 인증된 OIDC principal별 durable rate gate다.

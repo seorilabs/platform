@@ -251,6 +251,77 @@ curl -sS -X POST "$ADMIN_URL/v1/admin/iap/sandbox-reset" \
   }"
 ```
 
+이 요청은 한 트랜잭션으로 끝나지 않는다. 첫 prepare 트랜잭션이 immutable
+intent와 active barrier를 commit한 뒤 apply 트랜잭션이 주문·projection과
+completion을 확정한다. prepare 뒤 실패는 503 `sandbox_reset_pending`이다.
+이때 **새 requestId를 만들거나 `not_applied`로 닫지 않는다.**
+
+상태를 먼저 확인한다.
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $TOKEN" \
+  "$ADMIN_URL/v1/admin/iap/sandbox-resets/$RESET_REQUEST_ID"
+```
+
+| 결과 | 판정 | 조치 |
+|---|---|---|
+| 200 · `state=completed` | 효과 확정 | `applied`로 종결 가능 |
+| 200 · `state=prepared` | intent 확정, 효과 미완료 | 아래 resume 실행. 수동 종결·새 ID 금지 |
+| 200 · `state=closed_not_started` | 미시작 영구 종결 확정 | `not_applied`로 종결 가능. resume·새 ID 금지 |
+| 404 · `sandbox_reset_not_found` | 조회 시점에 intent와 closure 없음 | 아래 close를 먼저 실행. 아직 `not_applied`로 종결 금지 |
+| 5xx 또는 판독 불가 | 상태 미상 | 종결하지 말고 API/원장 장애부터 복구 |
+
+`prepared`는 저장된 intent를 같은 requestId로 재개한다. App Store Connect 삭제를
+다시 수행하지 않는다.
+
+```bash
+RESUME_CONFIRMATION="RESUME RESET $APP_ID $RESET_REQUEST_ID"
+
+curl -sS -X POST \
+  "$ADMIN_URL/v1/admin/iap/sandbox-resets/$RESET_REQUEST_ID/resume" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Seori-Actor: ih" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"appId\": \"$APP_ID\",
+    \"confirmation\": \"$RESUME_CONFIRMATION\"
+  }"
+```
+
+resume가 다시 `sandbox_reset_pending`이면 active intent를 유지한 채 원장 오류를
+수정하고 같은 명령을 반복한다. 완료 응답을 받은 뒤 GET이 `completed`인지 다시
+확인한다. intent를 아는 버전이 이미 실행된 뒤에는 이전 버전으로 롤백하지 않고
+roll-forward한다. intent, completion, barrier 문서를 직접 수정하거나 삭제하지 않는다.
+
+404는 순간 관찰일 뿐이라 로컬 실행을 바로 `not_applied`로 풀 수 없다. GET 뒤 늦게
+도착한 prepare와 unlock이 경합할 수 있다. 같은 requestId를 먼저 영구 종결한다.
+
+```bash
+CLOSE_CONFIRMATION="CLOSE RESET $APP_ID $RESET_REQUEST_ID"
+
+curl -sS -X POST \
+  "$ADMIN_URL/v1/admin/iap/sandbox-resets/$RESET_REQUEST_ID/close-not-started" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Seori-Actor: ih" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"appId\": \"$APP_ID\",
+    \"confirmation\": \"$CLOSE_CONFIRMATION\"
+  }"
+```
+
+- `200 · state=closed_not_started`: `applied=true`는 최초 종결,
+  `applied=false`는 exact 재호출이다. GET으로 같은 상태를 다시 확인한 뒤에만
+  로컬 실행을 `not_applied`로 종결한다.
+- `409 · sandbox_reset_already_started`: prepare 또는 completion이 먼저 확정됐다.
+  GET 후 `prepared`면 resume하고 `completed`면 `applied`로 종결한다.
+- `409 · operator_replay_mismatch`: appId·actor가 최초 closure와 다르거나 같은
+  requestId가 다른 운영 조작에 쓰였다. payload를 바꾸거나 새 requestId로 우회하지 않는다.
+
+`closed_not_started`에 resume를 시도하면 `sandbox_reset_closed` 409다. closure,
+intent, completion, barrier 문서를 직접 수정하거나 삭제하지 않는다.
+
 ### 8. 원장 직접 조회
 
 Admin API도 못 쓸 때. `cmd/fs`는 이 저장소의 조회 전용 CLI다.

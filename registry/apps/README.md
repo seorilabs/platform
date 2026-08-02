@@ -19,11 +19,17 @@ CI가 스키마를 검증한 뒤 Firestore로 upsert하고, 런타임은 인메�
   "platform_event_allowlist": ["purchase_verified", "..."],
   "iap": {
     "ledger_environment": "sandbox",     // sandbox | production
-    "markets": ["google_play", "app_store", "apps_in_toss"]
+    "markets": ["google_play", "app_store", "apps_in_toss"],
+    "entitlement_ids": ["sp_galaxy_gecko"]
   },
   "cors_origins": []
 }
 ```
+
+`features.iap`가 `true`이면 `iap.entitlement_ids`는 비어 있을 수 없다.
+`IAP_CATALOG_JSON`은 마켓 SKU와 entitlement의 전역 매핑이고, 이 목록은
+해당 앱에 운영자 지급할 수 있는 entitlement 경계다. 두 목록의 교집합만
+Admin API에 노출하고 지급·회수에 허용한다.
 
 ## 왜 API key가 없는가
 

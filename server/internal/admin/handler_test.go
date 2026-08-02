@@ -58,14 +58,23 @@ type fakeLedger struct {
 	replayFound bool
 	replayErr   error
 
-	resetKeys        []string
-	resetCalls       []ledger.SandboxResetInput
-	resetReplayCalls []ledger.SandboxResetInput
-	resetReplayKeys  []string
-	resetReplayFound bool
-	resetReplayErr   error
-	rateCalls        []string
-	rateErr          error
+	resetKeys         []string
+	resetCalls        []ledger.SandboxResetInput
+	resetReplayCalls  []ledger.SandboxResetInput
+	resetReplayKeys   []string
+	resetReplayFound  bool
+	resetReplayErr    error
+	resetStatus       ledger.SandboxResetStatus
+	resetStatusCalls  []string
+	resetStatusErr    error
+	resetResumeKeys   []string
+	resetResumeCalls  []string
+	resetResumeErr    error
+	resetCloseApplied bool
+	resetCloseCalls   []ledger.SandboxResetClosureInput
+	resetCloseErr     error
+	rateCalls         []string
+	rateErr           error
 	// env가 비어 있으면 sandbox로 본다. production 거부를 볼 때만 채운다.
 	env domain.Environment
 }
@@ -96,6 +105,24 @@ func (f *fakeLedger) FindSandboxResetReplay(
 ) ([]string, bool, error) {
 	f.resetReplayCalls = append(f.resetReplayCalls, in)
 	return f.resetReplayKeys, f.resetReplayFound, f.resetReplayErr
+}
+func (f *fakeLedger) GetSandboxResetStatus(
+	_ context.Context,
+	requestID string,
+) (ledger.SandboxResetStatus, error) {
+	f.resetStatusCalls = append(f.resetStatusCalls, requestID)
+	return f.resetStatus, f.resetStatusErr
+}
+func (f *fakeLedger) ResumeSandboxReset(_ context.Context, requestID string) ([]string, error) {
+	f.resetResumeCalls = append(f.resetResumeCalls, requestID)
+	return f.resetResumeKeys, f.resetResumeErr
+}
+func (f *fakeLedger) CloseSandboxResetNotStarted(
+	_ context.Context,
+	in ledger.SandboxResetClosureInput,
+) (bool, error) {
+	f.resetCloseCalls = append(f.resetCloseCalls, in)
+	return f.resetCloseApplied, f.resetCloseErr
 }
 func (f *fakeLedger) OperatorGrant(_ context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error) {
 	f.grantCalls = append(f.grantCalls, in)
@@ -185,7 +212,10 @@ func (f *fakeApps) Get(_ context.Context, appID string) (registry.App, error) {
 		AppID:    appID,
 		Status:   registry.StatusActive,
 		Features: map[string]bool{"iap": true},
-		IAP:      registry.IAPConfig{LedgerEnvironment: registry.LedgerSandbox},
+		IAP: registry.IAPConfig{
+			LedgerEnvironment: registry.LedgerSandbox,
+			EntitlementIDs:    []string{"sp_a"},
+		},
 	}, nil
 }
 
@@ -260,6 +290,18 @@ func sandboxResetBody(requestID, puid, reason string, appleConfirmed bool) strin
 	)
 }
 
+func sandboxResetResumeBody(requestID, appID string) string {
+	return fmt.Sprintf(`{"appId":%q,"confirmation":%q}`,
+		appID, fmt.Sprintf("RESUME RESET %s %s", appID, requestID))
+}
+
+func sandboxResetCloseBody(requestID, appID string) string {
+	return fmt.Sprintf(
+		`{"appId":%q,"confirmation":%q}`,
+		appID, fmt.Sprintf("CLOSE RESET %s %s", appID, requestID),
+	)
+}
+
 func serve(t *testing.T, h *Handler, method, path, body, token, actor string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -322,11 +364,14 @@ func TestAllRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/v1/admin/users/A-TESTC0DE", ""},
 		{http.MethodGet, "/v1/admin/users/" + testPUID + "/entitlements", ""},
 		{http.MethodGet, "/v1/admin/operator-grants", ""},
-		{http.MethodGet, "/v1/admin/iap/catalog", ""},
+		{http.MethodGet, "/v1/admin/apps/a/iap/catalog", ""},
+		{http.MethodGet, "/v1/admin/iap/sandbox-resets/reset-1", ""},
 		{http.MethodGet, "/v1/admin/health", ""},
 		{http.MethodPost, "/v1/admin/entitlements/grant", `{}`},
 		{http.MethodPost, "/v1/admin/entitlements/revoke", `{}`},
 		{http.MethodPost, "/v1/admin/iap/sandbox-reset", `{}`},
+		{http.MethodPost, "/v1/admin/iap/sandbox-resets/reset-1/resume", `{}`},
+		{http.MethodPost, "/v1/admin/iap/sandbox-resets/reset-1/close-not-started", `{}`},
 		{http.MethodPost, "/v1/admin/config/maintenance", `{}`},
 	}
 
@@ -373,6 +418,12 @@ func TestReadAndWriteAllowlistsAreSeparated(t *testing.T) {
 			grantBody("r", testPUID, "sp_a", testGrantReason), "tok", "reader")
 		if w.Code != http.StatusForbidden {
 			t.Errorf("POST status = %d, want 403", w.Code)
+		}
+		w = serve(t, h, http.MethodPost,
+			"/v1/admin/iap/sandbox-resets/reset-1/close-not-started",
+			sandboxResetCloseBody("reset-1", "a"), "tok", "reader")
+		if w.Code != http.StatusForbidden {
+			t.Errorf("closure POST status = %d, want 403", w.Code)
 		}
 	})
 
@@ -569,17 +620,71 @@ func TestUserEntitlementsRejectsUnsafeLedgerValues(t *testing.T) {
 
 func TestIAPCatalogReturnsOnlyEntitlementIDs(t *testing.T) {
 	h := newHandler(t, &fakeLedger{}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
-	w := serve(t, h, http.MethodGet, "/v1/admin/iap/catalog", "", "tok", "reader")
+	w := serve(t, h, http.MethodGet, "/v1/admin/apps/a/iap/catalog", "", "tok", "reader")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
 	}
 	_, result, _ := decodeEnvelope(t, w)
 	ids, _ := result["entitlements"].([]any)
-	if len(ids) != 2 || ids[0] != "sp_a" {
+	if len(ids) != 1 || ids[0] != "sp_a" {
 		t.Errorf("entitlements = %v", ids)
+	}
+	if result["appId"] != "a" {
+		t.Errorf("appId = %v", result["appId"])
 	}
 	if strings.Contains(w.Body.String(), "google_play") || strings.Contains(w.Body.String(), "app_store") {
 		t.Errorf("SKU 정보가 노출됐다: %s", w.Body.String())
+	}
+}
+
+func TestIAPCatalogFailsClosedAcrossAppAndGlobalCatalog(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA}, []string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name       string
+		apps       *fakeApps
+		catalog    *fakeCatalog
+		wantStatus int
+	}{
+		{
+			name: "IAP 활성 앱의 빈 allowlist",
+			apps: &fakeApps{app: registry.App{
+				AppID: "a", Status: registry.StatusActive, Features: map[string]bool{"iap": true},
+				IAP: registry.IAPConfig{LedgerEnvironment: registry.LedgerSandbox},
+			}},
+			catalog: &fakeCatalog{allowed: true}, wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "앱 allowlist와 전역 카탈로그 불일치",
+			apps: &fakeApps{app: registry.App{
+				AppID: "a", Status: registry.StatusActive, Features: map[string]bool{"iap": true},
+				IAP: registry.IAPConfig{
+					LedgerEnvironment: registry.LedgerSandbox,
+					EntitlementIDs:    []string{"sp_a"},
+				},
+			}},
+			catalog: &fakeCatalog{allowed: false}, wantStatus: http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, err := NewHandler(
+				&fakeLedger{}, &fakeConfig{}, &fakeUsers{}, tt.apps, tt.catalog, auth, &fakeAuditor{},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := serve(t, h, http.MethodGet, "/v1/admin/apps/a/iap/catalog", "", "tok", "reader")
+			if w.Code != tt.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", w.Code, tt.wantStatus, w.Body.String())
+			}
+		})
 	}
 }
 
@@ -733,6 +838,15 @@ func TestGrantRequiresRequestIdAndReason(t *testing.T) {
 	if len(l.rateCalls) != 1 || l.rateCalls[0] != backofficeSA {
 		t.Errorf("rate gate principal = %v, want 검증된 OIDC 계정", l.rateCalls)
 	}
+	_, result, _ := decodeEnvelope(t, w)
+	assertExactJSONKeys(t, result,
+		"applied", "entitlements", "requestId", "appId", "platformUserId",
+		"entitlementId", "expectedEnvironment", "operation")
+	if result["requestId"] != "req-1" || result["appId"] != "a" ||
+		result["platformUserId"] != testPUID || result["entitlementId"] != "sp_a" ||
+		result["expectedEnvironment"] != "sandbox" || result["operation"] != "grant" {
+		t.Errorf("조작 응답 target echo = %v", result)
+	}
 }
 
 func TestIAPMutationValidationFailsClosed(t *testing.T) {
@@ -773,6 +887,15 @@ func TestIAPMutationValidationFailsClosed(t *testing.T) {
 			ledger: &fakeLedger{}, wantStatus: http.StatusBadRequest,
 		},
 		{
+			name: "선두 하이픈 appId",
+			body: strings.NewReplacer(
+				`"appId":"a"`, `"appId":"-a"`,
+				"GRANT a ", "GRANT -a ",
+			).Replace(grantBody("r", testPUID, "sp_a", testGrantReason)),
+			users: &fakeUsers{}, apps: &fakeApps{}, catalog: &fakeCatalog{allowed: true},
+			ledger: &fakeLedger{}, wantStatus: http.StatusBadRequest,
+		},
+		{
 			name:  "앱 IAP 비활성",
 			body:  grantBody("r", testPUID, "sp_a", testGrantReason),
 			users: &fakeUsers{},
@@ -791,10 +914,17 @@ func TestIAPMutationValidationFailsClosed(t *testing.T) {
 			wantStatus: http.StatusForbidden,
 		},
 		{
-			name:  "카탈로그 외 entitlement",
+			name: "앱 allowlist 외 entitlement",
+			body: strings.Replace(grantBody("r", testPUID, "sp_a", testGrantReason),
+				"sp_a", "sp_b", 2),
+			users: &fakeUsers{}, apps: &fakeApps{}, catalog: &fakeCatalog{allowed: true},
+			ledger: &fakeLedger{}, wantStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name:  "앱 allowlist와 전역 카탈로그 불일치",
 			body:  grantBody("r", testPUID, "sp_a", testGrantReason),
 			users: &fakeUsers{}, apps: &fakeApps{}, catalog: &fakeCatalog{allowed: false},
-			ledger: &fakeLedger{}, wantStatus: http.StatusUnprocessableEntity,
+			ledger: &fakeLedger{}, wantStatus: http.StatusServiceUnavailable,
 		},
 		{
 			name:  "durable rate gate 초과",
@@ -819,6 +949,70 @@ func TestIAPMutationValidationFailsClosed(t *testing.T) {
 			}
 			if len(tt.ledger.grantCalls) != 0 {
 				t.Error("검증 실패 요청이 원장 mutation에 도달했다")
+			}
+		})
+	}
+}
+
+// 신규 조작은 앱과 사용자 binding을 확인하므로 삭제되었거나 존재하지 않는
+// 사용자는 세 operation 모두 동일한 user_not_found 계약으로 거부한다.
+func TestIAPMutationsReturnUserNotFound(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA}, []string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "운영자 지급",
+			path: "/v1/admin/entitlements/grant",
+			body: grantBody("grant-missing-user", testPUID, "sp_a", testGrantReason),
+		},
+		{
+			name: "운영자 회수",
+			path: "/v1/admin/entitlements/revoke",
+			body: revokeBody("revoke-missing-user", "grant-1", testPUID, "sp_a", testRevokeReason),
+		},
+		{
+			name: "sandbox 초기화",
+			path: "/v1/admin/iap/sandbox-reset",
+			body: sandboxResetBody("reset-missing-user", testPUID, testResetReason, true),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := &fakeLedger{}
+			h, err := NewHandler(
+				l,
+				&fakeConfig{},
+				&fakeUsers{err: platformerr.New(platformerr.CodeUserNotFound, "deleted")},
+				&fakeApps{},
+				&fakeCatalog{allowed: true},
+				auth,
+				&fakeAuditor{},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			w := serve(t, h, http.MethodPost, tt.path, tt.body, "tok", "syous")
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404, body=%s", w.Code, w.Body.String())
+			}
+			ok, _, code := decodeEnvelope(t, w)
+			if ok || code != string(platformerr.CodeUserNotFound) {
+				t.Errorf("ok=%v code=%q, want false/%q", ok, code, platformerr.CodeUserNotFound)
+			}
+			if len(l.grantCalls) != 0 || len(l.revokeCalls) != 0 || len(l.resetCalls) != 0 || len(l.rateCalls) != 0 {
+				t.Errorf("user_not_found 뒤 mutation/rate gate가 호출됐다: grant=%d revoke=%d reset=%d rate=%d",
+					len(l.grantCalls), len(l.revokeCalls), len(l.resetCalls), len(l.rateCalls))
 			}
 		})
 	}
@@ -1033,7 +1227,7 @@ func TestRevokeRoutesToRevoke(t *testing.T) {
 	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
 
 	body := revokeBody("r", "grant-r", testPUID, "sp_a", testRevokeReason)
-	serve(t, h, http.MethodPost, "/v1/admin/entitlements/revoke", body, "tok", "syous")
+	w := serve(t, h, http.MethodPost, "/v1/admin/entitlements/revoke", body, "tok", "syous")
 
 	if len(l.revokeCalls) != 1 {
 		t.Errorf("회수 호출 %d회", len(l.revokeCalls))
@@ -1043,6 +1237,10 @@ func TestRevokeRoutesToRevoke(t *testing.T) {
 	}
 	if l.revokeCalls[0].GrantRequestID != "grant-r" {
 		t.Errorf("grantRequestId = %q", l.revokeCalls[0].GrantRequestID)
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	if result["operation"] != "revoke" || result["grantRequestId"] != "grant-r" {
+		t.Errorf("회수 응답 target echo = %v", result)
 	}
 }
 
@@ -1236,6 +1434,463 @@ func TestMaintenanceToggle(t *testing.T) {
 			t.Error("임의 문구가 통과했다")
 		}
 	})
+}
+
+func TestSandboxResetStatusReturnsImmutableTarget(t *testing.T) {
+	resetAt := time.Date(2026, 8, 2, 3, 4, 5, 0, time.UTC)
+	orderKey := strings.Repeat("a", 64)
+	l := &fakeLedger{resetStatus: ledger.SandboxResetStatus{
+		RequestID:      "reset-1",
+		PlatformUserID: testPUID,
+		AppID:          "a",
+		State:          "completed",
+		ResetAt:        resetAt,
+		OrderKeys:      []string{orderKey},
+	}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	w := serve(t, h, http.MethodGet,
+		"/v1/admin/iap/sandbox-resets/reset-1", "", "tok", "reader")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200. body=%s", w.Code, w.Body.String())
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	assertExactJSONKeys(t, result, "requestId", "appId",
+		"expectedEnvironment", "operation", "state")
+	if result["requestId"] != "reset-1" || result["appId"] != "a" ||
+		result["state"] != "completed" ||
+		result["expectedEnvironment"] != "sandbox" || result["operation"] != "sandbox_reset" ||
+		result["platformUserId"] != nil || result["resetOrderKeys"] != nil || result["resetAt"] != nil {
+		t.Errorf("상태 응답 target binding = %v", result)
+	}
+	if len(l.resetStatusCalls) != 1 || l.resetStatusCalls[0] != "reset-1" {
+		t.Errorf("status calls = %v", l.resetStatusCalls)
+	}
+}
+
+func TestSandboxResetStatusReturnsPIIFreeClosedState(t *testing.T) {
+	l := &fakeLedger{resetStatus: ledger.SandboxResetStatus{
+		RequestID: "reset-1",
+		AppID:     "a",
+		State:     ledger.SandboxResetClosedNotStarted,
+	}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	w := serve(t, h, http.MethodGet,
+		"/v1/admin/iap/sandbox-resets/reset-1", "", "tok", "reader")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200. body=%s", w.Code, w.Body.String())
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	assertExactJSONKeys(t, result, "requestId", "appId",
+		"expectedEnvironment", "operation", "state")
+	if result["requestId"] != "reset-1" || result["appId"] != "a" ||
+		result["state"] != string(ledger.SandboxResetClosedNotStarted) ||
+		result["platformUserId"] != nil || result["resetOrderKeys"] != nil ||
+		result["resetAt"] != nil {
+		t.Errorf("미시작 종결 상태 응답 = %v", result)
+	}
+}
+
+func TestSandboxResetStatusFailsClosedOnInvalidClosedState(t *testing.T) {
+	tests := []struct {
+		name   string
+		status ledger.SandboxResetStatus
+	}{
+		{
+			name: "PUID 포함",
+			status: ledger.SandboxResetStatus{
+				RequestID: "reset-1", AppID: "a",
+				State: ledger.SandboxResetClosedNotStarted, PlatformUserID: testPUID,
+			},
+		},
+		{
+			name: "reset 시각 포함",
+			status: ledger.SandboxResetStatus{
+				RequestID: "reset-1", AppID: "a",
+				State: ledger.SandboxResetClosedNotStarted, ResetAt: time.Now().UTC(),
+			},
+		},
+		{
+			name: "주문 결과 포함",
+			status: ledger.SandboxResetStatus{
+				RequestID: "reset-1", AppID: "a",
+				State:     ledger.SandboxResetClosedNotStarted,
+				OrderKeys: []string{strings.Repeat("a", 64)},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := &fakeLedger{resetStatus: tt.status}
+			h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+			w := serve(t, h, http.MethodGet,
+				"/v1/admin/iap/sandbox-resets/reset-1", "", "tok", "reader")
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500. body=%s", w.Code, w.Body.String())
+			}
+			_, _, code := decodeEnvelope(t, w)
+			if code != string(platformerr.CodeLedgerStateInvalid) {
+				t.Errorf("code = %q, want %q", code, platformerr.CodeLedgerStateInvalid)
+			}
+		})
+	}
+}
+
+func TestSandboxResetStatusFailsClosedOnInvalidBinding(t *testing.T) {
+	l := &fakeLedger{resetStatus: ledger.SandboxResetStatus{
+		RequestID:      "different-request",
+		PlatformUserID: testPUID,
+		AppID:          "a",
+		State:          "prepared",
+		ResetAt:        time.Now().UTC(),
+	}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	w := serve(t, h, http.MethodGet,
+		"/v1/admin/iap/sandbox-resets/reset-1", "", "tok", "reader")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500. body=%s", w.Code, w.Body.String())
+	}
+	_, _, code := decodeEnvelope(t, w)
+	if code != string(platformerr.CodeLedgerStateInvalid) {
+		t.Errorf("code = %q, want %q", code, platformerr.CodeLedgerStateInvalid)
+	}
+}
+
+func TestSandboxResetStatusRejectsInvalidRequestIDBeforeLedger(t *testing.T) {
+	l := &fakeLedger{}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	w := serve(t, h, http.MethodGet,
+		"/v1/admin/iap/sandbox-resets/%20", "", "tok", "reader")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400. body=%s", w.Code, w.Body.String())
+	}
+	if len(l.resetStatusCalls) != 0 {
+		t.Errorf("invalid requestId가 ledger에 도달했다: %v", l.resetStatusCalls)
+	}
+}
+
+func TestSandboxResetStatusReturnsNotFoundForAbsentIntent(t *testing.T) {
+	l := &fakeLedger{resetStatusErr: platformerr.New(
+		platformerr.CodeSandboxResetNotFound, "absent")}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	w := serve(t, h, http.MethodGet,
+		"/v1/admin/iap/sandbox-resets/reset-1", "", "tok", "reader")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404. body=%s", w.Code, w.Body.String())
+	}
+	_, _, code := decodeEnvelope(t, w)
+	if code != string(platformerr.CodeSandboxResetNotFound) {
+		t.Errorf("code = %q, want %q", code, platformerr.CodeSandboxResetNotFound)
+	}
+}
+
+func TestResumeSandboxResetUsesImmutableIntentTarget(t *testing.T) {
+	resetAt := time.Date(2026, 8, 2, 3, 4, 5, 0, time.UTC)
+	orderKey := strings.Repeat("b", 64)
+	a := &fakeAuditor{}
+	l := &fakeLedger{
+		resetStatus: ledger.SandboxResetStatus{
+			RequestID:      "reset-1",
+			PlatformUserID: testPUID,
+			AppID:          "a",
+			State:          "prepared",
+			ResetAt:        resetAt,
+		},
+		resetResumeKeys: []string{orderKey},
+		rateErr:         platformerr.New(platformerr.CodeRateLimited, "limit"),
+	}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, a)
+
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/iap/sandbox-resets/reset-1/resume",
+		sandboxResetResumeBody("reset-1", "a"), "tok", "syous")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200. body=%s", w.Code, w.Body.String())
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	assertExactJSONKeys(t, result, "requestId", "appId", "platformUserId",
+		"expectedEnvironment", "operation", "resetOrderKeys")
+	if result["requestId"] != "reset-1" || result["appId"] != "a" ||
+		result["platformUserId"] != testPUID {
+		t.Errorf("resume 응답 target binding = %v", result)
+	}
+	if len(l.resetStatusCalls) != 1 || len(l.resetResumeCalls) != 1 ||
+		l.resetResumeCalls[0] != "reset-1" || len(l.rateCalls) != 0 {
+		t.Errorf("status=%v resume=%v rate=%v", l.resetStatusCalls, l.resetResumeCalls, l.rateCalls)
+	}
+	if len(a.records) != 1 {
+		t.Fatalf("감사 기록 = %d건, want 1", len(a.records))
+	}
+	rec := a.records[0]
+	if rec.action != "iap.sandbox_reset_resume" || rec.puid != testPUID ||
+		rec.outcome != "ok" || rec.detail["actor"] != "syous" ||
+		rec.detail["request_id"] != "reset-1" {
+		t.Errorf("resume 감사 기록 = %+v", rec)
+	}
+}
+
+func TestResumeSandboxResetRejectsMismatchedAppBeforeMutation(t *testing.T) {
+	l := &fakeLedger{resetStatus: ledger.SandboxResetStatus{
+		RequestID:      "reset-1",
+		PlatformUserID: testPUID,
+		AppID:          "a",
+		State:          "prepared",
+		ResetAt:        time.Now().UTC(),
+	}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/iap/sandbox-resets/reset-1/resume",
+		sandboxResetResumeBody("reset-1", "b"), "tok", "syous")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409. body=%s", w.Code, w.Body.String())
+	}
+	if len(l.resetResumeCalls) != 0 {
+		t.Errorf("다른 앱의 resume가 원장 mutation에 도달했다: %v", l.resetResumeCalls)
+	}
+}
+
+func TestResumeSandboxResetRequiresExactConfirmation(t *testing.T) {
+	l := &fakeLedger{}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/iap/sandbox-resets/reset-1/resume",
+		`{"appId":"a","confirmation":"RESUME RESET a wrong"}`, "tok", "syous")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400. body=%s", w.Code, w.Body.String())
+	}
+	if len(l.resetStatusCalls) != 0 || len(l.resetResumeCalls) != 0 {
+		t.Errorf("confirmation 실패 뒤 ledger가 호출됐다: status=%v resume=%v",
+			l.resetStatusCalls, l.resetResumeCalls)
+	}
+}
+
+func TestResumeSandboxResetRejectsClosedRequest(t *testing.T) {
+	l := &fakeLedger{resetStatus: ledger.SandboxResetStatus{
+		RequestID: "reset-1",
+		AppID:     "a",
+		State:     ledger.SandboxResetClosedNotStarted,
+	}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/iap/sandbox-resets/reset-1/resume",
+		sandboxResetResumeBody("reset-1", "a"), "tok", "syous")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409. body=%s", w.Code, w.Body.String())
+	}
+	_, _, code := decodeEnvelope(t, w)
+	if code != string(platformerr.CodeSandboxResetClosed) {
+		t.Errorf("code = %q, want %q", code, platformerr.CodeSandboxResetClosed)
+	}
+	if len(l.resetResumeCalls) != 0 {
+		t.Errorf("종결된 reset이 resume mutation에 도달했다: %v", l.resetResumeCalls)
+	}
+}
+
+func TestResumeSandboxResetPendingIsRetryableAndAudited(t *testing.T) {
+	a := &fakeAuditor{}
+	l := &fakeLedger{
+		resetStatus: ledger.SandboxResetStatus{
+			RequestID:      "reset-1",
+			PlatformUserID: testPUID,
+			AppID:          "a",
+			State:          "prepared",
+			ResetAt:        time.Now().UTC(),
+		},
+		resetResumeErr: platformerr.New(platformerr.CodeSandboxResetPending, "retry"),
+	}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, a)
+
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/iap/sandbox-resets/reset-1/resume",
+		sandboxResetResumeBody("reset-1", "a"), "tok", "syous")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503. body=%s", w.Code, w.Body.String())
+	}
+	_, _, code := decodeEnvelope(t, w)
+	if code != string(platformerr.CodeSandboxResetPending) {
+		t.Errorf("code = %q, want %q", code, platformerr.CodeSandboxResetPending)
+	}
+	if len(a.records) != 1 || a.records[0].outcome != string(platformerr.CodeSandboxResetPending) {
+		t.Errorf("pending 감사 기록 = %+v", a.records)
+	}
+}
+
+func TestCloseSandboxResetNotStartedCreatesDurableClosure(t *testing.T) {
+	a := &fakeAuditor{}
+	l := &fakeLedger{resetCloseApplied: true}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, a)
+
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/iap/sandbox-resets/reset-1/close-not-started",
+		sandboxResetCloseBody("reset-1", "a"), "tok", "syous")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200. body=%s", w.Code, w.Body.String())
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	assertExactJSONKeys(t, result, "requestId", "appId", "expectedEnvironment",
+		"operation", "state", "applied")
+	if result["requestId"] != "reset-1" || result["appId"] != "a" ||
+		result["expectedEnvironment"] != "sandbox" || result["operation"] != "sandbox_reset" ||
+		result["state"] != string(ledger.SandboxResetClosedNotStarted) || result["applied"] != true {
+		t.Errorf("closure 응답 target binding = %v", result)
+	}
+	if len(l.resetCloseCalls) != 1 {
+		t.Fatalf("closure 호출 = %d건, want 1", len(l.resetCloseCalls))
+	}
+	call := l.resetCloseCalls[0]
+	if call.RequestID != "reset-1" || call.AppID != "a" || call.ActorLogin != "syous" {
+		t.Errorf("closure 원장 입력 = %+v", call)
+	}
+	if len(a.records) != 1 {
+		t.Fatalf("감사 기록 = %d건, want 1", len(a.records))
+	}
+	rec := a.records[0]
+	if rec.action != "iap.sandbox_reset_close_not_started" || rec.puid != "" ||
+		rec.outcome != "ok" || rec.detail["request_id"] != "reset-1" ||
+		rec.detail["environment"] != "sandbox" || rec.detail["actor"] != "syous" ||
+		rec.detail["applied"] != true {
+		t.Errorf("closure 감사 기록 = %+v", rec)
+	}
+	if _, exists := rec.detail["confirmation"]; exists {
+		t.Errorf("typed confirmation이 감사 로그에 남았다: %+v", rec.detail)
+	}
+}
+
+func TestCloseSandboxResetNotStartedExactReplay(t *testing.T) {
+	a := &fakeAuditor{}
+	l := &fakeLedger{resetCloseApplied: false}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, a)
+
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/iap/sandbox-resets/reset-1/close-not-started",
+		sandboxResetCloseBody("reset-1", "a"), "tok", "syous")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200. body=%s", w.Code, w.Body.String())
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	if result["applied"] != false || result["state"] != string(ledger.SandboxResetClosedNotStarted) {
+		t.Errorf("closure replay 응답 = %v", result)
+	}
+	if len(a.records) != 1 || a.records[0].outcome != "already_closed" ||
+		a.records[0].detail["applied"] != false {
+		t.Errorf("closure replay 감사 기록 = %+v", a.records)
+	}
+}
+
+func TestCloseSandboxResetNotStartedValidatesStrictTarget(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "typed confirmation 불일치",
+			body: `{"appId":"a","confirmation":"CLOSE RESET a wrong"}`,
+		},
+		{
+			name: "선두 하이픈 appId",
+			body: sandboxResetCloseBody("reset-1", "-a"),
+		},
+		{
+			name: "알 수 없는 필드",
+			body: `{"appId":"a","confirmation":"CLOSE RESET a reset-1","platformUserId":"` + testPUID + `"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := &fakeLedger{}
+			h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+			w := serve(t, h, http.MethodPost,
+				"/v1/admin/iap/sandbox-resets/reset-1/close-not-started",
+				tt.body, "tok", "syous")
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400. body=%s", w.Code, w.Body.String())
+			}
+			if len(l.resetCloseCalls) != 0 {
+				t.Errorf("검증 실패 closure가 ledger에 도달했다: %+v", l.resetCloseCalls)
+			}
+		})
+	}
+}
+
+func TestCloseSandboxResetNotStartedRejectsAlreadyStarted(t *testing.T) {
+	a := &fakeAuditor{}
+	l := &fakeLedger{resetCloseErr: platformerr.New(
+		platformerr.CodeSandboxResetAlreadyStarted, "started")}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, a)
+
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/iap/sandbox-resets/reset-1/close-not-started",
+		sandboxResetCloseBody("reset-1", "a"), "tok", "syous")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409. body=%s", w.Code, w.Body.String())
+	}
+	_, _, code := decodeEnvelope(t, w)
+	if code != string(platformerr.CodeSandboxResetAlreadyStarted) {
+		t.Errorf("code = %q, want %q", code, platformerr.CodeSandboxResetAlreadyStarted)
+	}
+	if len(a.records) != 1 ||
+		a.records[0].outcome != string(platformerr.CodeSandboxResetAlreadyStarted) {
+		t.Errorf("closure conflict 감사 기록 = %+v", a.records)
+	}
+}
+
+func TestSandboxResetRecoveryEndpointsRejectProduction(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "상태 조회",
+			method: http.MethodGet,
+			path:   "/v1/admin/iap/sandbox-resets/reset-1",
+		},
+		{
+			name:   "재개",
+			method: http.MethodPost,
+			path:   "/v1/admin/iap/sandbox-resets/reset-1/resume",
+			body:   sandboxResetResumeBody("reset-1", "a"),
+		},
+		{
+			name:   "미시작 종결",
+			method: http.MethodPost,
+			path:   "/v1/admin/iap/sandbox-resets/reset-1/close-not-started",
+			body:   sandboxResetCloseBody("reset-1", "a"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := &fakeLedger{env: domain.EnvProduction}
+			h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+			w := serve(t, h, tt.method, tt.path, tt.body, "tok", "syous")
+
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422. body=%s", w.Code, w.Body.String())
+			}
+			_, _, code := decodeEnvelope(t, w)
+			if code != string(platformerr.CodeEnvironmentMismatch) {
+				t.Errorf("code = %q, want %q", code, platformerr.CodeEnvironmentMismatch)
+			}
+			if len(l.resetStatusCalls) != 0 || len(l.resetResumeCalls) != 0 ||
+				len(l.resetCloseCalls) != 0 {
+				t.Errorf("production recovery가 ledger에 도달했다: status=%v resume=%v close=%v",
+					l.resetStatusCalls, l.resetResumeCalls, l.resetCloseCalls)
+			}
+		})
+	}
 }
 
 // sandbox 초기화는 production 원장에서 존재하지 않아야 한다.

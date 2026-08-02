@@ -101,7 +101,10 @@ which user a purchase is for"* — 앱이 사용자 맥락을 잃는 상황을 �
 projection을 다시 쓰는 것과 새 소유자 지급을 **한 트랜잭션**에서 한다.
 
 **되돌릴 수 없는 조작은 따로 남긴다.** `iap.transferred`를 `iap.granted`에
-섞으면 "이 유저가 언제 무엇을 잃었나"를 찾을 수 없다.
+섞으면 "이 유저가 언제 무엇을 잃었나"를 찾을 수 없다. BigQuery 감사
+projection이 실패해도 이전 소유자를 복구할 수 있도록, 토큰·provider 주문
+식별자·마켓 계정 참조를 제외한 최소 증거를 append-only
+`iap_ownership_transfers`에 소유권 변경과 같은 트랜잭션으로 영구 저장한다.
 
 ## 결과
 

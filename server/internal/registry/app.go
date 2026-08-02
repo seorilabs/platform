@@ -77,9 +77,13 @@ type GA4Config struct {
 type IAPConfig struct {
 	LedgerEnvironment LedgerEnvironment `json:"ledger_environment" firestore:"ledger_environment"`
 	Markets           []string          `json:"markets" firestore:"markets"`
+	// EntitlementIDs는 이 앱에 지급할 수 있는 entitlement allowlist다.
+	// 전역 SKU 카탈로그는 상품 매핑의 원장이고, 이 목록은 앱 경계의 원장이다.
+	EntitlementIDs []string `json:"entitlement_ids" firestore:"entitlement_ids"`
 }
 
 var appIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+var entitlementIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
@@ -104,6 +108,24 @@ func (a App) Validate() error {
 			return fmt.Errorf("%s: iap.ledger_environment가 올바르지 않다: %q",
 				a.AppID, a.IAP.LedgerEnvironment)
 		}
+	}
+	if a.FeatureEnabled("iap") && len(a.IAP.EntitlementIDs) == 0 {
+		return fmt.Errorf("%s: IAP 활성 앱에는 iap.entitlement_ids가 필요하다", a.AppID)
+	}
+	if len(a.IAP.EntitlementIDs) > 100 {
+		return fmt.Errorf("%s: iap.entitlement_ids는 최대 100개다", a.AppID)
+	}
+	seenEntitlements := make(map[string]struct{}, len(a.IAP.EntitlementIDs))
+	for _, entitlementID := range a.IAP.EntitlementIDs {
+		if !entitlementIDPattern.MatchString(entitlementID) || isPlaceholder(entitlementID) {
+			return fmt.Errorf("%s: iap.entitlement_ids 값이 올바르지 않다: %q",
+				a.AppID, entitlementID)
+		}
+		if _, exists := seenEntitlements[entitlementID]; exists {
+			return fmt.Errorf("%s: iap.entitlement_ids가 중복됐다: %q",
+				a.AppID, entitlementID)
+		}
+		seenEntitlements[entitlementID] = struct{}{}
 	}
 	// placeholder가 남은 채 배포되면 런타임에 이상하게 동작한다.
 	// 부팅 시점에 잡는 편이 낫다.
@@ -142,6 +164,17 @@ func (a App) FeatureEnabled(name string) bool {
 		return false
 	}
 	return a.Features[name]
+}
+
+// EntitlementAllowed는 entitlement가 이 앱의 명시 allowlist에 있는지 판정한다.
+// IAP 활성화만으로 전역 카탈로그 전체를 허용하지 않는 fail-closed 경계다.
+func (a App) EntitlementAllowed(entitlementID string) bool {
+	for _, allowed := range a.IAP.EntitlementIDs {
+		if allowed == entitlementID {
+			return true
+		}
+	}
+	return false
 }
 
 // EventAllowed는 이벤트를 플랫폼으로 보낼지 판정한다.

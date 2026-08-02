@@ -69,6 +69,11 @@ func TestInvariantCodeStatuses(t *testing.T) {
 		{CodeProviderCompletionPending, http.StatusServiceUnavailable, "불변식 7 지급은 롤백하지 않는다"},
 		{CodeAnonymousNotAllowed, http.StatusForbidden, "anonymous 신원은 IAP 금지"},
 		{CodeAppPaused, http.StatusForbidden, "kill switch"},
+		{CodeSandboxResetBusy, http.StatusConflict, "다른 durable reset intent와 충돌"},
+		{CodeSandboxResetPending, http.StatusServiceUnavailable, "같은 requestId로 재개"},
+		{CodeSandboxResetNotFound, http.StatusNotFound, "durable reset intent 부재"},
+		{CodeSandboxResetClosed, http.StatusConflict, "미시작 영구 종결 뒤 늦은 reset 거부"},
+		{CodeSandboxResetAlreadyStarted, http.StatusConflict, "시작된 reset의 미시작 종결 거부"},
 	}
 
 	for _, tt := range tests {
@@ -185,6 +190,7 @@ func TestIsRetryable(t *testing.T) {
 	retryable := []Code{
 		CodeEventBusy, CodeProviderTimeout, CodeProviderUnavailable,
 		CodePurchaseNotFound, CodeProviderCompletionPending,
+		CodeSandboxResetPending,
 	}
 	for _, c := range retryable {
 		if !IsRetryable(c) {

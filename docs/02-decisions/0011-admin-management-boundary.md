@@ -33,10 +33,13 @@ production 원장에 잘못 적용될 수 있다.
   새 ID로 재실행하지 않고 같은 `requestId`를 복구할 수 있도록 TTL까지 보존한 뒤
   redaction한다.
 - IAP mutation은 `expectedEnvironment`, 앱과 PUID의 소속, 앱 레지스트리의
-  IAP 활성화와 원장 환경, 카탈로그 entitlement, 서버가 계산한 typed
+  IAP 활성화와 원장 환경, 앱별 entitlement allowlist, 전역 SKU 카탈로그,
+  서버가 계산한 typed
   confirmation을 모두 검증한다.
 - Admin role은 SKU 카탈로그만 읽고 마켓 자격증명과 계정 바인딩 키를 갖지 않는다.
-  백오피스에는 `/v1/admin/iap/catalog`로 entitlement ID만 노출한다.
+  백오피스에는 `/v1/admin/apps/{appId}/iap/catalog`로 선택한 앱 allowlist와
+  전역 카탈로그의 교집합 entitlement ID만 노출한다. `features.iap=true`인데
+  앱 allowlist가 비었거나 전역 카탈로그와 어긋나면 fail-closed한다.
 - 운영자 지급은 order, entitlement projection, 영구 감사 레코드를 한 Firestore
   트랜잭션에서 쓴다. 같은 `requestId`의 다른 payload는 409로 거부한다.
 - 회수는 `grantRequestId`가 가리키는 활성 operator source만 revoked로 바꾼다.
@@ -46,7 +49,9 @@ production 원장에 잘못 적용될 수 있다.
 - `reason`은 네 가지 고정 코드만 저장한다. `X-Seori-Actor`는 GitHub login 형식만
   받고, 없거나 형식이 다르면 OIDC 이메일 원문 대신 전체 SHA-256 참조를 저장한다.
 - grant·revoke·sandbox reset의 `requestId`는 조작 종류를 넘어 중복될 수 없다.
-  sandbox reset의 대상 주문·projection·영구 요청 레코드도 한 트랜잭션으로 쓴다.
+  grant·revoke의 효과와 영구 요청 레코드는 한 트랜잭션으로 쓴다. sandbox reset의
+  단일 트랜잭션 결정은 ADR 0012가 대체하며, immutable intent prepare와 효과
+  apply의 두 트랜잭션으로 처리한다.
 - 구조와 typed confirmation을 검증한 exact retry는 mutable 앱·사용자·카탈로그
   precondition과 rate gate보다 먼저 영구 요청 레코드에서 읽는다. commit 뒤 응답만
   유실된 요청은 앱 pause나 즉시 재시도 한도 초과와 무관하게 같은 `requestId`로
@@ -56,6 +61,9 @@ production 원장에 잘못 적용될 수 있다.
   않고 fail-closed한다.
 - Admin 응답은 내부 ledger·identity struct를 직접 직렬화하지 않고 명시 DTO로
   투영한다. 계약에 없는 미래 필드가 브라우저 payload에 자동 노출되지 않는다.
+- grant·revoke 성공 응답은 `requestId`·앱·PUID·entitlement·환경·조작 종류를
+  echo한다. worker는 요청 target과 모두 일치할 때만 성공으로 확정하고 payload를
+  redaction한다.
 - read/write 서비스 계정 분리는 direct API 오용과 read 자격증명 탈취가 mutation으로
   번지는 것을 막는 경계다. queue나 MySQL row 자체의 변조를 막아 주지는 않는다.
   `AppOperationRun` DB 무결성과 worker는 별도 trusted boundary로 두고, worker가
@@ -73,8 +81,9 @@ production 원장에 잘못 적용될 수 있다.
   정확히 합성할 수 있다.
 - 기존 `processed_orders`에는 `appId`가 없다. 최근 주문의 앱은 PII 없는 identity
   binding으로만 도출하며, 삭제 사용자나 owner 없는 tombstone은 빈 값으로 둔다.
-- 현재 카탈로그는 배포 단위 전역이다. 여러 IAP 앱을 한 Admin 배포에 올리기 전에
-  앱별 카탈로그 경계를 별도 결정해야 한다.
+- 전역 SKU 카탈로그는 상품 매핑을, `registry/apps/*.json`의
+  `iap.entitlement_ids`는 앱별 운영 권한을 담당한다. 한 Admin 배포에 여러 앱이
+  있어도 두 목록의 교집합 밖 entitlement는 조회·지급·회수할 수 없다.
 
 ## 환경변수 마이그레이션
 

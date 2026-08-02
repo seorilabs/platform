@@ -13,7 +13,7 @@ import (
 )
 
 func uniqueOperatorPUID() string {
-	return fmt.Sprintf("pu_%026d", time.Now().UnixNano())
+	return fmt.Sprintf("pu_%026d", nextIntegrationID())
 }
 
 func TestOperatorGrantIsAtomicAndPayloadBound(t *testing.T) {

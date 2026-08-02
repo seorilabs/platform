@@ -27,6 +27,55 @@ go test -tags=market ./internal/iap/providers/ -v
 | Google Play | **통과** | 400 | **통과** | — | **통과** |
 | AppsInToss | 미확보 | — | — | — | — |
 
+## 2026-08-02 sandbox reset durable-intent 배포 게이트
+
+`sandbox_reset_barriers`와 immutable intent/completion 도입 전에 live
+`iap_environments/sandbox/sandbox_reset_requests`를 문서 내용 없이 1건 존재
+여부만 조회했고 **0건**임을 확인했다. 따라서 과거 reset cutoff backfill 대상은
+현재 없다.
+
+이 확인은 2026-08-02 시점의 증거일 뿐 배포 시점까지 고정되지 않는다. 최초
+배포 직전에 아래 순서를 다시 수행한다.
+
+1. 백오피스와 break-glass의 sandbox reset 쓰기를 중단한다.
+2. live `sandbox_reset_requests`, `sandbox_reset_completions`,
+   `sandbox_reset_barriers`에서 legacy reset과 active intent가 모두 0건인지 문서
+   내용을 출력하지 않고 확인한다.
+3. 1건이라도 있으면 그대로 배포하지 않는다. 해당 request의 PUID와 cutoff를
+   새 intent/completion/barrier 스키마로 옮기는 backfill을 별도 설계·검증한다.
+4. 0건이면 durable-intent를 인식하는 API와 worker를 모두 배포한 뒤 상태 조회와
+   resume 스모크를 확인하고 쓰기를 다시 연다.
+
+prepare intent가 한 건이라도 commit된 뒤에는 이전 바이너리로 롤백하지 않는다.
+active intent를 보존한 채 수정 버전으로 **roll-forward**한다.
+
+### 필수 회귀 시나리오
+
+| 시나리오 | 기대 결과 |
+|---|---|
+| prepare commit 뒤 apply 전에 중단, 같은 POST 재호출 | 같은 cutoff로 resume 후 completion 1건 |
+| completion commit 뒤 응답 유실, 같은 POST·resume 재호출 | 저장된 order key를 멱등 반환 |
+| 같은 requestId·다른 payload | 409 `operator_replay_mismatch` |
+| 같은 PUID의 다른 prepared requestId | 409 `sandbox_reset_busy` |
+| reset prepare → 같은 PUID pre-cutoff grant | grant 차단, 이전 증거 없음 |
+| reset prepare → A에서 B로 pre-cutoff 복원 | 양쪽 barrier로 이전 차단, 이전 증거 없음 |
+| grant/이전 commit → reset prepare | reset이 최신 원장을 다시 읽어 revoke |
+| reset completion → cutoff 이후 신규 구매 | grant 허용 |
+| 두 commit 순서를 실제 Firestore emulator/integration에서 반복 | 어느 순서도 pre-cutoff active 잔존 없음 |
+| entitlement 201개 또는 reset 대상 주문 21개 | 부분 적용 없이 pending/fail-closed |
+| intent·completion·barrier 필드 파손 | `ledger_state_invalid`, 부분 적용 없음 |
+| absent 조회 뒤 close가 먼저 commit | `closed_not_started`; 늦은 reset/resume는 `sandbox_reset_closed` |
+| absent 조회 뒤 reset prepare가 먼저 commit | close는 `sandbox_reset_already_started`; prepared를 resume |
+| 같은 closure의 exact 재호출 | 200 `applied=false`, 상태는 `closed_not_started` 유지 |
+| 같은 requestId·다른 appId 또는 actor로 close | 409 `operator_replay_mismatch` |
+
+상태 조회 검증에서는 `prepared`/`completed`/`closed_not_started`만 허용하고,
+응답에 `platformUserId`와 `resetOrderKeys`가 없는지 확인한다. 없는 requestId는 404
+`sandbox_reset_not_found`여야 하지만 이 관찰만으로 `not_applied`로 종결하지 않는다.
+먼저 `CLOSE RESET {appId} {requestId}` 확인 문자열로 closure를 commit한다.
+`sandbox_reset_pending` 이후에는 새 ID가 아니라
+`RESUME RESET {appId} {requestId}` 확인 문자열로 원 요청을 재개한다.
+
 ## Play 실제 구매 검증 — 토큰을 얻는 법
 
 원장에는 `purchaseToken`을 저장하지 않는다(PII 최소화). 하지만

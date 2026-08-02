@@ -15,14 +15,18 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func newTestLedger(t *testing.T) (*Ledger, func()) {
@@ -42,9 +46,44 @@ func newTestLedger(t *testing.T) (*Ledger, func()) {
 	return New(st, domain.EnvSandbox), func() { st.Close() }
 }
 
+var integrationIDCounter atomic.Int64
+
+// nextIntegrationID는 시계 해상도가 낮거나 여러 goroutine이 동시에 호출해도
+// 같은 process 안에서 반드시 증가하는 식별자를 만든다. 최초 값은 UnixNano라
+// 이전 integration 실행이 staging sandbox에 남긴 영구 원장과도 섞이지 않는다.
+func nextIntegrationID() int64 {
+	for {
+		current := integrationIDCounter.Load()
+		next := time.Now().UnixNano()
+		if next <= current {
+			next = current + 1
+		}
+		if integrationIDCounter.CompareAndSwap(current, next) {
+			return next
+		}
+	}
+}
+
 // uniqueID는 테스트마다 다른 식별자를 만들어 이전 실행과 섞이지 않게 한다.
 func uniqueID(prefix string) string {
-	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%d", prefix, nextIntegrationID())
+}
+
+func TestIntegrationIDsAreDistinctUnderConcurrency(t *testing.T) {
+	const count = 256
+	ids := make(chan int64, count)
+	for range count {
+		go func() { ids <- nextIntegrationID() }()
+	}
+
+	seen := make(map[int64]bool, count)
+	for range count {
+		id := <-ids
+		if seen[id] {
+			t.Fatalf("동시 integration ID가 중복됐다: %d", id)
+		}
+		seen[id] = true
+	}
 }
 
 func testPurchase(canonicalID string, state domain.State, observedAt time.Time) domain.VerifiedPurchase {
@@ -166,6 +205,96 @@ func TestGrantTransfersOnCrossUser(t *testing.T) {
 	}
 	if len(newList) != 1 {
 		t.Errorf("새 소유자 목록 = %v, want 1건", newList)
+	}
+}
+
+// 불변식 4, 5: 소유권 변경과 같은 transaction에서 최소 복구 증거를
+// append한다. 두 번째 이전은 sequence 2를 만들고 sequence 1을 덮지 않는다.
+func TestOwnershipTransfersAppendDurableEvidence(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	entitlementID := "sp_galaxy_gecko"
+	observedAt := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("token-transfer-evidence"), domain.StateActive, observedAt)
+	ownerA := uniqueID("pu_transfer_a")
+	ownerB := uniqueID("pu_transfer_b")
+	ownerC := uniqueID("pu_transfer_c")
+
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: ownerA, EntitlementID: entitlementID, Purchase: purchase,
+	}); err != nil {
+		t.Fatalf("최초 지급 실패: %v", err)
+	}
+	toB := purchase
+	toB.ObservedAt = observedAt.Add(time.Minute)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: ownerB, EntitlementID: entitlementID, Purchase: toB,
+	}); err != nil {
+		t.Fatalf("A→B 이전 실패: %v", err)
+	}
+
+	readEvidence := func(sequence int64) ownershipTransferDoc {
+		t.Helper()
+		path, err := l.paths.ownershipTransfer(purchase.Key(), sequence)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap, err := l.store.Get(ctx, path)
+		if err != nil {
+			t.Fatalf("sequence %d evidence 조회 실패: %v", sequence, err)
+		}
+		var doc ownershipTransferDoc
+		if err := snap.DataTo(&doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+
+	first := readEvidence(1)
+	if first.OrderKey != purchase.Key() || first.Sequence != 1 ||
+		first.FromPlatformUserID != ownerA || first.ToPlatformUserID != ownerB ||
+		first.EntitlementID != entitlementID || first.Platform != purchase.Platform ||
+		first.State != domain.StateActive || !first.ObservedAt.Equal(toB.ObservedAt) ||
+		first.CreatedAt.IsZero() {
+		t.Fatalf("sequence 1 evidence가 불완전하다: %+v", first)
+	}
+
+	toC := purchase
+	toC.ObservedAt = observedAt.Add(2 * time.Minute)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: ownerC, EntitlementID: entitlementID, Purchase: toC,
+	}); err != nil {
+		t.Fatalf("B→C 이전 실패: %v", err)
+	}
+	second := readEvidence(2)
+	if second.OrderKey != purchase.Key() || second.Sequence != 2 ||
+		second.FromPlatformUserID != ownerB || second.ToPlatformUserID != ownerC ||
+		second.EntitlementID != entitlementID || second.State != domain.StateActive ||
+		!second.ObservedAt.Equal(toC.ObservedAt) {
+		t.Fatalf("sequence 2 evidence가 불완전하다: %+v", second)
+	}
+
+	// sequence 2 append 뒤에도 최초 evidence가 그대로 남아야 한다.
+	firstAfterSecond := readEvidence(1)
+	if firstAfterSecond != first {
+		t.Fatalf("sequence 1 evidence가 덮였다: before=%+v after=%+v", first, firstAfterSecond)
+	}
+	orderPath, err := l.paths.order(purchase.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	orderSnap, err := l.store.Get(ctx, orderPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storedOrder orderDoc
+	if err := orderSnap.DataTo(&storedOrder); err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.TransferSequence != 2 || storedOrder.PlatformUserID != ownerC {
+		t.Fatalf("최종 order 이전 상태가 올바르지 않다: %+v", storedOrder)
 	}
 }
 
@@ -582,5 +711,924 @@ func TestReinstallTransfersOwnership(t *testing.T) {
 	}
 	if len(oldList) != 0 {
 		t.Errorf("한 구매가 두 계정에서 활성이다. 이전 소유자 목록 = %v", oldList)
+	}
+}
+
+// 불변식 3, 5, 9: reset이 대상 snapshot을 만든 뒤 provider 검증이 끝난
+// 지연 구매가 도착해도 사용자 barrier가 지급을 막는다. 기존 구현은 주문이
+// 없을 때 reset 결과를 빈 목록으로 확정해 이 구매를 active로 살려냈다.
+func TestSandboxResetBarrierBlocksDelayedUnknownPurchase(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	puid := uniqueOperatorPUID()
+	resetAt := time.Now().UTC().Truncate(time.Second)
+	reset := SandboxResetInput{
+		RequestID: uniqueID("req-barrier"), PlatformUserID: puid, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}
+	keys, err := l.MarkSandboxReset(ctx, reset)
+	if err != nil {
+		t.Fatalf("빈 사용자 reset 실패: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("초기 대상 = %v, want []", keys)
+	}
+
+	delayed := testPurchase(uniqueID("orig-delayed"), domain.StateActive, resetAt.Add(-time.Minute))
+	delayed.Platform = domain.PlatformAppStore
+	delayed.Completion = domain.CompletionAppleFinish
+	res, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: puid, EntitlementID: "sp_galaxy_gecko", Purchase: delayed,
+	})
+	if err != nil {
+		t.Fatalf("지연 구매 처리 실패: %v", err)
+	}
+	if !res.BlockedBySandboxReset || res.Granted || res.AlreadyGranted {
+		t.Fatalf("지연 구매 결과 = %+v, want sandbox block", res)
+	}
+}
+
+// 불변식 3, 5, 9: pre-reset 구매 지급과 reset이 실제로 겹쳐도 reset이
+// 성공한 뒤에는 그 구매가 active로 남지 않는다. 지급이 먼저 끝나면 reset
+// query가 회수하고, reset이 먼저 끝나면 user barrier가 지급을 차단한다.
+func TestConcurrentSandboxResetLeavesNoActivePreResetPurchase(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	puid := uniqueOperatorPUID()
+	startedAt := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("orig-concurrent-reset"), domain.StateActive, startedAt.Add(-time.Hour))
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+
+	start := make(chan struct{})
+	grantDone := make(chan error, 1)
+	resetDone := make(chan error, 1)
+	go func() {
+		<-start
+		_, err := l.Grant(ctx, GrantInput{
+			PlatformUserID: puid, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+		})
+		grantDone <- err
+	}()
+	go func() {
+		<-start
+		_, err := l.MarkSandboxReset(ctx, SandboxResetInput{
+			RequestID: uniqueID("req-concurrent-reset"), PlatformUserID: puid, AppID: "app-a",
+			ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+		})
+		resetDone <- err
+	}()
+	close(start)
+
+	if err := <-grantDone; err != nil {
+		t.Fatalf("동시 지급 실패: %v", err)
+	}
+	if err := <-resetDone; err != nil {
+		t.Fatalf("동시 reset 실패: %v", err)
+	}
+	active, err := l.ListActive(ctx, puid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("reset 완료 뒤 pre-reset 구매가 active다: %v", active)
+	}
+}
+
+// 불변식 3, 9: reset 요청 뒤 실제로 산 신규 구매는 동시 transaction의
+// query에 보이더라도 cutoff 이후 구매이므로 회수하지 않는다.
+func TestConcurrentSandboxResetPreservesPostResetPurchase(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	puid := uniqueOperatorPUID()
+	purchase := testPurchase(uniqueID("orig-post-reset"), domain.StateActive,
+		time.Now().UTC().Add(time.Hour))
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+
+	start := make(chan struct{})
+	grantDone := make(chan error, 1)
+	resetDone := make(chan error, 1)
+	go func() {
+		<-start
+		_, err := l.Grant(ctx, GrantInput{
+			PlatformUserID: puid, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+		})
+		grantDone <- err
+	}()
+	go func() {
+		<-start
+		_, err := l.MarkSandboxReset(ctx, SandboxResetInput{
+			RequestID: uniqueID("req-post-reset"), PlatformUserID: puid, AppID: "app-a",
+			ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+		})
+		resetDone <- err
+	}()
+	close(start)
+
+	if err := <-grantDone; err != nil {
+		t.Fatalf("신규 지급 실패: %v", err)
+	}
+	if err := <-resetDone; err != nil {
+		t.Fatalf("동시 reset 실패: %v", err)
+	}
+	active, err := l.ListActive(ctx, puid)
+	if err != nil || len(active) != 1 || active[0] != "sp_galaxy_gecko" {
+		t.Fatalf("cutoff 이후 구매가 회수됐다: active=%v err=%v", active, err)
+	}
+}
+
+// ADR 0012: phase 1 뒤 프로세스가 중단돼도 immutable intent와 active barrier가
+// 남아 같은 requestId로 phase 2를 재개해야 한다. prepared를 미적용으로 닫거나
+// 새 requestId를 만들면 request-start-wins 경계가 사라진다.
+func TestSandboxResetPreparedIntentResumesAfterInterruption(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	puid := uniqueOperatorPUID()
+	cutoff := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("orig-prepared-resume"), domain.StateActive,
+		cutoff.Add(-time.Hour))
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: puid, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reset := SandboxResetInput{
+		RequestID: uniqueID("req-prepared-resume"), PlatformUserID: puid, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}
+	if _, err := l.prepareSandboxResetIntentWithClock(ctx, reset,
+		func() time.Time { return cutoff }, nil, nil); err != nil {
+		t.Fatalf("phase 1 준비 실패: %v", err)
+	}
+	status, err := l.GetSandboxResetStatus(ctx, reset.RequestID)
+	if err != nil || status.State != SandboxResetPrepared || len(status.OrderKeys) != 0 {
+		t.Fatalf("prepared 상태=%+v err=%v", status, err)
+	}
+
+	other := reset
+	other.RequestID = uniqueID("req-prepared-busy")
+	if _, err := l.MarkSandboxReset(ctx, other); platformerr.CodeOf(err) != platformerr.CodeSandboxResetBusy {
+		t.Fatalf("다른 requestId code=%q, want busy", platformerr.CodeOf(err))
+	}
+
+	keys, err := l.ResumeSandboxReset(ctx, reset.RequestID)
+	if err != nil || len(keys) != 1 || keys[0] != purchase.Key() {
+		t.Fatalf("resume keys=%v err=%v", keys, err)
+	}
+	status, err = l.GetSandboxResetStatus(ctx, reset.RequestID)
+	if err != nil || status.State != SandboxResetCompleted || len(status.OrderKeys) != 1 {
+		t.Fatalf("completed 상태=%+v err=%v", status, err)
+	}
+	// 완료 응답만 유실된 재호출도 immutable completion을 그대로 돌려준다.
+	replay, err := l.ResumeSandboxReset(ctx, reset.RequestID)
+	if err != nil || len(replay) != 1 || replay[0] != keys[0] {
+		t.Fatalf("completion replay=%v err=%v", replay, err)
+	}
+}
+
+// ADR 0012: prepare transaction이 barrier를 읽은 뒤 Grant가 먼저 commit하면
+// Firestore가 prepare를 재시도한다. 두 번째 attempt는 cutoff를 새로 잡아 먼저
+// commit된 구매를 reset 대상에 포함해야 한다. 함수 진입 때 한 번만 시각을
+// 잡으면 이 구매가 post-cutoff로 오판되어 active로 남는다.
+func TestSandboxResetPrepareRetryRefreshesCutoffAfterGrantCommit(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	puid := uniqueOperatorPUID()
+	base := time.Now().UTC().Truncate(time.Second)
+	firstCutoff := base
+	purchasedAt := base.Add(time.Second)
+	retriedCutoff := base.Add(2 * time.Second)
+	purchase := testPurchase(uniqueID("orig-prepare-retry"), domain.StateActive, purchasedAt)
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+	reset := SandboxResetInput{
+		RequestID: uniqueID("req-prepare-retry"), PlatformUserID: puid, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}
+
+	var clockCalls atomic.Int64
+	clock := func() time.Time {
+		if clockCalls.Add(1) == 1 {
+			return firstCutoff
+		}
+		return retriedCutoff
+	}
+	firstAttemptAborted := make(chan struct{})
+	retryMayRead := make(chan struct{})
+	type prepareResult struct {
+		intent sandboxResetRequestDoc
+		err    error
+	}
+	prepareDone := make(chan prepareResult, 1)
+	go func() {
+		intent, err := l.prepareSandboxResetIntentWithClock(ctx, reset, clock,
+			func(attempt int) error {
+				if attempt == 0 {
+					return nil
+				}
+				// 첫 attempt가 lock을 해제한 뒤 Grant가 먼저 commit할 때까지
+				// 다음 attempt가 barrier를 읽지 않게 한다.
+				select {
+				case <-retryMayRead:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+			func(attempt int, cutoff time.Time) error {
+				if attempt != 0 {
+					return nil
+				}
+				if !cutoff.Equal(firstCutoff) {
+					return fmt.Errorf("첫 cutoff=%s, want %s", cutoff, firstCutoff)
+				}
+				close(firstAttemptAborted)
+				// Firestore client가 callback의 Aborted를 같은 transaction의
+				// 새 attempt로 재시도하게 해 실제 retry clock 경계를 검증한다.
+				return status.Error(codes.Aborted, "force prepare retry")
+			})
+		prepareDone <- prepareResult{intent: intent, err: err}
+	}()
+
+	select {
+	case <-firstAttemptAborted:
+	case <-ctx.Done():
+		t.Fatalf("prepare 첫 attempt 대기 실패: %v", ctx.Err())
+	}
+	// 첫 attempt가 중단된 사이 Grant를 먼저 commit한다.
+	grantLedger := New(l.store, domain.EnvSandbox).WithClock(func() time.Time { return purchasedAt })
+	if _, err := grantLedger.Grant(ctx, GrantInput{
+		PlatformUserID: puid, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	}); err != nil {
+		close(retryMayRead)
+		t.Fatalf("prepare보다 먼저 commit할 지급 실패: %v", err)
+	}
+	close(retryMayRead)
+
+	var prepared prepareResult
+	select {
+	case prepared = <-prepareDone:
+	case <-ctx.Done():
+		t.Fatalf("prepare retry 완료 대기 실패: %v", ctx.Err())
+	}
+	if prepared.err != nil {
+		t.Fatalf("prepare retry 실패: %v", prepared.err)
+	}
+	if clockCalls.Load() < 2 || !prepared.intent.ResetAt.Equal(retriedCutoff) {
+		t.Fatalf("retry cutoff=%s clockCalls=%d, want %s and >=2",
+			prepared.intent.ResetAt, clockCalls.Load(), retriedCutoff)
+	}
+	keys, err := l.ResumeSandboxReset(ctx, reset.RequestID)
+	if err != nil || len(keys) != 1 || keys[0] != purchase.Key() {
+		t.Fatalf("먼저 commit된 구매 reset 결과 keys=%v err=%v", keys, err)
+	}
+	active, err := l.ListActive(ctx, puid)
+	if err != nil || len(active) != 0 {
+		t.Fatalf("prepare retry 뒤 구매가 active다: active=%v err=%v", active, err)
+	}
+}
+
+// GET 404 뒤 수동 unlock 전에 늦은 prepare가 도착하는 경합은 immutable
+// closure와 intent가 서로의 경로를 읽는 transaction으로 닫는다. 두 commit
+// 순서를 각각 고정해 어느 쪽도 closure와 intent를 함께 만들지 못함을 검증한다.
+func TestSandboxResetClosureAndPrepareCommitOrders(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+	ctx := context.Background()
+	actor := "operator"
+
+	t.Run("closure commit이 먼저면 늦은 prepare를 영구 거부", func(t *testing.T) {
+		requestID := uniqueID("req-closure-first")
+		closure := SandboxResetClosureInput{
+			RequestID: requestID, AppID: "app-a", ActorLogin: actor,
+		}
+		applied, err := l.CloseSandboxResetNotStarted(ctx, closure)
+		if err != nil || !applied {
+			t.Fatalf("최초 closure applied=%v err=%v", applied, err)
+		}
+		applied, err = l.CloseSandboxResetNotStarted(ctx, closure)
+		if err != nil || applied {
+			t.Fatalf("closure exact replay applied=%v err=%v", applied, err)
+		}
+		changed := closure
+		changed.ActorLogin = "other-operator"
+		if _, err := l.CloseSandboxResetNotStarted(ctx, changed); platformerr.CodeOf(err) != platformerr.CodeOperatorReplayMismatch {
+			t.Fatalf("다른 actor closure code=%q", platformerr.CodeOf(err))
+		}
+
+		statusResult, err := l.GetSandboxResetStatus(ctx, requestID)
+		if err != nil || statusResult.State != SandboxResetClosedNotStarted ||
+			statusResult.RequestID != requestID || statusResult.AppID != closure.AppID ||
+			statusResult.PlatformUserID != "" || !statusResult.ResetAt.IsZero() ||
+			len(statusResult.OrderKeys) != 0 {
+			t.Fatalf("closure status=%+v err=%v", statusResult, err)
+		}
+		reset := SandboxResetInput{
+			RequestID: requestID, PlatformUserID: uniqueOperatorPUID(), AppID: closure.AppID,
+			ActorLogin: actor, Reason: AdminReasonInternalValidation,
+		}
+		if _, _, err := l.FindSandboxResetReplay(ctx, reset); platformerr.CodeOf(err) != platformerr.CodeSandboxResetClosed {
+			t.Fatalf("closure 뒤 replay code=%q", platformerr.CodeOf(err))
+		}
+		if _, err := l.MarkSandboxReset(ctx, reset); platformerr.CodeOf(err) != platformerr.CodeSandboxResetClosed {
+			t.Fatalf("closure 뒤 prepare code=%q", platformerr.CodeOf(err))
+		}
+		if _, err := l.ResumeSandboxReset(ctx, requestID); platformerr.CodeOf(err) != platformerr.CodeSandboxResetClosed {
+			t.Fatalf("closure 뒤 resume code=%q", platformerr.CodeOf(err))
+		}
+
+		closurePath, err := l.paths.sandboxResetClosure(requestID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap, err := l.store.Get(ctx, closurePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := snap.Data()
+		for _, forbidden := range []string{"platformUserId", "reason", "orderKeys", "resetAt"} {
+			if _, exists := raw[forbidden]; exists {
+				t.Errorf("PII-free closure에 금지 필드 %q가 있다: %v", forbidden, raw)
+			}
+		}
+	})
+
+	t.Run("prepare commit이 먼저면 closure를 거부하고 intent를 유지", func(t *testing.T) {
+		requestID := uniqueID("req-prepare-first")
+		reset := SandboxResetInput{
+			RequestID: requestID, PlatformUserID: uniqueOperatorPUID(), AppID: "app-a",
+			ActorLogin: actor, Reason: AdminReasonInternalValidation,
+		}
+		cutoff := time.Now().UTC().Truncate(time.Second)
+		if _, err := l.prepareSandboxResetIntentWithClock(ctx, reset,
+			func() time.Time { return cutoff }, nil, nil); err != nil {
+			t.Fatalf("prepare-first intent 실패: %v", err)
+		}
+		if _, err := l.CloseSandboxResetNotStarted(ctx, SandboxResetClosureInput{
+			RequestID: requestID, AppID: reset.AppID, ActorLogin: actor,
+		}); platformerr.CodeOf(err) != platformerr.CodeSandboxResetAlreadyStarted {
+			t.Fatalf("prepare 뒤 closure code=%q", platformerr.CodeOf(err))
+		}
+		statusResult, err := l.GetSandboxResetStatus(ctx, requestID)
+		if err != nil || statusResult.State != SandboxResetPrepared {
+			t.Fatalf("prepare-first status=%+v err=%v", statusResult, err)
+		}
+		if _, err := l.ResumeSandboxReset(ctx, requestID); err != nil {
+			t.Fatalf("closure 거부 뒤 intent resume 실패: %v", err)
+		}
+	})
+}
+
+func TestSandboxResetClosureKeepsOperatorRequestIDUnique(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+	ctx := context.Background()
+
+	closureFirst := SandboxResetClosureInput{
+		RequestID: uniqueID("req-closure-operator"), AppID: "app-a", ActorLogin: "operator",
+	}
+	if _, err := l.CloseSandboxResetNotStarted(ctx, closureFirst); err != nil {
+		t.Fatal(err)
+	}
+	grant := validOperatorInput()
+	grant.RequestID = closureFirst.RequestID
+	grant.PlatformUserID = uniqueOperatorPUID()
+	if _, err := l.OperatorGrant(ctx, grant); platformerr.CodeOf(err) != platformerr.CodeOperatorReplayMismatch {
+		t.Fatalf("closure requestId를 operator grant에 재사용한 code=%q", platformerr.CodeOf(err))
+	}
+
+	grant.RequestID = uniqueID("req-operator-closure")
+	if _, err := l.OperatorGrant(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.CloseSandboxResetNotStarted(ctx, SandboxResetClosureInput{
+		RequestID: grant.RequestID, AppID: grant.AppID, ActorLogin: grant.ActorLogin,
+	}); platformerr.CodeOf(err) != platformerr.CodeOperatorReplayMismatch {
+		t.Fatalf("operator requestId를 closure에 재사용한 code=%q", platformerr.CodeOf(err))
+	}
+}
+
+// ADR 0012, 불변식 4·5: A reset intent가 먼저 commit되면 A→B 이전은 이전
+// 소유자 A의 active barrier를 읽고 차단해야 한다. B barrier만 읽으면 주문이
+// A의 phase 2 query에서 빠져나가 active로 살아남는다.
+func TestSandboxResetIntentWinsBeforeCrossUserTransfer(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	oldUser := uniqueOperatorPUID()
+	newUser := uniqueOperatorPUID()
+	cutoff := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("orig-reset-first-transfer"), domain.StateActive,
+		cutoff.Add(-time.Hour))
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: oldUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reset := SandboxResetInput{
+		RequestID: uniqueID("req-reset-first-transfer"), PlatformUserID: oldUser, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}
+	if _, err := l.prepareSandboxResetIntentWithClock(ctx, reset,
+		func() time.Time { return cutoff }, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: newUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	})
+	if err != nil || !res.BlockedBySandboxReset || res.TransferredFrom != "" {
+		t.Fatalf("reset-first 이전 결과=%+v err=%v", res, err)
+	}
+	if _, err := l.ResumeSandboxReset(ctx, reset.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	for _, puid := range []string{oldUser, newUser} {
+		active, err := l.ListActive(ctx, puid)
+		if err != nil || len(active) != 0 {
+			t.Fatalf("reset-first puid=%s active=%v err=%v", puid, active, err)
+		}
+	}
+}
+
+// 이전 commit이 먼저면 이후 A reset은 이미 B로 이동한 구매를 회수하지 않는다.
+// 두 serial order를 모두 고정해야 동시 실행의 어느 commit 순서도 안전하다.
+func TestCrossUserTransferWinsBeforeSandboxResetIntent(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	oldUser := uniqueOperatorPUID()
+	newUser := uniqueOperatorPUID()
+	now := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("orig-transfer-first-reset"), domain.StateActive,
+		now.Add(-time.Hour))
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: oldUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: newUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := l.MarkSandboxReset(ctx, SandboxResetInput{
+		RequestID: uniqueID("req-transfer-first-reset"), PlatformUserID: oldUser, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	})
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("transfer-first reset keys=%v err=%v", keys, err)
+	}
+	active, err := l.ListActive(ctx, newUser)
+	if err != nil || len(active) != 1 || active[0] != "sp_galaxy_gecko" {
+		t.Fatalf("먼저 완료된 이전이 회수됐다: active=%v err=%v", active, err)
+	}
+}
+
+// intent cutoff 뒤의 신규 구매는 이전 소유자 barrier가 active여도 허용한다.
+func TestSandboxResetIntentAllowsPostCutoffCrossUserTransfer(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	oldUser := uniqueOperatorPUID()
+	newUser := uniqueOperatorPUID()
+	cutoff := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("orig-post-cutoff-transfer"), domain.StateActive,
+		cutoff.Add(time.Hour))
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: oldUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reset := SandboxResetInput{
+		RequestID: uniqueID("req-post-cutoff-transfer"), PlatformUserID: oldUser, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}
+	if _, err := l.prepareSandboxResetIntentWithClock(ctx, reset,
+		func() time.Time { return cutoff }, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	res, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: newUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	})
+	if err != nil || res.BlockedBySandboxReset || res.TransferredFrom != oldUser {
+		t.Fatalf("post-cutoff 이전 결과=%+v err=%v", res, err)
+	}
+	keys, err := l.ResumeSandboxReset(ctx, reset.RequestID)
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("post-cutoff resume keys=%v err=%v", keys, err)
+	}
+	active, err := l.ListActive(ctx, newUser)
+	if err != nil || len(active) != 1 {
+		t.Fatalf("post-cutoff 구매가 사라졌다: active=%v err=%v", active, err)
+	}
+}
+
+// Firestore transaction 상한을 넘기기 전에 201번째 entitlement에서
+// fail-closed하고, intent는 prepared로 남아 운영자가 같은 ID를 대조하게 한다.
+func TestSandboxResetRejectsMoreThanTwoHundredEntitlements(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	puid := uniqueOperatorPUID()
+	now := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i <= maxSandboxResetEntitlements; i++ {
+		entitlementID := fmt.Sprintf("sp_limit_%03d", i)
+		path, err := l.paths.internalEntitlement(puid, entitlementID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := l.store.Set(ctx, path, entitlementDoc{
+			EntitlementID: entitlementID, Sources: map[string]domain.Source{}, UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("entitlement %d 준비 실패: %v", i, err)
+		}
+	}
+	reset := SandboxResetInput{
+		RequestID: uniqueID("req-entitlement-limit"), PlatformUserID: puid, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}
+	if _, err := l.prepareSandboxResetIntentWithClock(ctx, reset,
+		func() time.Time { return now }, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ResumeSandboxReset(ctx, reset.RequestID); platformerr.CodeOf(err) != platformerr.CodeSandboxResetPending {
+		t.Fatalf("201개 resume code=%q, want pending", platformerr.CodeOf(err))
+	}
+	status, err := l.GetSandboxResetStatus(ctx, reset.RequestID)
+	if err != nil || status.State != SandboxResetPrepared {
+		t.Fatalf("상한 실패 뒤 status=%+v err=%v", status, err)
+	}
+}
+
+// 불변식 4, 6: reset된 주문을 새 PUID가 제시해도 새 사용자에게 revoked
+// shadow source를 복제하지 않는다. 이후 그 사용자의 reset도 소유자 불일치로
+// 실패하지 않아야 한다.
+func TestCrossUserSandboxBlockLeavesNoShadowSource(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	oldUser := uniqueOperatorPUID()
+	newUser := uniqueOperatorPUID()
+	now := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("orig-shadow"), domain.StateActive, now.Add(-time.Hour))
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: oldUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.MarkSandboxReset(ctx, SandboxResetInput{
+		RequestID: uniqueID("req-old"), PlatformUserID: oldUser, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: newUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	})
+	if err != nil || !res.BlockedBySandboxReset {
+		t.Fatalf("cross-user 차단 결과=%+v err=%v", res, err)
+	}
+	ents, err := l.ListUserEntitlements(ctx, newUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ent := range ents {
+		for _, src := range ent.Sources {
+			if src.OrderKey == purchase.Key() {
+				t.Fatalf("새 사용자에게 shadow source가 남았다: %+v", src)
+			}
+		}
+	}
+	if _, err := l.MarkSandboxReset(ctx, SandboxResetInput{
+		RequestID: uniqueID("req-new"), PlatformUserID: newUser, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}); err != nil {
+		t.Fatalf("새 사용자 reset이 shadow source 때문에 실패했다: %v", err)
+	}
+}
+
+// 불변식 4, 6: 과거 구현이 이미 남긴 cross-PUID revoked shadow도 reset이
+// 소유자 불일치로 실패하지 않고 안전하게 제거해야 한다.
+func TestSandboxResetCleansLegacyCrossUserRevokedShadow(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	oldUser := uniqueOperatorPUID()
+	newUser := uniqueOperatorPUID()
+	entitlementID := "sp_galaxy_gecko"
+	now := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("orig-legacy-shadow"), domain.StateActive, now.Add(-time.Hour))
+	purchase.Platform = domain.PlatformAppStore
+	purchase.Completion = domain.CompletionAppleFinish
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: oldUser, EntitlementID: entitlementID, Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.MarkSandboxReset(ctx, SandboxResetInput{
+		RequestID: uniqueID("req-legacy-old"), PlatformUserID: oldUser, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 수정 전 cross-PUID block이 만들던 새 사용자 쪽 revoked source를 재현한다.
+	if err := l.store.RunTransaction(ctx, func(_ context.Context, tx *store.Tx) error {
+		return l.writeEntitlement(tx, newUser, entitlementDoc{
+			EntitlementID: entitlementID,
+			Sources: map[string]domain.Source{
+				purchase.Key(): {
+					Platform: purchase.Platform, ProductID: purchase.ProductID,
+					State: domain.StateRevoked, PurchasedAt: purchase.PurchasedAt,
+					ObservedAt: now, UpdatedAt: now,
+				},
+			},
+		}, now)
+	}); err != nil {
+		t.Fatalf("legacy shadow 준비 실패: %v", err)
+	}
+
+	keys, err := l.MarkSandboxReset(ctx, SandboxResetInput{
+		RequestID: uniqueID("req-legacy-new"), PlatformUserID: newUser, AppID: "app-a",
+		ActorLogin: "operator", Reason: AdminReasonInternalValidation,
+	})
+	if err != nil {
+		t.Fatalf("legacy shadow 정리 reset 실패: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("다른 소유자 order가 reset 대상에 포함됐다: %v", keys)
+	}
+	ents, err := l.ListUserEntitlements(ctx, newUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ent := range ents {
+		for _, src := range ent.Sources {
+			if src.OrderKey == purchase.Key() {
+				t.Fatalf("legacy shadow가 남았다: %+v", src)
+			}
+		}
+	}
+}
+
+// 불변식 3, 4, 6: active→active cross-PUID 복원은 observedAt만 과거라는
+// 이유로 성공 처리만 하고 소유권 이전을 건너뛰면 안 된다. state 회귀가
+// 없으므로 이전하되, revoked→active stale 차단은 기존대로 보존한다.
+func TestCrossUserActiveRestoreTransfersDespiteOlderObservedAt(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	oldUser := uniqueID("pu_old_stale")
+	newUser := uniqueID("pu_new_stale")
+	late := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("token-stale-transfer"), domain.StateActive, late)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: oldUser, EntitlementID: "sp_galaxy_gecko", Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	olderObservation := purchase
+	olderObservation.ObservedAt = late.Add(-time.Minute)
+	res, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: newUser, EntitlementID: "sp_galaxy_gecko", Purchase: olderObservation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Granted || res.AlreadyGranted || res.TransferredFrom != oldUser {
+		t.Fatalf("복원 결과 = %+v", res)
+	}
+	active, err := l.ListActive(ctx, newUser)
+	if err != nil || len(active) != 1 || active[0] != "sp_galaxy_gecko" {
+		t.Fatalf("새 사용자 entitlement=%v err=%v", active, err)
+	}
+
+	orderPath, err := l.paths.order(purchase.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := l.store.Get(ctx, orderPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storedOrder orderDoc
+	if err := snap.DataTo(&storedOrder); err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.PlatformUserID != newUser || storedOrder.State != domain.StateActive ||
+		!storedOrder.ObservedAt.Equal(late) {
+		t.Fatalf("이전 후 order 최신 상태가 손실됐다: %+v", storedOrder)
+	}
+
+	entPath, err := l.paths.internalEntitlement(newUser, "sp_galaxy_gecko")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entSnap, err := l.store.Get(ctx, entPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storedEnt entitlementDoc
+	if err := entSnap.DataTo(&storedEnt); err != nil {
+		t.Fatal(err)
+	}
+	src := storedEnt.Sources[purchase.Key()]
+	if src.State != domain.StateActive || !src.ObservedAt.Equal(late) {
+		t.Fatalf("이전 후 source 최신 상태가 손실됐다: %+v", src)
+	}
+}
+
+// 불변식 4, 10: 웹훅은 transaction 밖에서 본 과거 owner를 소유권 근거로
+// 사용할 수 없다. A를 읽은 뒤 앱 복원이 A→B로 끝났다면 stale active 웹훅이
+// B→A로 되돌리지 않고 owner 변경을 감지해야 한다.
+func TestWebhookExpectedOwnerFenceNeverReversesRestore(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	ownerA := uniqueID("pu_webhook_owner_a")
+	ownerB := uniqueID("pu_webhook_owner_b")
+	entitlementID := "sp_galaxy_gecko"
+	observedAt := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("token-webhook-owner-fence"), domain.StateActive, observedAt)
+
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: ownerA, EntitlementID: entitlementID, Purchase: purchase,
+	}); err != nil {
+		t.Fatalf("최초 지급 실패: %v", err)
+	}
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: ownerB, EntitlementID: entitlementID, Purchase: purchase,
+	}); err != nil {
+		t.Fatalf("앱 복원 이전 실패: %v", err)
+	}
+
+	staleWebhook := purchase
+	staleWebhook.ObservedAt = observedAt.Add(-time.Minute)
+	_, err := l.grantExpectedOwner(ctx, GrantInput{
+		PlatformUserID: ownerA, EntitlementID: entitlementID, Purchase: staleWebhook,
+	}, ownerA)
+	if !errors.Is(err, errReconcileOwnerChanged) {
+		t.Fatalf("과거 owner fence 오류 = %v, want owner changed", err)
+	}
+
+	oldActive, err := l.ListActive(ctx, ownerA)
+	if err != nil || len(oldActive) != 0 {
+		t.Fatalf("웹훅이 과거 owner를 되살렸다: active=%v err=%v", oldActive, err)
+	}
+	newActive, err := l.ListActive(ctx, ownerB)
+	if err != nil || len(newActive) != 1 || newActive[0] != entitlementID {
+		t.Fatalf("현재 owner 권리가 손실됐다: active=%v err=%v", newActive, err)
+	}
+
+	res, err := l.ReconcileByCanonicalID(ctx, staleWebhook)
+	if err != nil {
+		t.Fatalf("현재 owner 재조정 실패: %v", err)
+	}
+	if !res.Known || res.PlatformUserID != ownerB || res.EntitlementID != entitlementID {
+		t.Fatalf("재조정 대상 = %+v, want current owner %q", res, ownerB)
+	}
+}
+
+// 불변식 4, 10: owner를 읽은 바로 다음 앱 복원이 커밋되는 실제 간격을
+// 강제한다. 첫 expected-owner transaction은 sentinel로 중단되고 두 번째
+// 시도는 현재 owner B를 재조회해 그 사용자에게만 상태를 반영해야 한다.
+func TestReconcileRetriesOwnerChangedBetweenReadAndTransaction(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	ownerA := uniqueID("pu_reconcile_race_a")
+	ownerB := uniqueID("pu_reconcile_race_b")
+	entitlementID := "sp_galaxy_gecko"
+	observedAt := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("token-reconcile-race"), domain.StateActive, observedAt)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: ownerA, EntitlementID: entitlementID, Purchase: purchase,
+	}); err != nil {
+		t.Fatalf("최초 지급 실패: %v", err)
+	}
+
+	staleWebhook := purchase
+	staleWebhook.ObservedAt = observedAt.Add(-time.Minute)
+	reads := 0
+	res, err := l.reconcileByCanonicalID(ctx, staleWebhook,
+		func(attempt int, owner string) error {
+			reads++
+			if attempt != 0 {
+				return nil
+			}
+			if owner != ownerA {
+				t.Fatalf("첫 owner = %q, want %q", owner, ownerA)
+			}
+			_, err := l.Grant(ctx, GrantInput{
+				PlatformUserID: ownerB, EntitlementID: entitlementID, Purchase: staleWebhook,
+			})
+			return err
+		})
+	if err != nil {
+		t.Fatalf("owner 재조회 reconcile 실패: %v", err)
+	}
+	if reads != 2 || !res.Known || res.PlatformUserID != ownerB {
+		t.Fatalf("reconcile 결과=%+v ownerReads=%d, want owner B 재조회", res, reads)
+	}
+	oldActive, err := l.ListActive(ctx, ownerA)
+	if err != nil || len(oldActive) != 0 {
+		t.Fatalf("과거 owner가 되살아났다: active=%v err=%v", oldActive, err)
+	}
+	newActive, err := l.ListActive(ctx, ownerB)
+	if err != nil || len(newActive) != 1 || newActive[0] != entitlementID {
+		t.Fatalf("현재 owner 권리가 손실됐다: active=%v err=%v", newActive, err)
+	}
+}
+
+// 불변식 4, 10: A→B→A처럼 owner가 매 시도 바뀌면 한 사용자를 임의로
+// 선택하지 않는다. 세 번의 fence 충돌 뒤 retryable event_busy로 lease를
+// 풀어야 하며, 마지막 실제 owner만 entitlement를 가진다.
+func TestReconcileOwnerABAExhaustionReturnsRetryableBusy(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	ownerA := uniqueID("pu_reconcile_aba_a")
+	ownerB := uniqueID("pu_reconcile_aba_b")
+	entitlementID := "sp_galaxy_gecko"
+	observedAt := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("token-reconcile-aba"), domain.StateActive, observedAt)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: ownerA, EntitlementID: entitlementID, Purchase: purchase,
+	}); err != nil {
+		t.Fatalf("최초 지급 실패: %v", err)
+	}
+
+	staleWebhook := purchase
+	staleWebhook.ObservedAt = observedAt.Add(-time.Minute)
+	reads := 0
+	_, err := l.reconcileByCanonicalID(ctx, staleWebhook,
+		func(_ int, owner string) error {
+			reads++
+			nextOwner := ownerA
+			if owner == ownerA {
+				nextOwner = ownerB
+			}
+			_, err := l.Grant(ctx, GrantInput{
+				PlatformUserID: nextOwner,
+				EntitlementID:  entitlementID,
+				Purchase:       staleWebhook,
+			})
+			return err
+		})
+	if code := platformerr.CodeOf(err); code != platformerr.CodeEventBusy {
+		t.Fatalf("ABA reconcile 오류=%v code=%q, want event_busy", err, code)
+	}
+	if !platformerr.IsRetryableErr(err) {
+		t.Fatalf("event_busy가 retryable이 아니다: %v", err)
+	}
+	if reads != reconcileOwnerRetryLimit {
+		t.Fatalf("owner read=%d, want %d", reads, reconcileOwnerRetryLimit)
+	}
+
+	activeA, err := l.ListActive(ctx, ownerA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeB, err := l.ListActive(ctx, ownerB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(activeA) != 0 || len(activeB) != 1 || activeB[0] != entitlementID {
+		t.Fatalf("ABA 뒤 단일 owner 위반: A=%v B=%v", activeA, activeB)
 	}
 }
