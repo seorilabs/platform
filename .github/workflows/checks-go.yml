@@ -54,7 +54,14 @@ jobs:
 
       # -race는 데이터 경합을 잡는다. 원장이 Firestore 트랜잭션과
       # goroutine을 함께 쓰므로 이게 없으면 경합이 CI를 통과한다.
+      #
+      # ARC 러너는 CGO_ENABLED가 0이라 -race가 거부된다. race detector는
+      # cgo를 요구한다. 로컬 macOS는 기본이 1이라 여기서만 드러났다.
+      # 배포 산출물은 deploy.yml이 CGO_ENABLED=0으로 따로 만들므로
+      # 여기서 켜도 정적 바이너리에는 영향이 없다.
       - name: go test
+        env:
+          CGO_ENABLED: 1
         run: go test -race ./...
 
       # 버전을 고정한다. latest로 두면 린터 기본값이 바뀌는 날
