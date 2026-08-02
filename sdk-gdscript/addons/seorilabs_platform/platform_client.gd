@@ -216,6 +216,9 @@ func _store_session(result: Dictionary) -> void:
 		"platformToken": String(result.get("platformToken", "")),
 		"refreshToken": String(result.get("refreshToken", "")),
 		"platformUserId": String(result.get("platformUserId", "")),
+		# 앱 설정 화면이 보여줄 식별자다. Firebase uid를 보여주면 CS가
+		# 그걸로 원장을 찾을 수 없다.
+		"supportCode": String(result.get("supportCode", "")),
 		"appUserId": String(result.get("appUserId", "")),
 		"isAnonymous": bool(result.get("isAnonymous", false)),
 		"expiresAt": Time.get_ticks_msec() + int(result.get("expiresIn", 3600)) * 1000,

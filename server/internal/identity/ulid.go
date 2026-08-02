@@ -87,6 +87,15 @@ func encodeCrockford(b [16]byte) string {
 	return string(out)
 }
 
+// NewSupportCode는 app_id와 platform_user_id에서 지원 코드를 만든다.
+//
+// 접두사 규칙과 코드 규칙을 한 자리에서 묶는다. 세션 응답과 사용자 문서가
+// 각자 조합하면 한쪽만 바뀌었을 때 조용히 갈라지고, 그러면 유저가 화면에서
+// 읽은 코드로 CS가 원장을 찾지 못한다.
+func NewSupportCode(appID, platformUserID string) string {
+	return SupportCode(supportPrefix(appID), platformUserID)
+}
+
 // SupportCode는 platform_user_id에서 CS용 지원 코드를 만든다.
 //
 // 앱 설정 화면에서 유저가 복사해 문의에 첨부한다.
