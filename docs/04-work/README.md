@@ -125,9 +125,20 @@ Artifact Registry · `cmd/fs` 조회 CLI.
 **게이트 통과**: 골든 JWT 6종 거부 · 100회 동시 호출 → `platform_user_id` 1개 ·
 불변식 8(미지 필드 400) · 미등록 앱 403.
 
-babycare는 ADR 0013의 Firebase custom token bridge를 쓴다. 기존 ID token은 같은
-uid로 교환하고 신규 uid는 서버가 만든다. SA·IAM 바인딩·registry sync까지 배선이
-끝났고 기능 플래그는 전부 꺼져 있다.
+#### babycare custom token bridge (ADR 0013)
+
+기존 ID token은 같은 uid로 교환하고 신규 uid는 서버가 만든다. 2026-08-02에 앱 SA,
+resource-level `roles/iam.serviceAccountTokenCreator`, registry sync, platform-api
+production 배포까지 완료했다.
+
+- workflow: [run 30750253253](https://github.com/seorilabs/platform/actions/runs/30750253253)
+- revision/image: `platform-api-00015-xpx` / `platform:b57bfc82a6cf7cf5f5fb2b9c612adc4612d5754d`
+- live smoke: UID 주입 거부, 신규 Firebase custom token 교환, 합성 legacy UID 보존,
+  `Cache-Control: no-store`, 생성한 Firebase 사용자와 platform mapping cleanup
+- 남은 운영 gate: **App Check 또는 edge rate limit**(위 "남은 것" 3번), 실제 기존
+  사용자·실기기 migration
+
+registry의 `config`/`events`/`iap` 플래그는 전부 꺼져 있다. 브리지만 쓴다.
 
 ### P2 이벤트 수집 + SDK
 
