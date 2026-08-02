@@ -76,7 +76,40 @@ CI와 로컬 개발은 **Firestore 에뮬레이터**를 쓴다.
 3. **구조적 warm-up** — 부팅 시 `/v1/auth/session`을 즉시 발사하면 결제 시점엔 이미 warm이다. **유저 트래픽 자체가 warm-up**이 된다
 4. **클라이언트** — 구매 버튼에 즉시 로딩 인디케이터. Godot `HTTPRequest` 타임아웃 15초
 
-**P1과 P5 이후 재측정한다.** 실제 의존성이 붙은 뒤의 수치가 진짜다.
+### 재측정 — 2026-08-02, 실서버
+
+의존성이 다 붙은 뒤의 수치다. Cloud Run이 기록한 `startup_latencies`를 읽었다
+(리비전을 비워 콜드를 만들면 그 콜드를 유저가 맞는다).
+
+| 서비스 | p50 | p95 | P0 대비 |
+|---|---|---|---|
+| `platform-api` | 842ms | 878ms | 2.1배 |
+| `platform-iap` | 765ms | **798ms** | 1.9배 |
+| `platform-ingest` | 575ms | 600ms | 1.4배 |
+
+**예측대로 늘었다.** Firestore·BigQuery 클라이언트 초기화와 ADC 토큰 획득이
+붙는다. `platform-api`가 가장 느린 것은 JWKS 최초 로드가 겹치기 때문으로 보인다.
+
+warm은 반대로 좋다 — 서버 몫 47~60ms.
+
+### 적용 — warm-up ping 도입 완료
+
+목표를 2배 가까이 넘겨 도입했다.
+
+```
+platform-iap-warmup-5m   */5 * * * *  GET /health/live   → 200
+platform-api-warmup-5m   */5 * * * *  GET /health/live   → 200
+```
+
+`platform-ingest`는 fire-and-forget이라 콜드가 유저에게 보이지 않고,
+`platform-admin`은 운영자용이라 감수한다. 둘은 붙이지 않았다.
+
+되돌리려면 job을 지우면 된다.
+
+```bash
+gcloud scheduler jobs delete platform-iap-warmup-5m \
+  --project=seorilabs-platform --location=asia-northeast3
+```
 
 ## 아티팩트
 
