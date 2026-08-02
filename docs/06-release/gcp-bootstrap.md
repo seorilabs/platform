@@ -150,6 +150,27 @@ done
 >
 > **`secretmanager.secretAccessor`는 `platform-iap`에만** 준다. 마켓 자격증명 격리(R3).
 
+### 6-1. Babycare Firebase custom token bridge IAM
+
+ADR 0013에 따라 private key 없이 앱 프로젝트 service account로 원격 서명한다.
+
+```bash
+gcloud services enable iamcredentials.googleapis.com --project=seorilabs-platform
+
+gcloud iam service-accounts create platform-auth \
+  --project=seorilabs-babycare \
+  --display-name="Seorilabs platform Firebase auth bridge"
+
+gcloud iam service-accounts add-iam-policy-binding \
+  platform-auth@seorilabs-babycare.iam.gserviceaccount.com \
+  --project=seorilabs-babycare \
+  --member="serviceAccount:platform-api@seorilabs-platform.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+프로젝트 전체 Token Creator를 주지 않는다. 위 resource-level binding만 사용한다.
+`platform-iap`, `platform-admin`, `platform-worker`에는 이 권한을 주지 않는다.
+
 ### 7. Artifact Registry
 
 ```bash

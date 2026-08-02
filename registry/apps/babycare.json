@@ -1,0 +1,17 @@
+{
+  "app_id": "babycare",
+  "display_name": "함께봄",
+  "firebase_project_id": "seorilabs-babycare",
+  "firebase_custom_token_service_account": "platform-auth@seorilabs-babycare.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "platform_event_allowlist": [],
+  "cors_origins": [],
+  "blocked_uids": []
+}

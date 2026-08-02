@@ -15,6 +15,7 @@ import (
 // UUID v4는 정렬이 안 되고, 정렬 안 되는 문서 ID는 Firestore에서
 // 핫스팟을 만들 수 있다.
 const platformUserPrefix = "pu_"
+const firebaseBridgeUserPrefix = "pb_"
 
 // crockford는 ULID가 쓰는 Base32 알파벳이다.
 // 사람이 헷갈리는 I, L, O, U를 뺐다.
@@ -27,6 +28,16 @@ func NewPlatformUserID() (string, error) {
 		return "", err
 	}
 	return platformUserPrefix + u, nil
+}
+
+// NewFirebaseBridgeUserID는 platform이 처음 인증하는 Firebase 사용자의 uid다.
+// 클라이언트가 uid를 고르게 두면 다른 사용자를 주장할 수 있으므로 서버 난수로 만든다.
+func NewFirebaseBridgeUserID() (string, error) {
+	u, err := newULID(time.Now())
+	if err != nil {
+		return "", err
+	}
+	return firebaseBridgeUserPrefix + u, nil
 }
 
 // newULID는 26자 ULID를 만든다.

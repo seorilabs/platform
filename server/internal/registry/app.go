@@ -46,7 +46,10 @@ type App struct {
 	AppID             string `json:"app_id" firestore:"app_id"`
 	DisplayName       string `json:"display_name" firestore:"display_name"`
 	FirebaseProjectID string `json:"firebase_project_id" firestore:"firebase_project_id"`
-	Status            Status `json:"status" firestore:"status"`
+	// FirebaseCustomTokenServiceAccount는 custom token 서명에 쓸 앱 프로젝트 SA다.
+	// private key는 저장하지 않고 platform-api가 IAM Credentials API로 원격 서명한다.
+	FirebaseCustomTokenServiceAccount string `json:"firebase_custom_token_service_account,omitempty" firestore:"firebase_custom_token_service_account,omitempty"`
+	Status                            Status `json:"status" firestore:"status"`
 
 	Features        map[string]bool `json:"features" firestore:"features"`
 	RequireAppCheck bool            `json:"require_app_check" firestore:"require_app_check"`
@@ -85,6 +88,7 @@ type IAPConfig struct {
 
 var appIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 var entitlementIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+var serviceAccountPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{5,29}@[a-z0-9][a-z0-9-]{5,29}\.iam\.gserviceaccount\.com$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
@@ -96,6 +100,17 @@ func (a App) Validate() error {
 	}
 	if a.FirebaseProjectID == "" {
 		return fmt.Errorf("%s: firebase_project_id가 필요하다", a.AppID)
+	}
+	if a.FeatureEnabled("firebase_custom_token_bridge") {
+		if !serviceAccountPattern.MatchString(a.FirebaseCustomTokenServiceAccount) {
+			return fmt.Errorf("%s: firebase custom token bridge에는 유효한 service account가 필요하다", a.AppID)
+		}
+		projectSuffix := "@" + a.FirebaseProjectID + ".iam.gserviceaccount.com"
+		if !strings.HasSuffix(a.FirebaseCustomTokenServiceAccount, projectSuffix) {
+			return fmt.Errorf("%s: custom token service account가 Firebase 프로젝트와 다르다", a.AppID)
+		}
+	} else if a.FirebaseCustomTokenServiceAccount != "" {
+		return fmt.Errorf("%s: bridge가 비활성인데 custom token service account가 설정됐다", a.AppID)
 	}
 	switch a.Status {
 	case StatusActive, StatusPaused:

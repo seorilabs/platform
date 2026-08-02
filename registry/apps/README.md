@@ -20,6 +20,7 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   "app_id": "lizard-tycoon",
   "display_name": "도마뱀 테라리움",
   "firebase_project_id": "lizard-tycoon",
+  "firebase_custom_token_service_account": "platform-auth@lizard-tycoon.iam.gserviceaccount.com",
   "status": "active",                    // active | paused
   "features": { "iap": true, "events": true, "config": true },
   "require_app_check": false,
@@ -33,6 +34,10 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   "cors_origins": []
 }
 ```
+
+`features.firebase_custom_token_bridge`가 `true`이면 같은 Firebase 프로젝트의
+`firebase_custom_token_service_account`가 필수다. 이 값은 비밀이 아니며, private key는
+저장하지 않는다. platform-api가 해당 service account에 대한 IAM `signJwt` 권한만 받는다.
 
 `features.iap`가 `true`이면 `iap.entitlement_ids`는 비어 있을 수 없다.
 `IAP_CATALOG_JSON`은 마켓 SKU와 entitlement의 전역 매핑이고, 이 목록은
@@ -55,4 +60,5 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 
 | app_id | 원장 환경 | IAP | entitlements |
 |---|---|---|---|
+| `babycare` | 미사용 | 비활성 | — |
 | `lizard-tycoon` | sandbox | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
