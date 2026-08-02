@@ -415,26 +415,46 @@ Play 항목은 acknowledge **호출 성공**만 보지 않고 마켓에 다시 �
 
 ## 4. 전환 — 위 셋이 끝난 뒤
 
-### 4.0 이미지 태그를 맞춘다
+### 4.0 배포는 GitHub Actions가 한다
 
-네 서비스가 서로 다른 태그로 돌고 있었다 — `platform-api`는 `p3`,
-`platform-ingest`는 `p2`. 오래된 코드가 결제 경로 옆에서 돈다.
+수동 배포는 대상을 빠뜨린다. 실제로 두 번 겪었다 — 네 서비스가 `p3`와
+`p2`로 갈렸던 적이 있고, 2026-08-02에는 서비스 넷이 `p15`인데
+`platform-worker`만 `p9f`로 22시간 뒤처져 있었다. 그 사이 `ledger.go`와
+`verify/service.go`가 바뀌었다.
+
+배포 대상은 다섯이고 **전부 같은 이미지를 써야 한다.**
+
+```
+platform-api  platform-iap  platform-ingest  platform-admin   (Cloud Run 서비스)
+platform-worker                                               (Cloud Run Job)
+```
+
+`.github/workflows/deploy.yml`이 이미지를 한 번만 만들어 commit SHA
+태그로 다섯 대상에 올리고, 올린 뒤 실제로 같은 태그가 됐는지 다시
+확인한다. 어긋나면 실패한다.
+
+| 단계 | 트리거 |
+|---|---|
+| 빌드·push | main 병합 시 자동 |
+| 배포 | `production` environment 승인 후 |
+
+실결제 원장이라 배포 직전에 사람이 한 번 끊는다. 빌드는 미리 끝나
+있으므로 승인만 누르면 배포는 즉시 진행된다.
+
+배포 상태는 이렇게 본다.
 
 ```bash
 gcloud run services list --project=seorilabs-platform \
   --region=asia-northeast3 \
-  --format="table(metadata.name, spec.template.spec.containers[0].image)"
+  --format="table(metadata.name, spec.template.spec.containers[0].image.basename())"
+
+gcloud run jobs list --project=seorilabs-platform \
+  --region=asia-northeast3 \
+  --format="table(metadata.name, spec.template.spec.template.spec.containers[0].image.basename())"
 ```
 
-이미지만 바꾸면 환경변수는 유지된다.
-
-```bash
-TAG="asia-northeast3-docker.pkg.dev/seorilabs-platform/platform/platform:<태그>"
-for s in platform-api platform-iap platform-ingest platform-admin; do
-  gcloud run deploy "$s" --project=seorilabs-platform \
-    --region=asia-northeast3 --image="$TAG" --quiet
-done
-```
+**워커를 빠뜨리지 않는다.** 서비스만 보는 명령으로는 드리프트가 보이지
+않는다. 위 두 명령을 항상 같이 본다.
 
 ### 4.1 서비스 배포
 

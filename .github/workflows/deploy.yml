@@ -1,0 +1,144 @@
+# 플랫폼 서버 배포.
+#
+# 배포 대상이 다섯이고 전부 같은 이미지를 쓴다. 하나라도 빠지면 오래된
+# 코드가 결제 경로 옆에서 돈다 — 실제로 겪었다. 2026-08-02에 서비스
+# 넷은 p15인데 platform-worker만 p9f로 22시간 뒤처져 있었고, 그 사이
+# ledger.go와 verify/service.go가 바뀌었다.
+#
+# 그래서 이 워크플로는 이미지를 한 번만 만들고 다섯 대상에 같은 태그로
+# 올린 뒤, 실제로 같은 태그가 됐는지 다시 확인한다.
+#
+# main 병합 시 빌드는 자동으로 돌고, 배포는 production environment의
+# 승인을 받아야 실행된다. 실결제 원장이라 사람이 한 번 끊는다.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# 배포가 겹치면 나중 것이 먼저 끝나 오래된 이미지가 남을 수 있다.
+concurrency:
+  group: deploy-platform
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: seorilabs-platform
+  REGION: asia-northeast3
+  REGISTRY: asia-northeast3-docker.pkg.dev
+  IMAGE_PATH: seorilabs-platform/platform/platform
+  DEPLOYER_SA: platform-deployer@seorilabs-platform.iam.gserviceaccount.com
+
+jobs:
+  build:
+    name: Build and push image
+    # Docker가 필요하므로 DIND 러너로 보낸다. Go는 크로스컴파일이
+    # 네이티브라 arm64 러너에서 amd64 이미지를 QEMU 없이 만든다.
+    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64-dind' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Resolve image reference
+        id: meta
+        run: |
+          echo "image=${REGISTRY}/${IMAGE_PATH}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "$REGISTRY" --quiet
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag "${{ steps.meta.outputs.image }}" \
+            --push \
+            server
+
+  deploy:
+    name: Deploy to production
+    needs: build
+    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    # 승인 게이트. reviewer가 승인해야 이 job이 시작된다.
+    environment: production
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      # --image만 바꾸면 환경변수와 시크릿 마운트는 유지된다.
+      # PLATFORM_ROLE이 서비스마다 다르므로 이걸 건드리면 안 된다.
+      - name: Deploy services
+        run: |
+          for s in platform-api platform-iap platform-ingest platform-admin; do
+            echo "::group::$s"
+            gcloud run deploy "$s" \
+              --project="$PROJECT_ID" --region="$REGION" \
+              --image="${{ needs.build.outputs.image }}" --quiet
+            echo "::endgroup::"
+          done
+
+      - name: Deploy worker job
+        run: |
+          gcloud run jobs update platform-worker \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --image="${{ needs.build.outputs.image }}" --quiet
+
+      # 배포가 전부 성공했다고 같은 태그가 됐다는 보장은 없다.
+      # 드리프트를 눈으로 확인하지 않으면 다음에 또 놓친다.
+      - name: Assert all targets run the same image
+        run: |
+          expected="${{ needs.build.outputs.image }}"
+          fail=0
+          for s in platform-api platform-iap platform-ingest platform-admin; do
+            actual=$(gcloud run services describe "$s" \
+              --project="$PROJECT_ID" --region="$REGION" \
+              --format='value(spec.template.spec.containers[0].image)')
+            printf '%-18s %s\n' "$s" "$actual"
+            [ "$actual" = "$expected" ] || { echo "  기대: $expected" >&2; fail=1; }
+          done
+          actual=$(gcloud run jobs describe platform-worker \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --format='value(spec.template.spec.template.spec.containers[0].image)')
+          printf '%-18s %s\n' "platform-worker" "$actual"
+          [ "$actual" = "$expected" ] || { echo "  기대: $expected" >&2; fail=1; }
+          [ "$fail" -eq 0 ] || { echo "배포 대상이 서로 다른 이미지로 돈다." >&2; exit 1; }
+
+      # admin은 DRS로 비공개라 인증 없이는 403이 정상이다. 여기서
+      # 확인하는 것은 공개 서비스 셋이 새 리비전으로 뜬 뒤 실제로
+      # 응답하는지다. 부팅 실패는 ready에서 걸린다.
+      - name: Smoke test
+        run: |
+          fail=0
+          for s in api iap ingest; do
+            url="https://platform-${s}-306278488979.${REGION}.run.app/health/ready"
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url" || echo 000)
+            printf '%-8s %s\n' "$s" "$code"
+            [ "$code" = "200" ] || fail=1
+          done
+          [ "$fail" -eq 0 ] || { echo "health/ready가 200이 아니다." >&2; exit 1; }

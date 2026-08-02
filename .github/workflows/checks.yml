@@ -1,0 +1,67 @@
+# Go 서버와 SDK의 정적 검사.
+#
+# private repo이므로 Seorilabs ARC arm64 러너로 보낸다. Go 테스트는
+# 아키텍처에 의존하지 않고, 배포 산출물은 deploy.yml이 따로 만든다.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go lint and test
+    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # -race는 데이터 경합을 잡는다. 원장이 트랜잭션과 goroutine을
+      # 함께 쓰므로 이게 없으면 경합이 CI를 통과한다.
+      - name: go test
+        run: go test -race ./...
+
+      # 버전을 고정한다. latest로 두면 린터 기본값이 바뀌는 날
+      # 아무도 건드리지 않은 PR이 빨갛게 된다. v2.12.2에서 0 issues임을
+      # 로컬에서 확인했다.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          working-directory: server
+          version: v2.12.2
+
+  sdk:
+    name: SDK checks
+    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # GDScript SDK는 vendoring이라 체크섬이 어긋나면 소비자와 갈라진다.
+      - name: GDScript SDK checksum
+        run: bash scripts/check_sdk_gdscript.sh
