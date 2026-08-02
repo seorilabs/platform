@@ -68,10 +68,16 @@ type Result struct {
 	PlatformToken  string
 	RefreshToken   string
 	PlatformUserID string
-	AppUserID      string
-	IsAnonymous    bool
-	ExpiresIn      int
-	ExpiresAt      time.Time
+	// SupportCode는 유저가 문의에 첨부하는 식별자다.
+	//
+	// 앱이 Firebase uid를 화면에 보여주면 CS가 그걸로 우리 원장을 찾을
+	// 수 없다. 플랫폼은 앱의 uid를 조회 키로 두지 않고, PII도 저장하지
+	// 않아 이메일 검색이 성립하지 않는다. ADR 0005다.
+	SupportCode string
+	AppUserID   string
+	IsAnonymous bool
+	ExpiresIn   int
+	ExpiresAt   time.Time
 }
 
 // Service는 세션 교환 유스케이스다.
@@ -231,10 +237,16 @@ func (s *Service) issue(ctx context.Context, sess Session) (Result, error) {
 		return Result{}, err
 	}
 
+	// 저장된 값을 다시 읽지 않고 여기서 만든다.
+	//
+	// EnsureUser가 저장할 때와 같은 NewSupportCode를 쓴다. 조합 지점이
+	// 하나뿐이라 갈라질 수 없다. refreshDoc에 필드를 더하는 방법도 있지만
+	// 이미 발급된 갱신 토큰에는 값이 없어, 재로그인 전까지 빈 코드가 나간다.
 	return Result{
 		PlatformToken:  token,
 		RefreshToken:   refresh,
 		PlatformUserID: sess.PlatformUserID,
+		SupportCode:    NewSupportCode(sess.AppID, sess.PlatformUserID),
 		AppUserID:      sess.AppUserID,
 		IsAnonymous:    sess.IsAnonymous,
 		ExpiresIn:      int(s.issuer.TTL().Seconds()),

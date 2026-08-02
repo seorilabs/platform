@@ -197,7 +197,7 @@ func (r *StoreRepository) EnsureUser(
 			Anonymous:   anonymous,
 			CreatedAt:   now,
 			LastSeenAt:  now,
-			SupportCode: SupportCode(supportPrefix(appID), puid),
+			SupportCode: NewSupportCode(appID, puid),
 		})
 	})
 	if err != nil {

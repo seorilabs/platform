@@ -43,6 +43,9 @@ type sessionResponse struct {
 	PlatformToken  string `json:"platformToken"`
 	RefreshToken   string `json:"refreshToken"`
 	PlatformUserID string `json:"platformUserId"`
+	// 앱이 설정 화면에 보여줄 식별자다. Firebase uid를 보여주면 CS가
+	// 그걸로 우리 원장을 찾을 수 없다.
+	SupportCode    string `json:"supportCode"`
 	AppUserID      string `json:"appUserId,omitempty"`
 	IsAnonymous    bool   `json:"isAnonymous"`
 	ExpiresIn      int    `json:"expiresIn"`
@@ -74,6 +77,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
 		PlatformToken:  res.PlatformToken,
 		RefreshToken:   res.RefreshToken,
 		PlatformUserID: res.PlatformUserID,
+		SupportCode:    res.SupportCode,
 		AppUserID:      res.AppUserID,
 		IsAnonymous:    res.IsAnonymous,
 		ExpiresIn:      res.ExpiresIn,
@@ -109,6 +113,7 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) error {
 		PlatformToken:  res.PlatformToken,
 		RefreshToken:   res.RefreshToken,
 		PlatformUserID: res.PlatformUserID,
+		SupportCode:    res.SupportCode,
 		AppUserID:      res.AppUserID,
 		IsAnonymous:    res.IsAnonymous,
 		ExpiresIn:      res.ExpiresIn,
