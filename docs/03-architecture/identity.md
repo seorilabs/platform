@@ -63,6 +63,14 @@ POST /v1/auth/firebase-custom-token
 
 세부 보안 결정은 ADR 0013을 따른다.
 
+### 운영 상태
+
+2026-08-02 Babycare 앱 service account의 resource-level Token Creator만 `platform-api`에
+부여하고 registry sync와 production 배포를 완료했다. `platform-api-00015-xpx`에서 신규
+custom token 교환과 합성 legacy UID 보존, 임의 UID 주입 거부, `Cache-Control: no-store`를
+live 검증했으며 테스트 Firebase 사용자와 platform mapping은 삭제했다. 실제 기존 사용자·실기기
+migration과 App Check 또는 edge rate limit은 아직 release gate다.
+
 ### `checkRevoked` — 판단이 필요한 지점
 
 lizard-tycoon은 `verifyIdToken(token, checkRevoked=true)`를 쓴다. 이건 **매 요청 네트워크 호출**이다.
