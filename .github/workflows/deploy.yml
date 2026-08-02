@@ -8,8 +8,18 @@
 # 그래서 이 워크플로는 이미지를 한 번만 만들고 다섯 대상에 같은 태그로
 # 올린 뒤, 실제로 같은 태그가 됐는지 다시 확인한다.
 #
-# main 병합 시 빌드는 자동으로 돌고, 배포는 production environment의
-# 승인을 받아야 실행된다. 실결제 원장이라 사람이 한 번 끊는다.
+# ## 승인 게이트를 environment로 하지 않는 이유
+#
+# private repo에서 required reviewer는 이 요금제로 쓸 수 없다. API가
+# 422로 거부한다("Please ensure the billing plan supports the required
+# reviewers protection rule").
+#
+# 대신 배포 job을 workflow_dispatch에서만 돌게 한다. main 병합 시에는
+# 빌드만 자동으로 돌고, 배포는 사람이 Actions에서 명시적으로 실행해야
+# 시작된다. 실결제 원장이라 사람이 한 번 끊는다는 목적은 같다.
+#
+# 빌드 job은 같은 commit의 이미지가 이미 있으면 건너뛴다. 그래서 병합
+# 직후 dispatch하면 빌드를 기다리지 않고 배포로 바로 들어간다.
 name: Deploy
 
 on:
@@ -48,8 +58,7 @@ jobs:
 
       - name: Resolve image reference
         id: meta
-        run: |
-          echo "image=${REGISTRY}/${IMAGE_PATH}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        run: echo "image=${REGISTRY}/${IMAGE_PATH}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -60,13 +69,28 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
+      # 병합 시 빌드해두고 dispatch로 배포하는 흐름이라, 같은 commit을
+      # 두 번 빌드하게 된다. 이미 있으면 건너뛰어 승인 후 대기를 없앤다.
+      - name: Check whether the image already exists
+        id: exists
+        run: |
+          if gcloud artifacts docker images describe "${{ steps.meta.outputs.image }}" --quiet >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "이미 있다. 빌드를 건너뛴다."
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Configure Docker for Artifact Registry
+        if: steps.exists.outputs.found == 'false'
         run: gcloud auth configure-docker "$REGISTRY" --quiet
 
       - name: Setup Buildx
+        if: steps.exists.outputs.found == 'false'
         uses: docker/setup-buildx-action@v4
 
       - name: Build and push
+        if: steps.exists.outputs.found == 'false'
         run: |
           docker buildx build \
             --platform linux/amd64 \
@@ -77,9 +101,12 @@ jobs:
   deploy:
     name: Deploy to production
     needs: build
+    # main 병합만으로는 배포하지 않는다. 사람이 Actions에서 실행해야
+    # 시작된다 — 이것이 승인 게이트를 대신한다.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
     timeout-minutes: 30
-    # 승인 게이트. reviewer가 승인해야 이 job이 시작된다.
+    # 보호 규칙은 못 걸지만 배포 이력이 environment에 남는다.
     environment: production
     steps:
       - name: Authenticate to Google Cloud

@@ -436,10 +436,23 @@ platform-worker                                               (Cloud Run Job)
 | 단계 | 트리거 |
 |---|---|
 | 빌드·push | main 병합 시 자동 |
-| 배포 | `production` environment 승인 후 |
+| 배포 | Actions에서 **Deploy 워크플로를 사람이 실행** |
 
-실결제 원장이라 배포 직전에 사람이 한 번 끊는다. 빌드는 미리 끝나
-있으므로 승인만 누르면 배포는 즉시 진행된다.
+실결제 원장이라 배포 직전에 사람이 한 번 끊는다. 병합만으로는 배포되지
+않는다.
+
+승인 게이트를 GitHub environment로 걸지 않은 이유는 요금제다. private
+repo에서 required reviewer는 이 요금제로 쓸 수 없고 API가 422로 거부한다.
+그래서 배포 job을 `workflow_dispatch`에서만 돌게 해서 같은 효과를 낸다.
+
+빌드 job은 같은 commit의 이미지가 이미 있으면 건너뛴다. 병합 직후
+실행하면 빌드를 기다리지 않고 배포로 바로 들어간다.
+
+### 배포 실행
+
+```
+Actions → Deploy → Run workflow → Branch: main
+```
 
 배포 상태는 이렇게 본다.
 
