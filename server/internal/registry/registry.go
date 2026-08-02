@@ -180,7 +180,8 @@ func (r *Registry) load(ctx context.Context) error {
 // FSSource는 파일 시스템에서 레지스트리를 읽는다.
 //
 // repo의 registry/apps/*.json이 source of truth다.
-// CI 검증과 테스트, 그리고 Firestore가 비었을 때의 부트스트랩에 쓴다.
+// CI 검증과 테스트, regsync의 입력, 그리고 Firestore가 비었을 때의
+// 부트스트랩에 쓴다.
 type FSSource struct {
 	FS  fs.FS
 	Dir string
@@ -224,7 +225,7 @@ func (s *FSSource) LoadApps(context.Context) ([]App, error) {
 
 // StoreSource는 Firestore에서 레지스트리를 읽는다. 런타임 기본 경로다.
 //
-// git의 registry/apps/*.json이 source of truth이고 CI가 여기로 upsert한다.
+// git의 registry/apps/*.json이 source of truth이고 regsync가 여기로 upsert한다.
 // 런타임이 파일을 읽지 않는 이유는 컨테이너에 repo가 없기 때문이다.
 type StoreSource struct {
 	store *store.Client
@@ -275,7 +276,7 @@ func (s *StoreSource) LoadApps(ctx context.Context) ([]App, error) {
 	return apps, nil
 }
 
-// Upsert는 앱 항목을 Firestore에 쓴다. CI 동기화 도구가 쓴다.
+// Upsert는 앱 항목을 Firestore에 쓴다. cmd/regsync가 쓴다.
 func (s *StoreSource) Upsert(ctx context.Context, a App) error {
 	if err := a.Validate(); err != nil {
 		return err

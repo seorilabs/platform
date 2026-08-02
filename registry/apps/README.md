@@ -2,7 +2,15 @@
 
 **이 디렉토리가 앱 레지스트리의 source of truth다.** 콘솔이나 Firestore를 직접 수정하지 않는다.
 
-CI가 스키마를 검증한 뒤 Firestore로 upsert하고, 런타임은 인메모리 캐시로 조회한다.
+CI는 스키마를 검증만 한다. Firestore로 올리는 것은 `cmd/regsync`를 사람이 돌리는 별도 단계다. 런타임은 Firestore를 인메모리 캐시(TTL 60초)로 조회한다.
+
+```bash
+cd server
+go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform --dry-run
+go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
+```
+
+**파일을 고치는 것만으로는 아무 일도 일어나지 않는다.** 실제로 이 함정을 밟았다 — `features.iap`가 `false`인 채 배포되어 결제는 되는데 백오피스 IAP 관리만 403이었다. 검증 경로가 admin에만 있어 증상이 한쪽에서만 났다.
 
 ## 형식
 
@@ -45,4 +53,6 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 
 ## 등록된 앱
 
-아직 없음. P1에서 `lizard-tycoon.json`부터 추가한다.
+| app_id | 원장 환경 | IAP | entitlements |
+|---|---|---|---|
+| `lizard-tycoon` | sandbox | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
