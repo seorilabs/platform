@@ -25,12 +25,14 @@ on:
     paths:
       - "server/**"
       - "spec/**"
+      - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
   push:
     branches: [main]
     paths:
       - "server/**"
       - "spec/**"
+      - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
 
 permissions:
@@ -57,6 +59,13 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+
+      # 스펙이 계약의 SoT인데 실제로 갈라져 있었다. 웹훅 경로가 특히
+      # 위험하다 — 스펙대로 App Store Connect에 등록하면 404가 나고
+      # 환불 알림이 유실된다. 사람 눈에 기대지 않는다.
+      - name: 스펙과 라우트 대조
+        working-directory: .
+        run: bash scripts/check_spec_routes.sh
 
       - name: go vet
         run: go vet ./...
