@@ -131,8 +131,9 @@ Artifact Registry · `cmd/fs` 조회 CLI.
 resource-level `roles/iam.serviceAccountTokenCreator`, registry sync, platform-api
 production 배포까지 완료했다.
 
-- workflow: [run 30750253253](https://github.com/seorilabs/platform/actions/runs/30750253253)
-- revision/image: `platform-api-00015-xpx` / `platform:b57bfc82a6cf7cf5f5fb2b9c612adc4612d5754d`
+- 최초 활성화 workflow: [run 30750253253](https://github.com/seorilabs/platform/actions/runs/30750253253)
+- 최초 활성화 revision/image: `platform-api-00015-xpx` / `platform:b57bfc82a6cf7cf5f5fb2b9c612adc4612d5754d`
+- 후속 main 배포 호환성: [run 30750946141](https://github.com/seorilabs/platform/actions/runs/30750946141) 뒤 `platform-api-00016-cdv` / `platform:bdbd69428900d85ab7ae4e9a58b32eee09e48f20`에서 babycare config 200과 custom-token POST-only route 유지
 - live smoke: UID 주입 거부, 신규 Firebase custom token 교환, 합성 legacy UID 보존,
   `Cache-Control: no-store`, 생성한 Firebase 사용자와 platform mapping cleanup
 - 남은 운영 gate: **App Check 또는 edge rate limit**(위 "남은 것" 3번), 실제 기존
