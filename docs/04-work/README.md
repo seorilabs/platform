@@ -4,7 +4,7 @@
 
 ## 현재 상태
 
-**P0~P9 완료. lizard-tycoon이 플랫폼 IAP로 실서비스 중이다.**
+**P0~P9 완료. lizard-tycoon은 App Store 심사용 sandbox 원장을 사용한다.**
 
 Apple·Play 두 마켓 실기기 검증과 레거시 Firebase Functions 셧다운까지 끝났다.
 백오피스 운영자 지급(선물)도 개통했다. AIT만 자격증명을 기다린다.
@@ -26,7 +26,7 @@ Apple·Play 두 마켓 실기기 검증과 레거시 Firebase Functions 셧다�
 
 | app_id | config | events | iap | 비고 |
 |---|---|---|---|---|
-| `lizard-tycoon` | ✅ | ✅ | ✅ | **production 원장**. entitlement 2종 |
+| `lizard-tycoon` | ✅ | ✅ | ✅ | **sandbox 원장**. App Review 기간, entitlement 2종 |
 | `cycle-pair` | — | — | — | Firebase 게스트 인증 |
 | `babycare` | ✖ | ✖ | ✖ | Firebase custom token bridge만 (ADR 0013) |
 
@@ -55,6 +55,22 @@ sandbox      iap_environments/sandbox/...
 
 환경을 전환하면 이전 환경의 구매는 앱에서 사라진 것처럼 보인다. 데이터가
 지워진 것이 아니라 다른 공간에 있다.
+
+#### App Store 심사 기간의 sandbox 운영
+
+Apple App Review의 인앱결제는 sandbox 거래다. 플랫폼은 자동 fallback을 금지하고
+원장 환경을 서비스 시작 시 하나로 고정하므로, 심사 접수 전부터 승인 완료까지
+`lizard-tycoon` registry와 `platform-iap`·`platform-admin`·`platform-worker`를
+모두 sandbox로 유지한다.
+
+현재 registry에서 `features.iap=true`인 앱은 `lizard-tycoon` 하나다. 따라서 이
+기간에 공용 원장을 sandbox로 전환해도 다른 활성 앱의 결제 경로는 바뀌지 않는다.
+다른 앱의 IAP를 활성화하기 전에는 반드시 모든 활성 IAP 앱의 환경을 다시 맞춘다.
+배포 workflow가 이 일치를 fail-closed로 검사한다.
+
+심사 승인 뒤에도 앱은 수동 출시 상태로 둔다. 공개 출시 전에 별도 변경으로
+registry를 production으로 되돌리고 `regsync`를 적용한 다음, Deploy workflow의
+`iap_environment=production` 배포와 production 실거래 검증을 마쳐야 한다.
 
 ---
 

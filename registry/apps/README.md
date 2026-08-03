@@ -62,7 +62,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 |---|---|---|---|
 | `babycare` | 미사용 | 비활성 | — |
 | `cycle-pair` | production | 비활성 | — |
-| `lizard-tycoon` | production | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
+| `lizard-tycoon` | sandbox | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` — App Review 기간 |
 
 ## ledger_environment가 서비스와 다르면
 

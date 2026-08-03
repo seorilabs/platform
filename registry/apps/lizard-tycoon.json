@@ -13,7 +13,7 @@
     "event_prefix": ""
   },
   "iap": {
-    "ledger_environment": "production",
+    "ledger_environment": "sandbox",
     "markets": ["google_play", "app_store", "apps_in_toss"],
     "entitlement_ids": ["sp_galaxy_gecko", "sp_shootingstar_tokay"]
   },

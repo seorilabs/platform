@@ -47,6 +47,12 @@ on:
         required: false
         default: github
         options: [github, arc]
+      iap_environment:
+        description: "IAP 원장과 마켓 검증 환경. registry의 활성 IAP 앱과 같아야 한다"
+        type: choice
+        required: true
+        default: production
+        options: [production, sandbox]
 
 permissions:
   contents: read
@@ -63,7 +69,9 @@ env:
   REGISTRY: asia-northeast3-docker.pkg.dev
   IMAGE_PATH: seorilabs-platform/platform/platform
   DEPLOYER_SA: platform-deployer@seorilabs-platform.iam.gserviceaccount.com
-  IAP_ENVIRONMENT: production
+  # push는 build-only라 production 기본값을 쓴다. 실제 배포에서는
+  # workflow_dispatch의 명시적 선택이 registry와 일치하는지 다시 검사한다.
+  IAP_ENVIRONMENT: ${{ inputs.iap_environment || 'production' }}
 
 jobs:
   build:
@@ -123,7 +131,7 @@ jobs:
             server
 
   deploy:
-    name: Deploy to production
+    name: Deploy production runtime
     needs: build
     # main 병합만으로는 배포하지 않는다. 사람이 Actions에서 실행해야
     # 시작된다 — 이것이 승인 게이트를 대신한다.
@@ -134,6 +142,33 @@ jobs:
     # 보호 규칙은 못 걸지만 배포 이력이 environment에 남는다.
     environment: production
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # 원장 prefix는 서비스 전체에서 하나다. 활성 IAP 앱이 서로 다른 환경을
+      # 요구하거나 dispatch 선택과 registry가 다르면 일부 앱만 다른 원장을
+      # 보게 되므로 배포 전에 닫는다.
+      - name: Assert registry IAP environment
+        run: |
+          fail=0
+          active=0
+          for file in registry/apps/*.json; do
+            enabled=$(jq -r '.features.iap // false' "$file")
+            [ "$enabled" = "true" ] || continue
+
+            active=$((active + 1))
+            app_id=$(jq -r '.app_id' "$file")
+            actual=$(jq -r '.iap.ledger_environment // ""' "$file")
+            printf '%-24s ledger_environment=%s\n' "$app_id" "$actual"
+            [ "$actual" = "$IAP_ENVIRONMENT" ] || fail=1
+          done
+
+          [ "$active" -gt 0 ] || { echo "활성 IAP 앱이 없다." >&2; exit 1; }
+          [ "$fail" -eq 0 ] || {
+            echo "활성 IAP 앱의 registry 환경과 배포 선택($IAP_ENVIRONMENT)이 다르다." >&2
+            exit 1
+          }
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -143,9 +178,9 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      # production 서비스는 이미지와 IAP 원장 환경을 함께 고정한다.
-      # 환경을 명시하지 않으면 TestFlight 기간의 sandbox 값이 다음 배포에도
-      # 남아 production 레지스트리와 런타임이 갈라진다.
+      # 서비스 이미지와 IAP 원장 환경을 함께 고정한다. 환경을 명시하지 않으면
+      # App Review 기간의 sandbox 값이 다음 배포에도 남아 registry와 런타임이
+      # 갈라질 수 있다.
       - name: Deploy services
         run: |
           for s in platform-api platform-ingest; do
@@ -196,7 +231,7 @@ jobs:
           [ "$actual" = "$expected" ] || { echo "  기대: $expected" >&2; fail=1; }
           [ "$fail" -eq 0 ] || { echo "배포 대상이 서로 다른 이미지로 돈다." >&2; exit 1; }
 
-      - name: Assert production IAP environment
+      - name: Assert selected IAP environment
         run: |
           service_env() {
             gcloud run services describe "$1" \
@@ -226,7 +261,7 @@ jobs:
             [ "$actual" = "$IAP_ENVIRONMENT" ] || fail=1
           done
 
-          [ "$fail" -eq 0 ] || { echo "IAP production 환경이 일치하지 않는다." >&2; exit 1; }
+          [ "$fail" -eq 0 ] || { echo "선택한 IAP 환경($IAP_ENVIRONMENT)이 일치하지 않는다." >&2; exit 1; }
 
       # admin은 DRS로 비공개라 인증 없이는 403이 정상이다. 여기서
       # 확인하는 것은 공개 서비스 셋이 새 리비전으로 뜬 뒤 실제로
