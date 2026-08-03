@@ -61,4 +61,32 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | app_id | 원장 환경 | IAP | entitlements |
 |---|---|---|---|
 | `babycare` | 미사용 | 비활성 | — |
+| `cycle-pair` | production | 비활성 | — |
 | `lizard-tycoon` | production | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
+
+## ledger_environment가 서비스와 다르면
+
+**admin 경로가 전부 422 `environment_mismatch`로 막힌다. 결제는 멀쩡하다.**
+
+`LedgerEnvironment` 검사는 `internal/admin/handler.go`에만 있고 verify 경로에는
+없다. 그래서 유저 결제는 계속 되고 운영자만 아무것도 못 하는 상태가 된다.
+증상이 한쪽에서만 나서 알아채기 어렵다.
+
+2026-08-03에 실제로 겪었다. 서비스를 production으로 전환했는데 Firestore
+레지스트리가 `sandbox`로 남아 있었다. repo 파일은 이미 production이었고
+**regsync를 돌리지 않은 것**이 원인이다.
+
+```
+GET /v1/admin/apps/lizard-tycoon/iap/catalog
+→ 422 environment_mismatch "앱 레지스트리와 Admin 원장 환경이 달라요"
+```
+
+이 엔드포인트가 200을 주는지로 확인한다. 반영은 캐시 TTL 60초 안에 끝난다.
+
+두 원장은 경로가 다르고 서로 보이지 않는다(불변식 9). 환경을 바꾸면 이전
+환경의 구매는 앱에서 사라진 것처럼 보인다. 지워진 것이 아니라 다른 공간에 있다.
+
+```
+production   processed_orders/...            (루트)
+sandbox      iap_environments/sandbox/...
+```

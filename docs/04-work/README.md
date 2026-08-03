@@ -26,11 +26,35 @@ Apple·Play 두 마켓 실기기 검증과 레거시 Firebase Functions 셧다�
 
 | app_id | config | events | iap | 비고 |
 |---|---|---|---|---|
-| `lizard-tycoon` | ✅ | ✅ | ✅ | sandbox 원장. entitlement 2종 |
+| `lizard-tycoon` | ✅ | ✅ | ✅ | **production 원장**. entitlement 2종 |
+| `cycle-pair` | — | — | — | Firebase 게스트 인증 |
 | `babycare` | ✖ | ✖ | ✖ | Firebase custom token bridge만 (ADR 0013) |
 
 **레지스트리는 파일을 고치는 것만으로 반영되지 않는다.** `cmd/regsync`를 사람이
 돌린다 — [registry/apps/README.md](../../registry/apps/README.md).
+
+#### 원장 환경이 어긋나면 admin만 죽는다
+
+레지스트리의 `iap.ledger_environment`와 서비스의 `IAP_LEDGER_ENVIRONMENT`가
+같아야 한다. 다르면 admin 경로가 전부 422 `environment_mismatch`로 막힌다.
+
+**결제 경로는 영향받지 않는다.** `LedgerEnvironment` 검사는
+`internal/admin/handler.go`에만 있고 verify 경로에는 없다. 그래서 어긋나도
+유저 결제는 계속 되고 운영자만 아무것도 못 하는 상태가 된다 — 알아채기 어렵다.
+
+2026-08-03에 실제로 겪었다. 서비스는 production으로 전환됐는데 Firestore
+레지스트리가 `sandbox`로 남아 admin이 전부 422였다. repo 파일은 이미
+production이었고 regsync를 돌리지 않은 것이 원인이다.
+
+두 원장은 경로가 다르고 서로 보이지 않는다. 불변식 9다.
+
+```
+production   processed_orders/...            (루트)
+sandbox      iap_environments/sandbox/...
+```
+
+환경을 전환하면 이전 환경의 구매는 앱에서 사라진 것처럼 보인다. 데이터가
+지워진 것이 아니라 다른 공간에 있다.
 
 ---
 
