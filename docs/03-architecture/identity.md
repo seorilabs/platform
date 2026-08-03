@@ -56,6 +56,8 @@ POST /v1/auth/firebase-custom-token
 - 기존 token이 있으면 위 검증 규칙으로 확인한 uid를 그대로 쓴다. Babycare의 기존 Firestore
   소유권을 끊지 않는 migration 경로다.
 - token이 없으면 `pb_` + ULID uid를 서버에서 만든다. 클라이언트가 uid를 선택할 수 없다.
+- custom token의 `seori_app_id`는 레지스트리 app ID와 결합되고, `seori_guest`는 새 `pb_`
+  uid에만 true다. 기존 Firebase ID token으로 보존한 uid에는 false를 넣는다.
 - custom token 생성만 IAM Credentials `signJwt`를 쓴다. 앱별 private key나 service account
   JSON은 platform에 두지 않는다.
 - 레지스트리 feature와 앱 프로젝트 service account가 모두 있어야 한다.

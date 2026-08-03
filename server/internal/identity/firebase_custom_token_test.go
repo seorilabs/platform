@@ -28,10 +28,11 @@ func TestIAMCustomTokenIssuerBuildsFirebaseClaims(t *testing.T) {
 	signer := &captureJWTSigner{}
 	issuer := (&IAMCustomTokenIssuer{signer: signer, now: func() time.Time { return now }})
 	app := registry.App{
+		AppID:                             "babycare",
 		FirebaseCustomTokenServiceAccount: "platform-auth@seorilabs-babycare.iam.gserviceaccount.com",
 	}
 
-	token, err := issuer.Mint(context.Background(), app, "legacy-firebase-uid")
+	token, err := issuer.Mint(context.Background(), app, "legacy-firebase-uid", true)
 	if err != nil {
 		t.Fatalf("Mint() error = %v", err)
 	}
@@ -55,6 +56,10 @@ func TestIAMCustomTokenIssuerBuildsFirebaseClaims(t *testing.T) {
 	if claims["iat"] != float64(now.Unix()) || claims["exp"] != float64(now.Add(time.Hour).Unix()) {
 		t.Fatalf("token lifetime = %#v", claims)
 	}
+	developerClaims, ok := claims["claims"].(map[string]any)
+	if !ok || developerClaims["seori_app_id"] != "babycare" || developerClaims["seori_guest"] != true {
+		t.Fatalf("developer claims = %#v", claims["claims"])
+	}
 }
 
 func TestIAMCustomTokenIssuerRejectsInvalidUID(t *testing.T) {
@@ -63,7 +68,7 @@ func TestIAMCustomTokenIssuerRejectsInvalidUID(t *testing.T) {
 		FirebaseCustomTokenServiceAccount: "platform-auth@seorilabs-babycare.iam.gserviceaccount.com",
 	}
 	for _, uid := range []string{"", string(make([]byte, 129))} {
-		if _, err := issuer.Mint(context.Background(), app, uid); err == nil {
+		if _, err := issuer.Mint(context.Background(), app, uid, true); err == nil {
 			t.Fatalf("uid 길이 %d를 허용했다", len(uid))
 		}
 	}

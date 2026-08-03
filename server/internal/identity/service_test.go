@@ -32,14 +32,17 @@ type fakeCustomTokenIssuer struct {
 	token string
 	err   error
 	uid   string
+	guest bool
 }
 
 func (f *fakeCustomTokenIssuer) Mint(
 	_ context.Context,
 	_ registry.App,
 	uid string,
+	platformGuest bool,
 ) (string, error) {
 	f.uid = uid
+	f.guest = platformGuest
 	if f.err != nil {
 		return "", f.err
 	}
@@ -199,6 +202,9 @@ func TestCreateFirebaseCustomTokenPreservesExistingUID(t *testing.T) {
 	if result.FirebaseCustomToken != "signed-custom-token" {
 		t.Fatalf("custom token = %q", result.FirebaseCustomToken)
 	}
+	if customTokens.guest {
+		t.Fatal("기존 Firebase uid를 플랫폼 게스트로 표시했다")
+	}
 	if result.PlatformUserID == "" {
 		t.Fatal("platform user 매핑이 생성되지 않았다")
 	}
@@ -218,6 +224,9 @@ func TestCreateFirebaseCustomTokenGeneratesServerUID(t *testing.T) {
 	}
 	if customTokens.uid != result.AppUserID {
 		t.Fatalf("서명 uid = %q, want %q", customTokens.uid, result.AppUserID)
+	}
+	if !customTokens.guest {
+		t.Fatal("플랫폼이 새로 만든 Firebase uid에 게스트 claim이 없다")
 	}
 }
 

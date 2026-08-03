@@ -150,6 +150,7 @@ func (s *Service) CreateFirebaseCustomToken(
 	}
 
 	var uid string
+	platformGuest := false
 	if token := strings.TrimSpace(existingFirebaseIDToken); token != "" {
 		if len(token) > 4096 {
 			return FirebaseCustomTokenResult{}, platformerr.New(
@@ -163,6 +164,7 @@ func (s *Service) CreateFirebaseCustomToken(
 		}
 		uid = claims.UID
 	} else {
+		platformGuest = true
 		uid, err = NewFirebaseBridgeUserID()
 		if err != nil {
 			return FirebaseCustomTokenResult{}, platformerr.Wrap(
@@ -179,7 +181,7 @@ func (s *Service) CreateFirebaseCustomToken(
 		)
 	}
 
-	customToken, err := s.customTokens.Mint(ctx, app, uid)
+	customToken, err := s.customTokens.Mint(ctx, app, uid, platformGuest)
 	if err != nil {
 		return FirebaseCustomTokenResult{}, platformerr.Wrap(
 			err,

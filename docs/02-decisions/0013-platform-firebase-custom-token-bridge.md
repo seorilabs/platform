@@ -22,6 +22,9 @@ platform에 저장하면 공통 인프라 침해가 각 앱 Firebase로 번지�
   같은 uid로 custom token을 만든다.
 - 기존 token이 없으면 uid를 platform 서버의 암호학적 난수로 생성한다. 클라이언트가
   uid를 지정하는 필드는 두지 않는다.
+- custom token에는 `seori_app_id`와 `seori_guest` developer claim을 서명한다. 기존
+  Firebase uid 마이그레이션은 `seori_guest=false`, platform이 새로 만든 `pb_` uid만
+  `seori_guest=true`다. 앱 backend는 UID 접두사만으로 게스트 권한을 판단하지 않는다.
 - 앱 레지스트리에서 `firebase_custom_token_bridge` feature와 앱 프로젝트 service account를
   함께 명시해야만 발급한다.
 - custom token은 IAM Credentials `signJwt`로 원격 서명한다. service account JSON과 private

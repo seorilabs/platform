@@ -16,7 +16,7 @@ const firebaseCustomTokenAudience = "https://identitytoolkit.googleapis.com/goog
 // CustomTokenIssuer는 Firebase custom token을 발급한다.
 // Service가 소비하므로 인터페이스도 identity 패키지에 둔다.
 type CustomTokenIssuer interface {
-	Mint(ctx context.Context, app registry.App, uid string) (string, error)
+	Mint(ctx context.Context, app registry.App, uid string, platformGuest bool) (string, error)
 }
 
 type jwtSigner interface {
@@ -50,6 +50,7 @@ func (i *IAMCustomTokenIssuer) Mint(
 	ctx context.Context,
 	app registry.App,
 	uid string,
+	platformGuest bool,
 ) (string, error) {
 	if len(uid) == 0 || len(uid) > 128 {
 		return "", fmt.Errorf("identity: Firebase uid 길이가 올바르지 않다")
@@ -67,6 +68,10 @@ func (i *IAMCustomTokenIssuer) Mint(
 		"iat": now.Unix(),
 		"exp": now.Add(time.Hour).Unix(),
 		"uid": uid,
+		"claims": map[string]any{
+			"seori_app_id": app.AppID,
+			"seori_guest":  platformGuest,
+		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("identity: custom token payload 생성 실패: %w", err)

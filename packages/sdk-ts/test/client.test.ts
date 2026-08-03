@@ -362,6 +362,7 @@ describe("Events", () => {
   it("outbox는 상한을 넘으면 오래된 것을 버린다", async () => {
     const outbox = new MemoryEventOutbox(3);
     await outbox.push([1, 2, 3, 4, 5].map((i) => ({
+      eventId: `event-${i}`,
       name: `e${i}`,
       params: {},
       tsUnixMs: i,
