@@ -598,6 +598,19 @@ GET /v1/admin/apps/lizard-tycoon/iap/catalog
 반영은 캐시 TTL 60초 안에 끝난다. 위 엔드포인트가 200에 entitlement
 목록을 돌려주면 된 것이다.
 
+App Store 심사 때문에 sandbox로 전환할 때는 다음 순서를 지킨다.
+
+1. 모든 `features.iap=true` 앱이 sandbox 전환 가능한지 확인한다.
+2. registry의 `iap.ledger_environment`를 sandbox로 병합한다.
+3. `regsync --dry-run` 후 실제 sync를 실행한다.
+4. Deploy workflow를 `iap_environment=sandbox`로 실행한다.
+5. 서비스·worker 환경 readback과 sandbox 구매 E2E를 확인한 뒤 심사를 접수한다.
+6. 승인 후에도 수동 출시를 유지한다.
+7. 공개 출시 전에 같은 순서로 production을 복구하고 production 실거래를 확인한다.
+
+workflow는 활성 IAP 앱의 registry 환경과 dispatch 선택이 하나라도 다르면 배포를
+거부한다. Apple 검증기의 자동 sandbox fallback은 허용하지 않는다.
+
 ### 4.0.3 운영자 지급(선물)을 열 때
 
 백오피스 `/platform/iap` 화면의 지급·회수는 세 가지가 **모두** 갖춰져야
