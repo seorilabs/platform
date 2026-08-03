@@ -199,6 +199,22 @@ func (f *fakeUsers) LookupSupportUser(_ context.Context, reference string) (iden
 type fakeApps struct {
 	app registry.App
 	err error
+	// list는 환경 대조용이다. 비어 있으면 app 하나만 있는 것으로 본다.
+	list    []registry.App
+	listErr error
+}
+
+func (f *fakeApps) List(context.Context) ([]registry.App, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	if f.list != nil {
+		return f.list, nil
+	}
+	if f.app.AppID != "" {
+		return []registry.App{f.app}, nil
+	}
+	return nil, nil
 }
 
 func (f *fakeApps) Get(_ context.Context, appID string) (registry.App, error) {
@@ -2005,5 +2021,183 @@ func TestSandboxResetRequiresFields(t *testing.T) {
 				t.Error("거부했는데 원장을 건드렸다")
 			}
 		})
+	}
+}
+
+// 레지스트리와 원장 환경이 어긋나면 health가 그걸 알려줘야 한다.
+//
+// 이 검사를 만든 이유는 증상이 한쪽에서만 나기 때문이다. LedgerEnvironment
+// 대조는 admin 경로에만 있고 verify에는 없다. 어긋나도 유저 결제는 계속 되고
+// 운영자만 아무것도 못 한다. 5xx도 없고 트래픽도 정상이라 대시보드로는 안 잡힌다.
+//
+// 2026-08-03에 실제로 겪었다. 서비스를 production으로 전환했는데 레지스트리가
+// sandbox로 남아 admin이 전부 422였다.
+func TestHealthReportsEnvironmentMismatch(t *testing.T) {
+	iapApp := func(id string, env registry.LedgerEnvironment) registry.App {
+		return registry.App{
+			AppID:    id,
+			Status:   registry.StatusActive,
+			Features: map[string]bool{"iap": true},
+			IAP: registry.IAPConfig{
+				LedgerEnvironment: env,
+				EntitlementIDs:    []string{"sp_a"},
+			},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		ledger domain.Environment
+		apps   []registry.App
+		want   []string
+	}{
+		{
+			name:   "환경이 같으면 비어 있다",
+			ledger: domain.EnvProduction,
+			apps:   []registry.App{iapApp("a", registry.LedgerProduction)},
+			want:   nil,
+		},
+		{
+			name:   "어긋난 앱을 돌려준다",
+			ledger: domain.EnvProduction,
+			apps:   []registry.App{iapApp("a", registry.LedgerSandbox)},
+			want:   []string{"a"},
+		},
+		{
+			name:   "환경이 비어 있어도 어긋난 것이다",
+			ledger: domain.EnvProduction,
+			apps:   []registry.App{iapApp("a", "")},
+			want:   []string{"a"},
+		},
+		{
+			// babycare처럼 인증 브리지만 쓰는 앱을 섞으면 신호가 묻힌다.
+			name:   "IAP를 쓰지 않는 앱은 세지 않는다",
+			ledger: domain.EnvProduction,
+			apps: []registry.App{{
+				AppID:    "bridge-only",
+				Status:   registry.StatusActive,
+				Features: map[string]bool{"iap": false},
+			}},
+			want: nil,
+		},
+		{
+			name:   "여러 앱은 app_id 순으로 준다",
+			ledger: domain.EnvProduction,
+			apps: []registry.App{
+				iapApp("z", registry.LedgerSandbox),
+				iapApp("a", registry.LedgerSandbox),
+			},
+			want: []string{"a", "z"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth, err := NewAuthenticator(
+				&fakeValidator{email: backofficeSA},
+				[]string{backofficeReadSA}, []string{backofficeSA},
+			)
+			if err != nil {
+				t.Fatalf("인증기 생성 실패: %v", err)
+			}
+			h, err := NewHandler(
+				&fakeLedger{env: tt.ledger}, &fakeConfig{}, &fakeUsers{},
+				&fakeApps{list: tt.apps}, &fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+			)
+			if err != nil {
+				t.Fatalf("핸들러 생성 실패: %v", err)
+			}
+
+			w := serve(t, h, http.MethodGet, "/v1/admin/health", "", "tok", "syous")
+			if w.Code != http.StatusOK {
+				t.Fatalf("health가 200이 아니다: %d", w.Code)
+			}
+
+			var got struct {
+				Result struct {
+					Environment string `json:"environment"`
+					Mismatches  []struct {
+						AppID    string `json:"appId"`
+						Registry string `json:"registry"`
+						Ledger   string `json:"ledger"`
+					} `json:"environmentMismatches"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatalf("응답 해석 실패: %v", err)
+			}
+
+			if len(got.Result.Mismatches) != len(tt.want) {
+				t.Fatalf("불일치 개수가 다르다: %d, want %d (%+v)",
+					len(got.Result.Mismatches), len(tt.want), got.Result.Mismatches)
+			}
+			for i, want := range tt.want {
+				m := got.Result.Mismatches[i]
+				if m.AppID != want {
+					t.Errorf("[%d] appId = %q, want %q", i, m.AppID, want)
+				}
+				if m.Ledger != string(tt.ledger) {
+					t.Errorf("[%d] ledger = %q, want %q", i, m.Ledger, tt.ledger)
+				}
+				if m.Registry == m.Ledger {
+					t.Errorf("[%d] 같은 환경인데 불일치로 보고했다: %q", i, m.Registry)
+				}
+			}
+		})
+	}
+}
+
+// 응답의 environmentMismatches는 null이 아니라 []여야 한다.
+//
+// 소비자가 length로 판단하는데 null이면 그 자리에서 터진다.
+// 백오피스가 이 값을 화면에 띄우므로 형식이 계약이다.
+func TestHealthMismatchesIsAlwaysArray(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA},
+		[]string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatalf("인증기 생성 실패: %v", err)
+	}
+	h, err := NewHandler(
+		&fakeLedger{}, &fakeConfig{}, &fakeUsers{},
+		&fakeApps{list: []registry.App{}}, &fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatalf("핸들러 생성 실패: %v", err)
+	}
+
+	w := serve(t, h, http.MethodGet, "/v1/admin/health", "", "tok", "syous")
+	if !strings.Contains(w.Body.String(), `"environmentMismatches":[]`) {
+		t.Errorf("빈 배열이 아니다: %s", w.Body.String())
+	}
+}
+
+// 레지스트리 조회가 실패해도 health는 살아 있어야 한다.
+//
+// health는 진단 창구다. 여기서 죽으면 진짜 문제를 볼 창구까지 같이 닫힌다.
+func TestHealthSurvivesRegistryFailure(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA},
+		[]string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatalf("인증기 생성 실패: %v", err)
+	}
+	h, err := NewHandler(
+		&fakeLedger{}, &fakeConfig{}, &fakeUsers{},
+		&fakeApps{listErr: errors.New("firestore 불통")},
+		&fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatalf("핸들러 생성 실패: %v", err)
+	}
+
+	w := serve(t, h, http.MethodGet, "/v1/admin/health", "", "tok", "syous")
+	if w.Code != http.StatusOK {
+		t.Fatalf("레지스트리 실패로 health가 죽었다: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"deadLetterCount"`) {
+		t.Errorf("나머지 진단 정보가 없다: %s", w.Body.String())
 	}
 }

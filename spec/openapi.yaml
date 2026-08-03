@@ -1260,11 +1260,41 @@ components:
 
     AdminHealth:
       type: object
-      required: [environment, deadLetterCount]
+      required: [environment, deadLetterCount, environmentMismatches]
       additionalProperties: false
       properties:
         environment: { $ref: '#/components/schemas/LedgerEnvironment' }
         deadLetterCount: { type: integer, minimum: 0 }
+        environmentMismatches:
+          type: array
+          description: |
+            레지스트리가 선언한 원장 환경이 이 서비스의 환경과 다른 앱이다.
+            비어 있으면 정상이며 **null이 아니라 빈 배열**을 준다.
+
+            **비어 있지 않으면 그 앱의 운영 조작이 전부 422로 막힌다.**
+            반대로 유저 결제는 계속 된다 — 환경 대조가 admin 경로에만 있고
+            verify에는 없기 때문이다. 그래서 증상이 한쪽에서만 나고
+            5xx나 트래픽 변화로는 잡히지 않는다.
+
+            해소는 `registry/apps/*.json`을 고친 뒤 `cmd/regsync`를 돌리는
+            것이다. 파일만 고치면 반영되지 않는다.
+          items: { $ref: '#/components/schemas/AdminEnvironmentMismatch' }
+
+    AdminEnvironmentMismatch:
+      type: object
+      required: [appId, registry, ledger]
+      additionalProperties: false
+      properties:
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        registry:
+          description: 레지스트리가 선언한 환경. 선언하지 않았으면 빈 문자열이다
+          oneOf:
+            - $ref: '#/components/schemas/LedgerEnvironment'
+            - type: string
+              enum: ['']
+        ledger:
+          allOf: [{ $ref: '#/components/schemas/LedgerEnvironment' }]
+          description: 이 서비스가 실제로 읽고 쓰는 환경
 
     LedgerEnvironment:
       type: string
