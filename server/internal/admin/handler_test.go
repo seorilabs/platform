@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -2199,5 +2201,122 @@ func TestHealthSurvivesRegistryFailure(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"deadLetterCount"`) {
 		t.Errorf("나머지 진단 정보가 없다: %s", w.Body.String())
+	}
+}
+
+// 불일치는 응답만이 아니라 로그로도 나와야 한다.
+//
+// 응답은 누가 health를 부를 때만 보인다. 알림을 걸 수 있는 신호는 로그다.
+// 이 한 줄이 로그 기반 지표의 근거가 되므로 필드 이름이 계약이다.
+func TestEnvironmentMismatchLogsWarning(t *testing.T) {
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA},
+		[]string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatalf("인증기 생성 실패: %v", err)
+	}
+	apps := []registry.App{
+		{
+			AppID: "zulu", Status: registry.StatusActive,
+			Features: map[string]bool{"iap": true},
+			IAP: registry.IAPConfig{
+				LedgerEnvironment: registry.LedgerSandbox,
+				EntitlementIDs:    []string{"sp_a"},
+			},
+		},
+		{
+			AppID: "alpha", Status: registry.StatusActive,
+			Features: map[string]bool{"iap": true},
+			IAP: registry.IAPConfig{
+				LedgerEnvironment: registry.LedgerSandbox,
+				EntitlementIDs:    []string{"sp_a"},
+			},
+		},
+	}
+	h, err := NewHandler(
+		&fakeLedger{env: domain.EnvProduction}, &fakeConfig{}, &fakeUsers{},
+		&fakeApps{list: apps}, &fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatalf("핸들러 생성 실패: %v", err)
+	}
+
+	if w := serve(t, h, http.MethodGet, "/v1/admin/health", "", "tok", "syous"); w.Code != http.StatusOK {
+		t.Fatalf("health가 200이 아니다: %d", w.Code)
+	}
+
+	var found bool
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry["level"] != "WARN" || !strings.Contains(fmt.Sprint(entry["msg"]), "어긋나") {
+			continue
+		}
+		found = true
+
+		if got := entry["ledger_environment"]; got != string(domain.EnvProduction) {
+			t.Errorf("ledger_environment = %v, want %v", got, domain.EnvProduction)
+		}
+		// 정렬된 목록이라 알림 본문이 실행마다 달라지지 않는다.
+		if got := entry["apps"]; got != "alpha,zulu" {
+			t.Errorf("apps = %v, want alpha,zulu", got)
+		}
+		if got := entry["count"]; got != float64(2) {
+			t.Errorf("count = %v, want 2", got)
+		}
+	}
+	if !found {
+		t.Errorf("경고 로그가 없다: %s", buf.String())
+	}
+}
+
+// 정상일 때는 경고를 남기지 않는다. 매번 찍으면 알림이 무의미해진다.
+func TestNoWarningWhenEnvironmentsMatch(t *testing.T) {
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA},
+		[]string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatalf("인증기 생성 실패: %v", err)
+	}
+	h, err := NewHandler(
+		&fakeLedger{env: domain.EnvProduction}, &fakeConfig{}, &fakeUsers{},
+		&fakeApps{list: []registry.App{{
+			AppID: "a", Status: registry.StatusActive,
+			Features: map[string]bool{"iap": true},
+			IAP: registry.IAPConfig{
+				LedgerEnvironment: registry.LedgerProduction,
+				EntitlementIDs:    []string{"sp_a"},
+			},
+		}}}, &fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatalf("핸들러 생성 실패: %v", err)
+	}
+
+	serve(t, h, http.MethodGet, "/v1/admin/health", "", "tok", "syous")
+
+	if strings.Contains(buf.String(), "어긋나") {
+		t.Errorf("정상인데 경고를 남겼다: %s", buf.String())
 	}
 }
