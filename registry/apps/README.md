@@ -72,6 +72,22 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 없다. 그래서 유저 결제는 계속 되고 운영자만 아무것도 못 하는 상태가 된다.
 증상이 한쪽에서만 나서 알아채기 어렵다.
 
+**그래서 admin이 스스로 알려준다.** `/v1/admin/health`가 어긋난 앱을 돌려주고
+경고 로그를 남긴다. 백오피스 플랫폼 개요 화면에도 뜬다.
+
+```json
+{"environment":"production","deadLetterCount":0,
+ "environmentMismatches":[
+   {"appId":"lizard-tycoon","registry":"sandbox","ledger":"production"}]}
+```
+
+로그 기반 알림을 걸려면 이 한 줄을 본다.
+
+```
+severity=WARNING  "레지스트리와 원장 환경이 어긋나 조작이 막혔다"
+  ledger_environment=production  apps=lizard-tycoon  count=1
+```
+
 2026-08-03에 실제로 겪었다. 서비스를 production으로 전환했는데 Firestore
 레지스트리가 `sandbox`로 남아 있었다. repo 파일은 이미 production이었고
 **regsync를 돌리지 않은 것**이 원인이다.

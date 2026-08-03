@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
@@ -61,6 +62,9 @@ type Users interface {
 // Apps는 GitHub registry/apps/*.json에서 동기화된 앱 설정 조회 포트다.
 type Apps interface {
 	Get(ctx context.Context, appID string) (registry.App, error)
+	// List는 환경 대조용이다. 레지스트리와 원장 환경이 어긋나면 이 서비스의
+	// 모든 조작이 422가 되는데, 결제는 계속 되어 아무도 모른다.
+	List(ctx context.Context) ([]registry.App, error)
 }
 
 // Catalog는 Admin role이 비밀 없이 읽는 entitlement allowlist다.
@@ -200,10 +204,72 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
-		"environment":     string(h.ledger.Environment()),
-		"deadLetterCount": deadLetters,
+		"environment":           string(h.ledger.Environment()),
+		"deadLetterCount":       deadLetters,
+		"environmentMismatches": h.environmentMismatches(r.Context()),
 	})
 	return nil
+}
+
+// environmentMismatch는 레지스트리와 이 서비스의 원장 환경이 어긋난 앱이다.
+type environmentMismatch struct {
+	AppID string `json:"appId"`
+	// Registry는 레지스트리가 선언한 환경이다. 비어 있을 수 있다.
+	Registry string `json:"registry"`
+	// Ledger는 이 서비스가 실제로 읽고 쓰는 환경이다.
+	Ledger string `json:"ledger"`
+}
+
+// environmentMismatches는 조작이 막힌 앱을 찾는다.
+//
+// 이걸 만든 이유는 증상이 한쪽에서만 나기 때문이다. LedgerEnvironment 검사는
+// 이 패키지에만 있고 verify 경로에는 없다. 그래서 어긋나도 유저 결제는 계속
+// 되고 운영자만 아무것도 못 하는 상태가 된다. 5xx도 안 나고 트래픽도 정상이라
+// 대시보드로는 잡히지 않는다.
+//
+// 2026-08-03에 실제로 겪었다. 서비스를 production으로 전환했는데 레지스트리가
+// sandbox로 남아 admin이 전부 422였고, 선물 한 건을 넣어보고 나서야 알았다.
+//
+// 조회 실패는 에러로 올리지 않는다. health는 진단 창구라 여기서 죽으면 진짜
+// 문제를 볼 창구까지 같이 닫힌다. 대신 조회 실패 자체를 로그로 남긴다.
+func (h *Handler) environmentMismatches(ctx context.Context) []environmentMismatch {
+	apps, err := h.apps.List(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "환경 대조용 레지스트리 조회 실패", "err", err)
+		return []environmentMismatch{}
+	}
+
+	want := string(h.ledger.Environment())
+	// nil이 아니라 빈 슬라이스를 돌려준다. JSON에서 null과 []는 다르고,
+	// 소비자가 length로 판단하는데 null이면 그 자리에서 터진다.
+	out := []environmentMismatch{}
+	for _, app := range apps {
+		// IAP를 쓰지 않는 앱은 원장 환경이 의미가 없다. babycare처럼
+		// 인증 브리지만 쓰는 앱을 경고에 섞으면 신호가 묻힌다.
+		if !app.FeatureEnabled("iap") {
+			continue
+		}
+		got := string(app.IAP.LedgerEnvironment)
+		if got == want {
+			continue
+		}
+		out = append(out, environmentMismatch{AppID: app.AppID, Registry: got, Ledger: want})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AppID < out[j].AppID })
+
+	if len(out) > 0 {
+		ids := make([]string, 0, len(out))
+		for _, m := range out {
+			ids = append(ids, m.AppID)
+		}
+		// 이 한 줄이 알림의 근거가 된다. 로그 기반 지표로 걸 수 있게
+		// 앱 목록과 기대 환경을 같이 남긴다.
+		slog.WarnContext(ctx, "레지스트리와 원장 환경이 어긋나 조작이 막혔다",
+			"ledger_environment", want,
+			"apps", strings.Join(ids, ","),
+			"count", len(out))
+	}
+	return out
 }
 
 // adminOrder는 Admin API에 노출할 수 있는 주문 필드의 명시적 allowlist다.
