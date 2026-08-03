@@ -1,0 +1,25 @@
+{
+  "app_id": "cycle-pair",
+  "display_name": "사이클 페어",
+  "firebase_project_id": "seorilabs-cyclepair-prod",
+  "firebase_custom_token_service_account": "platform-auth@seorilabs-cyclepair-prod.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": "cp_"
+  },
+  "iap": {
+    "ledger_environment": "production",
+    "markets": ["google_play", "app_store"],
+    "entitlement_ids": []
+  },
+  "platform_event_allowlist": [],
+  "cors_origins": [],
+  "blocked_uids": []
+}
