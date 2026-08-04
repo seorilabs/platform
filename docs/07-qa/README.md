@@ -10,7 +10,7 @@
 | 4 | Godot HTML shell에 추가 script를 넣은 `.ait`가 심사를 통과하는가 | 대기 — 심사 제출 필요 |
 | 5 | `appLogin` 토큰의 서버 검증 API 존재 여부 | 대기 — **미확인이라 `KindAITLogin`을 fail-closed로 거부 중** |
 | 6 | Cloud Run `allUsers`가 조직 DRS 정책에 막히는가 | **✅ 확인됨 — 막힌다. 우회 방법 확보** |
-| 7 | Go 콜드스타트 실측 | **⚠️ 실서버 재측정 798~878ms — 목표 300ms 초과.** warm-up ping 도입 확정 |
+| 7 | Go 콜드스타트 실측 | **⚠️ 실서버 재측정 798~878ms — 목표 300ms 초과.** warm-up ping 도입 완료 |
 
 ### 결과 — 2번: Firestore ✅
 
