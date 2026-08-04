@@ -101,14 +101,7 @@ internal/identity/service.go  KindAITLogin → "아직 지원하지 않는 로�
 
 4·5가 실패하면 Godot Web은 신원 없는 이벤트 전용으로 축소한다.
 
-### 2. warm-up ping — 결정만 하고 미구현
-
-P0에서 콜드 **425ms**(목표 300ms 초과)를 재고 도입을 확정했는데, Cloud Scheduler에는
-`platform-worker-5m`뿐이다. 결제 검증만 유저가 대기하는 경로라 거기서만 체감된다.
-
-**먼저 다시 재는 것이 순서다.** 425ms는 P0 시점이고 그 뒤 코드가 많이 바뀌었다.
-
-### 3. App Check — 뼈대만 있다
+### 2. App Check — 뼈대만 있다
 
 에러 코드 4종(`platformerr/code.go`)과 registry `require_app_check` 필드가 있는데
 **검증 코드가 없다.** 1단계에서 끄기로 한 의도된 상태다.
@@ -116,7 +109,7 @@ P0에서 콜드 **425ms**(목표 300ms 초과)를 재고 도입을 확정했는�
 Go SDK에 `consume` replay 방지가 없어 자체 nonce 저장소가 필요하고, Godot에는
 App Check SDK 자체가 없다.
 
-### 4. 앱 확산
+### 3. 앱 확산
 
 `happy-farm`이 다음 후보다. `SELF_METRICS_ENDPOINT`가 이미 뚫려 있어 이벤트만이면
 진입 비용이 낮다. 다만 **유저당 862 이벤트/일**로 다른 앱의 15~25배라
@@ -154,7 +147,7 @@ Artifact Registry · `cmd/fs` 조회 CLI.
 | 1 | Apple JWS Go 방안 | `richzw/appstore` + OCSP 자체 추가 (ADR 0009) |
 | 2 | Firebase 미등록 Firestore | 생성됨, `freeTier: true` |
 | 6 | Cloud Run DRS | 막힘 확인, `--no-invoker-iam-check` 우회 |
-| 7 | 콜드스타트 | **425ms** — 재측정 필요 (위 "남은 것" 2번) |
+| 7 | 콜드스타트 | **425ms** — 실서버 재측정 후 warm-up ping 도입 (아래 P9 참고) |
 | 3·4·5 | AIT 관련 | **미착수** — 실제 `.ait` 빌드와 심사 필요 |
 
 ### P1 identity
@@ -176,7 +169,7 @@ production 배포까지 완료했다.
 - 후속 main 배포 호환성: [run 30750946141](https://github.com/seorilabs/platform/actions/runs/30750946141) 뒤 `platform-api-00016-cdv` / `platform:bdbd69428900d85ab7ae4e9a58b32eee09e48f20`에서 babycare config 200과 custom-token POST-only route 유지
 - live smoke: UID 주입 거부, 신규 Firebase custom token 교환, 합성 legacy UID 보존,
   `Cache-Control: no-store`, 생성한 Firebase 사용자와 platform mapping cleanup
-- 남은 운영 gate: **App Check 또는 edge rate limit**(위 "남은 것" 3번), 실제 기존
+- 남은 운영 gate: **App Check 또는 edge rate limit**(위 "남은 것" 2번), 실제 기존
   사용자·실기기 migration
 
 registry의 `config`/`events`/`iap` 플래그는 전부 꺼져 있다. 브리지만 쓴다.
@@ -226,6 +219,56 @@ Apple·Play 실기기 구매·복원·웹훅·완료 반영 전 경로 검증.
 
 템플릿 반영, 장애 리허설, 운영 문서. 레거시 Firebase Functions 셧다운은 두 마켓
 웹훅이 실트래픽으로 이관된 것을 확인한 뒤 진행했다.
+
+#### 콜드스타트 재측정과 warm-up ping (2026-08-03)
+
+P0의 425ms는 표준 라이브러리만 쓴 최소 서버 수치였다. 의존성이 다 붙은 뒤를
+다시 쟀다.
+
+| 서비스 | p50 | p95 | 목표 300ms 대비 |
+|---|---|---|---|
+| `platform-api` | 842ms | 878ms | 2.1배 |
+| `platform-iap` | 765ms | **798ms** | 1.9배 |
+| `platform-ingest` | 575ms | 600ms | 1.4배 |
+
+Cloud Run이 이미 기록한 `startup_latencies`를 읽었다. 리비전을 비워 콜드를 만들면
+그 콜드를 실유저가 맞는다. warm은 반대로 좋다 — 서버 몫 47~60ms.
+
+목표를 2배 가까이 넘겨 **warm-up ping을 도입했다.** 결제 검증은 유저가 화면에서
+기다리는 유일한 경로다.
+
+```
+platform-iap-warmup-5m   */5 * * * *  GET /health/live
+platform-api-warmup-5m   */5 * * * *  GET /health/live
+```
+
+`platform-ingest`는 fire-and-forget이라 콜드가 유저에게 보이지 않고,
+`platform-admin`은 운영자용이라 감수한다. 붙이지 않았다.
+
+측정 방법과 되돌리는 명령은
+[06-release/README.md](../06-release/README.md#콜드스타트)에 있다.
+
+#### 원장 환경 불일치 감지 (2026-08-03)
+
+레지스트리와 서비스의 원장 환경이 어긋나면 그 앱의 운영 조작이 전부 422가 되는데
+**유저 결제는 계속 된다.** 5xx도 트래픽 변화도 없어 대시보드로는 잡히지 않는다.
+실제로 몇 시간 동안 그 상태였고 선물 한 건을 넣어보고 나서야 알았다.
+
+`/v1/admin/health`가 어긋난 앱을 돌려주고 WARNING 로그를 남긴다. 백오피스 플랫폼
+개요 화면도 `degraded`로 바뀌며 해소 방법(`regsync`)을 같이 띄운다.
+
+배포 후 실제로 어긋내 확인했다.
+
+```json
+{"environment":"sandbox",
+ "environmentMismatches":[
+   {"appId":"lizard-tycoon","registry":"production","ledger":"sandbox"}]}
+```
+
+```json
+{"level":"WARN","msg":"레지스트리와 원장 환경이 어긋나 조작이 막혔다",
+ "apps":"lizard-tycoon","count":1,"ledger_environment":"sandbox"}
+```
 
 ---
 

@@ -68,7 +68,7 @@ CI와 로컬 개발은 **Firestore 에뮬레이터**를 쓴다.
 ### 대응
 
 1. **Startup CPU boost** — 켠다. `--cpu-boost`. 거의 무료이고 효과가 크다
-2. **warm-up ping — 도입 확정**
+2. **warm-up ping — 도입 완료**(2026-08-03, 아래 "적용" 참고)
    - Cloud Scheduler 5분 간격 `/health/live`
    - Cloud Run이 유휴 인스턴스를 약 15분 후 종료하므로 사실상 상시 warm
    - 월 8,640 요청으로 무료 한도의 0.4%. **비용 0원**
