@@ -33,10 +33,11 @@ server/
         ├── ledger/        Firestore 원장 구현
         ├── catalog/       SKU 카탈로그
         ├── binding/       HMAC 계정참조
+        ├── refundreview/  AES-GCM 봉투와 Google 제출 값
         ├── providers/
         │   ├── play/  apple/  toss/
         ├── webhook/       ASSN v2, RTDN 수신
-        └── worker/        완료 outbox 재시도
+        └── worker/        완료 outbox + 환불 검토 결정 재시도
 ```
 
 ## 의존성 방향
@@ -55,9 +56,11 @@ flowchart TD
   VERIFY --> DOM["iap/domain"]
   VERIFY --> ERR
   LEDGER --> DOM
+  LEDGER --> REFUND["iap/refundreview"]
   LEDGER --> STORE["store"]
   LEDGER --> ERR
   PROV --> DOM
+  PROV --> REFUND
   PROV --> ERR
   ID --> STORE
   CFG --> STORE

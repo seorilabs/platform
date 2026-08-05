@@ -32,3 +32,4 @@ ADR과 장기 의사결정을 관리한다.
 | [0011](0011-admin-management-boundary.md) | 플랫폼 관리 조작은 좁은 Admin 경계에서만 수행한다 | Accepted |
 | [0012](0012-sandbox-reset-durable-intent.md) | sandbox reset은 영구 intent로 시작 순서를 확정한다 | Accepted |
 | [0013](0013-platform-firebase-custom-token-bridge.md) | platform이 앱 Firebase custom token을 원격 서명한다 | Accepted |
+| [0014](0014-google-play-refund-review.md) | Google Play 환불 검토 결정은 외부 호출 전에 영구 확정한다 | Accepted |
