@@ -190,7 +190,7 @@ func TestIsRetryable(t *testing.T) {
 	retryable := []Code{
 		CodeEventBusy, CodeProviderTimeout, CodeProviderUnavailable,
 		CodePurchaseNotFound, CodeProviderCompletionPending,
-		CodeSandboxResetPending,
+		CodeSandboxResetPending, CodeConfigUnavailable,
 	}
 	for _, c := range retryable {
 		if !IsRetryable(c) {

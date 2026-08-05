@@ -19,6 +19,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/providers/apple"
 	"github.com/seorilabs/platform/server/internal/iap/providers/play"
 	"github.com/seorilabs/platform/server/internal/iap/providers/toss"
+	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/iap/verify"
 	"github.com/seorilabs/platform/server/internal/store"
 )
@@ -33,11 +34,12 @@ const playScope = "https://www.googleapis.com/auth/androidpublisher"
 //
 // 웹훅과 워커가 검증기와 원장을 직접 써야 해서 함께 돌려준다.
 type iapParts struct {
-	service   *verify.Service
-	ledger    *ledger.Ledger
-	catalog   *catalog.Catalog
-	verifiers map[domain.Platform]verify.Verifier
-	enabled   []domain.Platform
+	service    *verify.Service
+	ledger     *ledger.Ledger
+	catalog    *catalog.Catalog
+	verifiers  map[domain.Platform]verify.Verifier
+	enabled    []domain.Platform
+	refundKeys *refundreview.Keyring
 }
 
 // newIAPService는 결제 유스케이스를 조립한다.
@@ -78,6 +80,18 @@ func newIAPService(
 		return nil, err
 	}
 
+	var refundKeys *refundreview.Keyring
+	if ic.Play.Enabled() {
+		keys := make([]refundreview.Key, 0, len(ic.RefundReviewKeys))
+		for _, key := range ic.RefundReviewKeys {
+			keys = append(keys, refundreview.Key{ID: key.ID, Material: key.Material})
+		}
+		refundKeys, err = refundreview.NewKeyring(keys...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	led := ledger.New(st, env)
 
 	byPlatform := make(map[domain.Platform]verify.Verifier, len(verifiers))
@@ -105,11 +119,12 @@ func newIAPService(
 		"entitlements", len(cat.IDs()),
 	)
 	return &iapParts{
-		service:   svc,
-		ledger:    led,
-		catalog:   cat,
-		verifiers: byPlatform,
-		enabled:   enabled,
+		service:    svc,
+		ledger:     led,
+		catalog:    cat,
+		verifiers:  byPlatform,
+		enabled:    enabled,
+		refundKeys: refundKeys,
 	}, nil
 }
 

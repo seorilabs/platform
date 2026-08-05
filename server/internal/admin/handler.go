@@ -48,6 +48,10 @@ type Ledger interface {
 	OperatorRevoke(ctx context.Context, in ledger.OperatorInput) (ledger.OperatorResult, error)
 	MarkSandboxReset(ctx context.Context, in ledger.SandboxResetInput) ([]string, error)
 	CountDeadLetters(ctx context.Context) (int, error)
+	ListRefundReviews(ctx context.Context, appID, state string, limit int) ([]ledger.RefundReviewSummary, error)
+	FindRefundReviewDecisionReplay(ctx context.Context, in ledger.RefundReviewDecisionInput) (ledger.RefundReviewDecisionResult, bool, error)
+	DecideRefundReview(ctx context.Context, in ledger.RefundReviewDecisionInput) (ledger.RefundReviewDecisionResult, error)
+	RefundReviewHealth(ctx context.Context) (ledger.RefundReviewHealth, error)
 	CheckAdminMutationRate(ctx context.Context, principal string) error
 	// Environment는 원장 환경이다. 운영자가 지금 어느 쪽을 보는지
 	// 화면에 띄워야 sandbox를 production으로 착각하지 않는다.
@@ -115,13 +119,14 @@ func NewHandler(
 func (h *Handler) Register(mux *http.ServeMux) {
 	readRoutes := map[string]httpx.Handler{
 		// 조회 — 등급 A
-		"GET /v1/admin/orders/recent":                  h.recentOrders,
-		"GET /v1/admin/users/{reference}":              h.user,
-		"GET /v1/admin/users/{puid}/entitlements":      h.userEntitlements,
-		"GET /v1/admin/operator-grants":                h.operatorGrants,
-		"GET /v1/admin/apps/{appId}/iap/catalog":       h.iapCatalog,
-		"GET /v1/admin/iap/sandbox-resets/{requestId}": h.sandboxResetStatus,
-		"GET /v1/admin/health":                         h.health,
+		"GET /v1/admin/orders/recent":                   h.recentOrders,
+		"GET /v1/admin/users/{reference}":               h.user,
+		"GET /v1/admin/users/{puid}/entitlements":       h.userEntitlements,
+		"GET /v1/admin/operator-grants":                 h.operatorGrants,
+		"GET /v1/admin/apps/{appId}/iap/catalog":        h.iapCatalog,
+		"GET /v1/admin/apps/{appId}/iap/refund-reviews": h.refundReviews,
+		"GET /v1/admin/iap/sandbox-resets/{requestId}":  h.sandboxResetStatus,
+		"GET /v1/admin/health":                          h.health,
 	}
 	writeRoutes := map[string]httpx.Handler{
 		// 조작 — 등급 C. reason과 requestId가 필수다
@@ -129,9 +134,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"POST /v1/admin/entitlements/revoke": h.revokeEntitlement,
 
 		// sandbox 원장에서만 동작한다. production에서는 거부한다
-		"POST /v1/admin/iap/sandbox-reset":                                h.resetAppStoreSandbox,
-		"POST /v1/admin/iap/sandbox-resets/{requestId}/resume":            h.resumeAppStoreSandboxReset,
-		"POST /v1/admin/iap/sandbox-resets/{requestId}/close-not-started": h.closeAppStoreSandboxResetNotStarted,
+		"POST /v1/admin/iap/sandbox-reset":                                   h.resetAppStoreSandbox,
+		"POST /v1/admin/iap/sandbox-resets/{requestId}/resume":               h.resumeAppStoreSandboxReset,
+		"POST /v1/admin/iap/sandbox-resets/{requestId}/close-not-started":    h.closeAppStoreSandboxResetNotStarted,
+		"POST /v1/admin/apps/{appId}/iap/refund-reviews/{reviewId}/decision": h.decideRefundReview,
 
 		// break-glass. 백오피스가 죽어도 점검 모드는 켤 수 있어야 한다
 		"POST /v1/admin/config/maintenance": h.setMaintenance,
@@ -202,13 +208,252 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	refundHealth, err := h.ledger.RefundReviewHealth(r.Context())
+	if err != nil {
+		return err
+	}
 
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
-		"environment":           string(h.ledger.Environment()),
-		"deadLetterCount":       deadLetters,
-		"environmentMismatches": h.environmentMismatches(r.Context()),
+		"environment":              string(h.ledger.Environment()),
+		"deadLetterCount":          deadLetters,
+		"environmentMismatches":    h.environmentMismatches(r.Context()),
+		"pendingRefundReviewCount": refundHealth.Pending,
+		"dueSoonRefundReviewCount": refundHealth.DueSoon,
+		"failedRefundReviewCount":  refundHealth.Failed,
 	})
 	return nil
+}
+
+type adminRefundReview struct {
+	ReviewID              string     `json:"reviewId"`
+	AppID                 string     `json:"appId"`
+	ExpectedEnvironment   string     `json:"expectedEnvironment"`
+	State                 string     `json:"state"`
+	RefundReason          int64      `json:"refundReason"`
+	ReceivedAt            time.Time  `json:"receivedAt"`
+	DueAt                 time.Time  `json:"dueAt"`
+	RequestID             string     `json:"requestId,omitempty"`
+	RefundPreference      string     `json:"refundPreference,omitempty"`
+	SampleContentProvided *bool      `json:"sampleContentProvided,omitempty"`
+	DecisionReason        string     `json:"decisionReason,omitempty"`
+	DecidedAt             *time.Time `json:"decidedAt,omitempty"`
+	RespondedAt           *time.Time `json:"respondedAt,omitempty"`
+	FailedAt              *time.Time `json:"failedAt,omitempty"`
+	ExpiredAt             *time.Time `json:"expiredAt,omitempty"`
+	LastErrorCode         string     `json:"lastErrorCode,omitempty"`
+}
+
+// refundReviews는 token·orderId·ciphertext가 없는 명시 DTO만 반환한다.
+func (h *Handler) refundReviews(w http.ResponseWriter, r *http.Request) error {
+	appID := r.PathValue("appId")
+	if err := h.validateRefundReviewAppContext(r.Context(), appID, string(h.ledger.Environment())); err != nil {
+		return err
+	}
+	state := r.URL.Query().Get("state")
+	items, err := h.ledger.ListRefundReviews(r.Context(), appID, state, parseLimit(r))
+	if err != nil {
+		return err
+	}
+	result := make([]adminRefundReview, 0, len(items))
+	for _, item := range items {
+		if item.AppID != appID || !adminOrderKeyPattern.MatchString(item.ReviewID) ||
+			item.Environment != string(h.ledger.Environment()) || item.ReceivedAt.IsZero() || item.DueAt.IsZero() {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"환불 검토 원장에 브라우저로 노출할 수 없는 값이 있어요")
+		}
+		result = append(result, adminRefundReview{
+			ReviewID: item.ReviewID, AppID: item.AppID,
+			ExpectedEnvironment: item.Environment, State: item.State,
+			RefundReason: item.RefundReason, ReceivedAt: item.ReceivedAt, DueAt: item.DueAt,
+			RequestID: item.RequestID, RefundPreference: item.RefundPreference,
+			SampleContentProvided: item.SampleContentProvided,
+			DecisionReason:        item.DecisionReason, DecidedAt: timePointer(item.DecidedAt),
+			RespondedAt: timePointer(item.RespondedAt), FailedAt: timePointer(item.FailedAt),
+			ExpiredAt: timePointer(item.ExpiredAt), LastErrorCode: item.LastErrorCode,
+		})
+	}
+	httpx.WriteOK(w, http.StatusOK, map[string]any{
+		"appId": appID, "environment": string(h.ledger.Environment()), "refundReviews": result,
+	})
+	return nil
+}
+
+func timePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	copy := value
+	return &copy
+}
+
+type refundReviewDecisionRequest struct {
+	RequestID             string `json:"requestId"`
+	ExpectedEnvironment   string `json:"expectedEnvironment"`
+	RefundPreference      string `json:"refundPreference"`
+	SampleContentProvided *bool  `json:"sampleContentProvided"`
+	Reason                string `json:"reason"`
+	Confirmation          string `json:"confirmation"`
+}
+
+func (h *Handler) decideRefundReview(w http.ResponseWriter, r *http.Request) error {
+	appID, reviewID := r.PathValue("appId"), r.PathValue("reviewId")
+	var req refundReviewDecisionRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if !adminAppIDPattern.MatchString(appID) || !adminOrderKeyPattern.MatchString(reviewID) ||
+		!ledger.ValidRefundReviewRequestID(req.RequestID) || req.SampleContentProvided == nil ||
+		!ledger.ValidRefundReviewPreference(req.RefundPreference) ||
+		!ledger.ValidRefundReviewDecisionReason(req.Reason) {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"환불 검토 결정에 올바른 대상과 필수 값이 필요해요")
+	}
+	if req.ExpectedEnvironment != string(domain.EnvSandbox) &&
+		req.ExpectedEnvironment != string(domain.EnvProduction) {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"expectedEnvironment가 올바르지 않아요")
+	}
+	wantConfirmation := fmt.Sprintf("RESPOND REFUND %s %s %s", appID, reviewID, req.RefundPreference)
+	if req.Confirmation != wantConfirmation {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"typed confirmation이 환불 검토 결정과 맞지 않아요")
+	}
+	if req.ExpectedEnvironment != string(h.ledger.Environment()) {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"요청한 환경과 Admin 원장 환경이 달라요")
+	}
+
+	actor := ActorFrom(r.Context())
+	input := ledger.RefundReviewDecisionInput{
+		RequestID: req.RequestID, ReviewID: reviewID, AppID: appID,
+		ExpectedEnvironment:   req.ExpectedEnvironment,
+		RefundPreference:      req.RefundPreference,
+		SampleContentProvided: *req.SampleContentProvided,
+		Reason:                req.Reason, ActorLogin: actorLogin(actor),
+	}
+	if replay, found, err := h.ledger.FindRefundReviewDecisionReplay(r.Context(), input); err != nil {
+		h.auditRefundReviewDecision(r.Context(), input, string(platformerr.CodeOf(err)))
+		return err
+	} else if found {
+		if err := validateRefundReviewDecisionResult(replay, input); err != nil {
+			h.auditRefundReviewDecision(r.Context(), input, string(platformerr.CodeOf(err)))
+			return err
+		}
+		h.auditRefundReviewDecision(r.Context(), input, "already_applied")
+		writeRefundReviewDecision(w, replay)
+		return nil
+	}
+	if err := h.validateRefundReviewAppContext(r.Context(), appID, req.ExpectedEnvironment); err != nil {
+		h.auditRefundReviewDecision(r.Context(), input, string(platformerr.CodeOf(err)))
+		return err
+	}
+	if err := h.ledger.CheckAdminMutationRate(r.Context(), actor.Email); err != nil {
+		h.auditRefundReviewDecision(r.Context(), input, string(platformerr.CodeOf(err)))
+		return err
+	}
+	result, err := h.ledger.DecideRefundReview(r.Context(), input)
+	if err != nil {
+		h.auditRefundReviewDecision(r.Context(), input, string(platformerr.CodeOf(err)))
+		return err
+	}
+	if err := validateRefundReviewDecisionResult(result, input); err != nil {
+		h.auditRefundReviewDecision(r.Context(), input, string(platformerr.CodeOf(err)))
+		return err
+	}
+	outcome := "ok"
+	if !result.Applied {
+		outcome = "already_applied"
+	}
+	h.auditRefundReviewDecision(r.Context(), input, outcome)
+	writeRefundReviewDecision(w, result)
+	return nil
+}
+
+func validateRefundReviewDecisionResult(
+	result ledger.RefundReviewDecisionResult,
+	input ledger.RefundReviewDecisionInput,
+) error {
+	if result.RequestID != input.RequestID || result.ReviewID != input.ReviewID ||
+		result.AppID != input.AppID || result.ExpectedEnvironment != input.ExpectedEnvironment ||
+		result.RefundPreference != input.RefundPreference ||
+		result.SampleContentProvided != input.SampleContentProvided ||
+		!validRefundReviewDecisionResultState(result.State) {
+		return platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"환불 검토 결정 응답의 target binding이 올바르지 않아요")
+	}
+	return nil
+}
+
+// 결정 문서가 있으면 전달 worker의 현재 terminal 상태도 exact replay의
+// 안정된 결과다. 실패·만료를 5xx로 바꾸면 이미 영구 확정된 command를
+// Backoffice가 결과 불명으로 오인해 같은 request ID 복구를 막게 된다.
+func validRefundReviewDecisionResultState(state string) bool {
+	switch state {
+	case ledger.RefundReviewDecided, ledger.RefundReviewResponded,
+		ledger.RefundReviewExpired, ledger.RefundReviewFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func writeRefundReviewDecision(w http.ResponseWriter, result ledger.RefundReviewDecisionResult) {
+	httpx.WriteOK(w, http.StatusAccepted, map[string]any{
+		"applied": result.Applied, "requestId": result.RequestID,
+		"reviewId": result.ReviewID, "appId": result.AppID,
+		"expectedEnvironment": result.ExpectedEnvironment, "state": result.State,
+		"refundPreference":      result.RefundPreference,
+		"sampleContentProvided": result.SampleContentProvided,
+		"operation":             "refund_review_decision",
+	})
+}
+
+func (h *Handler) validateRefundReviewAppContext(
+	ctx context.Context,
+	appID, expectedEnvironment string,
+) error {
+	if !adminAppIDPattern.MatchString(appID) {
+		return platformerr.New(platformerr.CodeRequestInvalid, "appId 형식이 올바르지 않아요")
+	}
+	if expectedEnvironment != string(h.ledger.Environment()) {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"요청한 환경과 Admin 원장 환경이 달라요")
+	}
+	app, err := h.apps.Get(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if err := app.EnsureUsable(); err != nil {
+		return err
+	}
+	if !app.FeatureEnabled("iap") || !app.MarketEnabled("google_play") ||
+		app.IAP.GooglePlayPackageName == "" {
+		return platformerr.New(platformerr.CodeAuthForbidden,
+			"이 앱은 Google Play 환불 검토가 활성화되지 않았어요")
+	}
+	if string(app.IAP.LedgerEnvironment) != expectedEnvironment {
+		return platformerr.New(platformerr.CodeEnvironmentMismatch,
+			"앱 레지스트리와 요청한 원장 환경이 달라요")
+	}
+	return nil
+}
+
+func (h *Handler) auditRefundReviewDecision(
+	ctx context.Context,
+	in ledger.RefundReviewDecisionInput,
+	outcome string,
+) {
+	if h.auditor == nil {
+		return
+	}
+	h.auditor.Record(ctx, "iap.refund_review_decision", in.AppID, "", outcome,
+		map[string]any{
+			"request_id": in.RequestID, "review_id": in.ReviewID,
+			"environment": in.ExpectedEnvironment, "actor": in.ActorLogin,
+			"refund_preference":       in.RefundPreference,
+			"sample_content_provided": in.SampleContentProvided,
+			"reason":                  in.Reason,
+		})
 }
 
 // environmentMismatch는 레지스트리와 이 서비스의 원장 환경이 어긋난 앱이다.

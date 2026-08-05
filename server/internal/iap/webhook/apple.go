@@ -146,6 +146,7 @@ func (h *AppleHandler) parse(signedPayload string) (notification, error) {
 		EventKey:   payload.NotificationUUID,
 		Kind:       payload.NotificationType,
 		ObservedAt: appleSignedDate(payload),
+		Platform:   domain.PlatformAppStore,
 	}
 
 	// 다른 앱의 알림이다. 우리 원장과 무관하다.

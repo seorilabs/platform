@@ -15,6 +15,7 @@
   "iap": {
     "ledger_environment": "sandbox",
     "markets": ["google_play", "app_store", "apps_in_toss"],
+    "google_play_package_name": "com.seorilabs.lizardtycoon",
     "entitlement_ids": ["sp_galaxy_gecko", "sp_shootingstar_tokay"]
   },
   "platform_event_allowlist": [

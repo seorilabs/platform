@@ -45,12 +45,19 @@ func (f *fakeValidator) Validate(context.Context, string) (string, error) {
 
 // fakeLedger는 원장을 대신한다.
 type fakeLedger struct {
-	orders       []ledger.OrderSummary
-	entitlements []ledger.UserEntitlement
-	grants       []ledger.OperatorRecord
-	revocations  []ledger.OperatorRecord
-	deadLetters  int
-	err          error
+	orders              []ledger.OrderSummary
+	entitlements        []ledger.UserEntitlement
+	grants              []ledger.OperatorRecord
+	revocations         []ledger.OperatorRecord
+	deadLetters         int
+	refundReviews       []ledger.RefundReviewSummary
+	refundHealth        ledger.RefundReviewHealth
+	refundDecisionCalls []ledger.RefundReviewDecisionInput
+	refundReplayCalls   []ledger.RefundReviewDecisionInput
+	refundDecision      ledger.RefundReviewDecisionResult
+	refundReplayFound   bool
+	refundReplayErr     error
+	err                 error
 
 	grantCalls  []ledger.OperatorInput
 	revokeCalls []ledger.OperatorInput
@@ -143,6 +150,36 @@ func (f *fakeLedger) OperatorRevoke(_ context.Context, in ledger.OperatorInput) 
 func (f *fakeLedger) CountDeadLetters(context.Context) (int, error) {
 	return f.deadLetters, f.err
 }
+func (f *fakeLedger) ListRefundReviews(context.Context, string, string, int) ([]ledger.RefundReviewSummary, error) {
+	return f.refundReviews, f.err
+}
+func (f *fakeLedger) FindRefundReviewDecisionReplay(
+	_ context.Context, in ledger.RefundReviewDecisionInput,
+) (ledger.RefundReviewDecisionResult, bool, error) {
+	f.refundReplayCalls = append(f.refundReplayCalls, in)
+	return f.refundDecision, f.refundReplayFound, f.refundReplayErr
+}
+func (f *fakeLedger) DecideRefundReview(
+	_ context.Context, in ledger.RefundReviewDecisionInput,
+) (ledger.RefundReviewDecisionResult, error) {
+	f.refundDecisionCalls = append(f.refundDecisionCalls, in)
+	if f.err != nil {
+		return ledger.RefundReviewDecisionResult{}, f.err
+	}
+	result := f.refundDecision
+	if result.RequestID == "" {
+		result = ledger.RefundReviewDecisionResult{
+			Applied: true, RequestID: in.RequestID, ReviewID: in.ReviewID,
+			AppID: in.AppID, ExpectedEnvironment: in.ExpectedEnvironment,
+			State: ledger.RefundReviewDecided, RefundPreference: in.RefundPreference,
+			SampleContentProvided: in.SampleContentProvided,
+		}
+	}
+	return result, nil
+}
+func (f *fakeLedger) RefundReviewHealth(context.Context) (ledger.RefundReviewHealth, error) {
+	return f.refundHealth, f.err
+}
 func (f *fakeLedger) MarkSandboxReset(_ context.Context, in ledger.SandboxResetInput) ([]string, error) {
 	f.resetCalls = append(f.resetCalls, in)
 	if f.err != nil {
@@ -231,8 +268,10 @@ func (f *fakeApps) Get(_ context.Context, appID string) (registry.App, error) {
 		Status:   registry.StatusActive,
 		Features: map[string]bool{"iap": true},
 		IAP: registry.IAPConfig{
-			LedgerEnvironment: registry.LedgerSandbox,
-			EntitlementIDs:    []string{"sp_a"},
+			LedgerEnvironment:     registry.LedgerSandbox,
+			Markets:               []string{"google_play"},
+			GooglePlayPackageName: "com.seorilabs.lizardtycoon",
+			EntitlementIDs:        []string{"sp_a"},
 		},
 	}, nil
 }
@@ -320,6 +359,15 @@ func sandboxResetCloseBody(requestID, appID string) string {
 	)
 }
 
+func refundDecisionBody(requestID, appID, reviewID, preference, reason string, sample bool) string {
+	return fmt.Sprintf(
+		`{"requestId":%q,"expectedEnvironment":"sandbox","refundPreference":%q,`+
+			`"sampleContentProvided":%t,"reason":%q,"confirmation":%q}`,
+		requestID, preference, sample, reason,
+		fmt.Sprintf("RESPOND REFUND %s %s %s", appID, reviewID, preference),
+	)
+}
+
 func serve(t *testing.T, h *Handler, method, path, body, token, actor string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -383,6 +431,7 @@ func TestAllRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/v1/admin/users/" + testPUID + "/entitlements", ""},
 		{http.MethodGet, "/v1/admin/operator-grants", ""},
 		{http.MethodGet, "/v1/admin/apps/a/iap/catalog", ""},
+		{http.MethodGet, "/v1/admin/apps/a/iap/refund-reviews", ""},
 		{http.MethodGet, "/v1/admin/iap/sandbox-resets/reset-1", ""},
 		{http.MethodGet, "/v1/admin/health", ""},
 		{http.MethodPost, "/v1/admin/entitlements/grant", `{}`},
@@ -390,6 +439,7 @@ func TestAllRoutesRequireAuth(t *testing.T) {
 		{http.MethodPost, "/v1/admin/iap/sandbox-reset", `{}`},
 		{http.MethodPost, "/v1/admin/iap/sandbox-resets/reset-1/resume", `{}`},
 		{http.MethodPost, "/v1/admin/iap/sandbox-resets/reset-1/close-not-started", `{}`},
+		{http.MethodPost, "/v1/admin/apps/a/iap/refund-reviews/" + strings.Repeat("a", 64) + "/decision", `{}`},
 		{http.MethodPost, "/v1/admin/config/maintenance", `{}`},
 	}
 
@@ -652,6 +702,146 @@ func TestIAPCatalogReturnsOnlyEntitlementIDs(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "google_play") || strings.Contains(w.Body.String(), "app_store") {
 		t.Errorf("SKU 정보가 노출됐다: %s", w.Body.String())
+	}
+}
+
+func TestRefundReviewsExposeOnlySafeProjection(t *testing.T) {
+	reviewID := strings.Repeat("a", 64)
+	now := time.Now().UTC().Truncate(time.Second)
+	sample := false
+	l := &fakeLedger{refundReviews: []ledger.RefundReviewSummary{{
+		ReviewID: reviewID, AppID: "a", Environment: "sandbox",
+		State: ledger.RefundReviewDecided, RefundReason: 7,
+		ReceivedAt: now, DueAt: now.Add(24 * time.Hour), RequestID: "request-1",
+		RefundPreference:      ledger.RefundPreferenceNeutral,
+		SampleContentProvided: &sample, DecisionReason: ledger.RefundReasonInsufficientEvidence,
+		DecidedAt: now.Add(time.Minute),
+	}}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodGet, "/v1/admin/apps/a/iap/refund-reviews", "", "tok", "reader")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	for _, forbidden := range []string{"orderId", "pendingRefundToken", "ciphertext", "platformUserId"} {
+		if strings.Contains(w.Body.String(), forbidden) {
+			t.Fatalf("금지 필드 %q가 노출됐다: %s", forbidden, w.Body.String())
+		}
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	items, _ := result["refundReviews"].([]any)
+	item, _ := items[0].(map[string]any)
+	if item["reviewId"] != reviewID || item["sampleContentProvided"] != false {
+		t.Fatalf("review=%v", item)
+	}
+}
+
+func TestRefundReviewDecisionIsQueuedWithTargetBinding(t *testing.T) {
+	reviewID := strings.Repeat("b", 64)
+	l := &fakeLedger{}
+	audit := &fakeAuditor{}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, audit)
+	body := refundDecisionBody("11111111-1111-4111-8111-111111111111", "a", reviewID,
+		ledger.RefundPreferenceDecline, ledger.RefundReasonVerifiedFulfillment, true)
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/apps/a/iap/refund-reviews/"+reviewID+"/decision",
+		body, "tok", "operator")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(l.refundReplayCalls) != 1 || len(l.refundDecisionCalls) != 1 || len(l.rateCalls) != 1 {
+		t.Fatalf("replay=%d decide=%d rate=%d",
+			len(l.refundReplayCalls), len(l.refundDecisionCalls), len(l.rateCalls))
+	}
+	in := l.refundDecisionCalls[0]
+	if in.ReviewID != reviewID || in.AppID != "a" || in.ActorLogin != "operator" ||
+		in.RefundPreference != ledger.RefundPreferenceDecline || !in.SampleContentProvided {
+		t.Fatalf("input=%#v", in)
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	assertExactJSONKeys(t, result, "applied", "requestId", "reviewId", "appId",
+		"expectedEnvironment", "state", "refundPreference", "sampleContentProvided", "operation")
+}
+
+func TestRefundReviewDecisionRequiresExplicitSampleContentValue(t *testing.T) {
+	reviewID := strings.Repeat("c", 64)
+	h := newHandler(t, &fakeLedger{}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	body := fmt.Sprintf(
+		`{"requestId":"22222222-2222-4222-8222-222222222222","expectedEnvironment":"sandbox",`+
+			`"refundPreference":"NEUTRAL","reason":"insufficient_evidence",`+
+			`"confirmation":"RESPOND REFUND a %s NEUTRAL"}`, reviewID)
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/apps/a/iap/refund-reviews/"+reviewID+"/decision",
+		body, "tok", "operator")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestRefundReviewExactReplaySkipsMutableRateGate(t *testing.T) {
+	reviewID := strings.Repeat("d", 64)
+	l := &fakeLedger{
+		refundReplayFound: true,
+		refundDecision: ledger.RefundReviewDecisionResult{
+			Applied: false, RequestID: "33333333-3333-4333-8333-333333333333", ReviewID: reviewID, AppID: "a",
+			ExpectedEnvironment: "sandbox", State: ledger.RefundReviewResponded,
+			RefundPreference: ledger.RefundPreferenceApprove, SampleContentProvided: false,
+		},
+		rateErr: platformerr.New(platformerr.CodeRateLimited, "limit"),
+	}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/apps/a/iap/refund-reviews/"+reviewID+"/decision",
+		refundDecisionBody("33333333-3333-4333-8333-333333333333", "a", reviewID,
+			ledger.RefundPreferenceApprove, ledger.RefundReasonCustomerRefundSupported, false),
+		"tok", "operator")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(l.rateCalls) != 0 || len(l.refundDecisionCalls) != 0 {
+		t.Fatalf("exact retry가 mutable 경로를 탔다: rate=%v decide=%v", l.rateCalls, l.refundDecisionCalls)
+	}
+}
+
+func TestRefundReviewExactReplayReturnsTerminalDeliveryFailure(t *testing.T) {
+	reviewID := strings.Repeat("9", 64)
+	l := &fakeLedger{
+		refundReplayFound: true,
+		refundDecision: ledger.RefundReviewDecisionResult{
+			Applied: false, RequestID: "44444444-4444-4444-8444-444444444444", ReviewID: reviewID, AppID: "a",
+			ExpectedEnvironment: "sandbox", State: ledger.RefundReviewFailed,
+			RefundPreference: ledger.RefundPreferenceNeutral, SampleContentProvided: false,
+		},
+	}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/apps/a/iap/refund-reviews/"+reviewID+"/decision",
+		refundDecisionBody("44444444-4444-4444-8444-444444444444", "a", reviewID,
+			ledger.RefundPreferenceNeutral, ledger.RefundReasonInsufficientEvidence, false),
+		"tok", "operator")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	_, result, _ := decodeEnvelope(t, w)
+	if result["state"] != ledger.RefundReviewFailed || result["applied"] != false {
+		t.Fatalf("result=%v", result)
+	}
+}
+
+func TestRefundReviewRejectsMismatchedLedgerResponse(t *testing.T) {
+	reviewID := strings.Repeat("e", 64)
+	l := &fakeLedger{refundDecision: ledger.RefundReviewDecisionResult{
+		Applied: true, RequestID: "55555555-5555-4555-8555-555555555555", ReviewID: strings.Repeat("f", 64),
+		AppID: "a", ExpectedEnvironment: "sandbox", State: ledger.RefundReviewDecided,
+		RefundPreference: ledger.RefundPreferenceDecline, SampleContentProvided: true,
+	}}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodPost,
+		"/v1/admin/apps/a/iap/refund-reviews/"+reviewID+"/decision",
+		refundDecisionBody("55555555-5555-4555-8555-555555555555", "a", reviewID,
+			ledger.RefundPreferenceDecline, ledger.RefundReasonVerifiedFulfillment, true),
+		"tok", "operator")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

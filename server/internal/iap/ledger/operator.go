@@ -148,6 +148,10 @@ func (l *Ledger) FindOperatorReplay(
 	if err != nil {
 		return OperatorResult{}, false, err
 	}
+	refundDecisionPath, err := l.paths.refundReviewDecision(in.RequestID)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
 
 	recordSnap, recordExists, err := l.getOptional(ctx, recordPath)
 	if err != nil {
@@ -169,7 +173,11 @@ func (l *Ledger) FindOperatorReplay(
 	if err != nil {
 		return OperatorResult{}, false, err
 	}
-	if oppositeExists || resetExists || resetCompletionExists || resetClosureExists {
+	_, refundDecisionExists, err := l.getOptional(ctx, refundDecisionPath)
+	if err != nil {
+		return OperatorResult{}, false, err
+	}
+	if oppositeExists || resetExists || resetCompletionExists || resetClosureExists || refundDecisionExists {
 		return OperatorResult{}, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
 			"requestId가 다른 운영 조작에 이미 사용됐어요")
 	}
@@ -286,7 +294,15 @@ func (l *Ledger) OperatorGrant(ctx context.Context, in OperatorInput) (OperatorR
 		if err != nil {
 			return err
 		}
-		if oppositeExists || resetExists || resetCompletionExists || resetClosureExists {
+		refundDecisionPath, err := l.paths.refundReviewDecision(in.RequestID)
+		if err != nil {
+			return err
+		}
+		refundDecisionExists, _, err := tx.Exists(refundDecisionPath)
+		if err != nil {
+			return err
+		}
+		if oppositeExists || resetExists || resetCompletionExists || resetClosureExists || refundDecisionExists {
 			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
 				"requestId가 다른 운영 조작에 이미 사용됐어요")
 		}
@@ -421,7 +437,15 @@ func (l *Ledger) OperatorRevoke(ctx context.Context, in OperatorInput) (Operator
 		if err != nil {
 			return err
 		}
-		if requestGrantExists || resetExists || resetCompletionExists || resetClosureExists {
+		refundDecisionPath, err := l.paths.refundReviewDecision(in.RequestID)
+		if err != nil {
+			return err
+		}
+		refundDecisionExists, _, err := tx.Exists(refundDecisionPath)
+		if err != nil {
+			return err
+		}
+		if requestGrantExists || resetExists || resetCompletionExists || resetClosureExists || refundDecisionExists {
 			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
 				"requestId가 다른 운영 조작에 이미 사용됐어요")
 		}

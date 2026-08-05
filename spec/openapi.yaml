@@ -680,6 +680,105 @@ paths:
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /admin/apps/{appId}/iap/refund-reviews:
+    get:
+      tags: [admin]
+      summary: Google Play 환불 검토 queue 조회
+      description: |
+        read allowlist 전용이다. `orderId`, `pendingRefundToken`, ciphertext,
+        PUID와 마켓 계정 참조는 반환하지 않는다.
+      operationId: listAdminGooglePlayRefundReviews
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        - name: state
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/RefundReviewState' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [appId, environment, refundReviews]
+                        additionalProperties: false
+                        properties:
+                          appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                          environment: { $ref: '#/components/schemas/LedgerEnvironment' }
+                          refundReviews:
+                            type: array
+                            items: { $ref: '#/components/schemas/AdminRefundReview' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /admin/apps/{appId}/iap/refund-reviews/{reviewId}/decision:
+    post:
+      tags: [admin]
+      summary: Google Play 환불 검토 의견 확정
+      description: |
+        write allowlist 전용이다. 결정과 immutable request record를 같은
+        Firestore transaction으로 먼저 확정하고, worker가 Google에 제출한다.
+        Google은 첫 API 호출만 판단에 사용하므로 이미 확정된 의견은 수정할 수 없다.
+      operationId: decideAdminGooglePlayRefundReview
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        - name: reviewId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+        - $ref: '#/components/parameters/AdminActor'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminRefundReviewDecisionRequest' }
+      responses:
+        '202':
+          description: 결정이 원장에 확정되어 worker 제출 대기 중
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result: { $ref: '#/components/schemas/AdminRefundReviewDecisionResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /admin/entitlements/grant:
     post:
       tags: [admin]
@@ -1260,11 +1359,25 @@ components:
 
     AdminHealth:
       type: object
-      required: [environment, deadLetterCount, environmentMismatches]
+      required:
+        [environment, deadLetterCount, environmentMismatches, pendingRefundReviewCount,
+         dueSoonRefundReviewCount, failedRefundReviewCount]
       additionalProperties: false
       properties:
         environment: { $ref: '#/components/schemas/LedgerEnvironment' }
         deadLetterCount: { type: integer, minimum: 0 }
+        pendingRefundReviewCount:
+          type: integer
+          minimum: 0
+          description: pending 또는 decided 상태의 미응답 검토 수
+        dueSoonRefundReviewCount:
+          type: integer
+          minimum: 0
+          description: deadline이 1시간 안인 미응답 검토 수
+        failedRefundReviewCount:
+          type: integer
+          minimum: 0
+          description: Google 제출 또는 비밀 검증이 영구 실패한 검토 수
         environmentMismatches:
           type: array
           description: |
@@ -1308,6 +1421,85 @@ components:
         - incorrect_grant_correction
         - incident_recovery
         - internal_validation
+
+    RefundReviewState:
+      type: string
+      enum: [pending, decided, responded, expired, failed]
+
+    RefundReviewPreference:
+      type: string
+      enum: [DECLINE, APPROVE, NEUTRAL]
+
+    AdminRefundReviewDecisionReason:
+      type: string
+      description: 자유 서술과 PII를 받지 않는 환불 검토 고정 감사 사유
+      enum:
+        - verified_fulfillment
+        - customer_refund_supported
+        - insufficient_evidence
+        - internal_validation
+
+    AdminRefundReview:
+      type: object
+      required: [reviewId, appId, expectedEnvironment, state, refundReason, receivedAt, dueAt]
+      additionalProperties: false
+      properties:
+        reviewId: { type: string, pattern: '^[0-9a-f]{64}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        expectedEnvironment: { $ref: '#/components/schemas/LedgerEnvironment' }
+        state: { $ref: '#/components/schemas/RefundReviewState' }
+        refundReason:
+          type: integer
+          format: int64
+          description: 미래 Google enum을 유실하지 않도록 숫자 원문을 보존한다
+        receivedAt: { type: string, format: date-time }
+        dueAt: { type: string, format: date-time }
+        requestId: { type: string, format: uuid }
+        refundPreference: { $ref: '#/components/schemas/RefundReviewPreference' }
+        sampleContentProvided: { type: boolean }
+        decisionReason: { $ref: '#/components/schemas/AdminRefundReviewDecisionReason' }
+        decidedAt: { type: string, format: date-time }
+        respondedAt: { type: string, format: date-time }
+        failedAt: { type: string, format: date-time }
+        expiredAt: { type: string, format: date-time }
+        lastErrorCode: { type: string, maxLength: 128 }
+
+    AdminRefundReviewDecisionRequest:
+      type: object
+      required:
+        [requestId, expectedEnvironment, refundPreference, sampleContentProvided, reason, confirmation]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, format: uuid }
+        expectedEnvironment: { $ref: '#/components/schemas/LedgerEnvironment' }
+        refundPreference: { $ref: '#/components/schemas/RefundReviewPreference' }
+        sampleContentProvided:
+          type: boolean
+          description: 기본값 없이 운영자가 evidence를 확인하고 명시한다
+        reason: { $ref: '#/components/schemas/AdminRefundReviewDecisionReason' }
+        confirmation:
+          type: string
+          maxLength: 512
+          description: '`RESPOND REFUND {appId} {reviewId} {refundPreference}`와 정확히 일치'
+
+    AdminRefundReviewDecisionResult:
+      type: object
+      required:
+        [applied, requestId, reviewId, appId, expectedEnvironment, state,
+         refundPreference, sampleContentProvided, operation]
+      additionalProperties: false
+      properties:
+        applied: { type: boolean }
+        requestId: { type: string, format: uuid }
+        reviewId: { type: string, pattern: '^[0-9a-f]{64}$' }
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        expectedEnvironment: { $ref: '#/components/schemas/LedgerEnvironment' }
+        state:
+          type: string
+          enum: [decided, responded, expired, failed]
+        refundPreference: { $ref: '#/components/schemas/RefundReviewPreference' }
+        sampleContentProvided: { type: boolean }
+        operation: { type: string, enum: [refund_review_decision] }
 
     AdminUser:
       type: object

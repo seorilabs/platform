@@ -3,11 +3,13 @@ package worker
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 )
 
@@ -25,6 +27,80 @@ type failRecord struct {
 	orderKey    string
 	code        platformerr.Code
 	maxAttempts int
+}
+
+type fakeRefundQueue struct {
+	queue     []ledger.RefundReviewWork
+	completed []string
+	failed    []refundFailRecord
+	expired   int
+}
+
+type refundFailRecord struct {
+	reviewID  string
+	code      platformerr.Code
+	retryable bool
+}
+
+func (f *fakeRefundQueue) SweepExpiredRefundReviews(context.Context, int) (int, error) {
+	return f.expired, nil
+}
+
+func (f *fakeRefundQueue) ClaimNextRefundReview(context.Context) (ledger.RefundReviewWork, bool, error) {
+	if len(f.queue) == 0 {
+		return ledger.RefundReviewWork{}, false, nil
+	}
+	item := f.queue[0]
+	f.queue = f.queue[1:]
+	return item, true, nil
+}
+
+func (f *fakeRefundQueue) CompleteRefundReview(_ context.Context, reviewID, _ string) error {
+	f.completed = append(f.completed, reviewID)
+	return nil
+}
+
+func (f *fakeRefundQueue) FailRefundReview(
+	_ context.Context, reviewID, _ string, code platformerr.Code, retryable bool,
+) error {
+	f.failed = append(f.failed, refundFailRecord{reviewID, code, retryable})
+	return nil
+}
+
+type fakeRefundResponder struct {
+	err error
+	got []refundreview.Submission
+}
+
+func (f *fakeRefundResponder) ReviewRefund(_ context.Context, in refundreview.Submission) error {
+	f.got = append(f.got, in)
+	return f.err
+}
+
+func refundWork(t *testing.T) (ledger.RefundReviewWork, *refundreview.Keyring) {
+	t.Helper()
+	keys, err := refundreview.NewKeyring(refundreview.Key{
+		ID: "test", Material: []byte(strings.Repeat("k", 32)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := refundreview.Binding{
+		ReviewID: strings.Repeat("a", 64), AppID: "lizard-tycoon",
+		PackageName: "com.seorilabs.lizardtycoon", OrderIDHash: strings.Repeat("b", 64),
+		Environment: "sandbox",
+	}
+	envelope, err := keys.Seal(refundreview.Secret{
+		OrderID: "GPA.1234", PendingRefundToken: "pending-token",
+	}, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ledger.RefundReviewWork{
+		ReviewID: binding.ReviewID, LeaseID: "lease-refund", AttemptCount: 1,
+		Binding: binding, Secret: envelope, RefundPreference: ledger.RefundPreferenceDecline,
+		SampleContentProvided: true, DueAt: time.Now().Add(time.Hour),
+	}, keys
 }
 
 func (f *fakeOutbox) ClaimNext(_ context.Context, p domain.Platform) (ledger.OutboxItem, bool, error) {
@@ -291,6 +367,72 @@ func TestCompleterReceivesStoredPurchase(t *testing.T) {
 	}
 }
 
+func TestRefundReviewUsesSealedImmutableDecision(t *testing.T) {
+	item, keys := refundWork(t)
+	queue := &fakeRefundQueue{queue: []ledger.RefundReviewWork{item}, expired: 2}
+	responder := &fakeRefundResponder{}
+	w, err := New(Config{
+		Outbox:        &fakeOutbox{},
+		Completers:    map[domain.Platform]Completer{domain.PlatformGooglePlay: &fakeCompleter{}},
+		MaxAttempts:   12,
+		RefundReviews: queue, RefundOpener: keys, RefundResponder: responder,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err := w.RunOnce(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.RefundExpired != 2 || stats.RefundClaimed != 1 || stats.RefundResponded != 1 ||
+		stats.RefundFailed != 0 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if len(queue.completed) != 1 || len(responder.got) != 1 {
+		t.Fatalf("completed=%v submissions=%v", queue.completed, responder.got)
+	}
+	got := responder.got[0]
+	if got.PackageName != item.Binding.PackageName || got.OrderID != "GPA.1234" ||
+		got.PendingRefundToken != "pending-token" || got.RefundPreference != ledger.RefundPreferenceDecline ||
+		!got.SampleContentProvided {
+		t.Fatalf("submission=%#v", got)
+	}
+}
+
+func TestRefundReviewFailurePreservesRetryClassification(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{"일시 장애", platformerr.New(platformerr.CodeProviderUnavailable, "down"), true},
+		{"영구 거부", platformerr.New(platformerr.CodePurchaseInvalid, "bad"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item, keys := refundWork(t)
+			queue := &fakeRefundQueue{queue: []ledger.RefundReviewWork{item}}
+			w, err := New(Config{
+				Outbox:      &fakeOutbox{},
+				Completers:  map[domain.Platform]Completer{domain.PlatformGooglePlay: &fakeCompleter{}},
+				MaxAttempts: 12, RefundReviews: queue, RefundOpener: keys,
+				RefundResponder: &fakeRefundResponder{err: tt.err},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stats, err := w.RunOnce(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stats.RefundFailed != 1 || len(queue.failed) != 1 ||
+				queue.failed[0].retryable != tt.retryable {
+				t.Fatalf("stats=%+v failed=%+v", stats, queue.failed)
+			}
+		})
+	}
+}
+
 func TestNewValidation(t *testing.T) {
 	valid := Config{
 		Outbox:      &fakeOutbox{},
@@ -310,6 +452,7 @@ func TestNewValidation(t *testing.T) {
 		{"완료 처리기 없음", func(c *Config) { c.Completers = nil }},
 		{"재시도 상한 0", func(c *Config) { c.MaxAttempts = 0 }},
 		{"재시도 상한 음수", func(c *Config) { c.MaxAttempts = -1 }},
+		{"환불 queue만 설정", func(c *Config) { c.RefundReviews = &fakeRefundQueue{} }},
 	}
 
 	for _, tt := range tests {
