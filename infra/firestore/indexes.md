@@ -40,12 +40,46 @@ gcloud firestore indexes composite create \
 
 생성에 수 분이 걸린다. 배포 전에 미리 만들어 둔다.
 
+### `pending_refund_reviews` — Google Play 환불 검토
+
+대기열 조회, 24시간 만료 sweep, 결정 제출 worker가 각각 다른 복합 쿼리를 쓴다.
+
+| 쿼리 | 필드 순서 |
+|---|---|
+| 앱 전체 목록 | `appId ASC`, `dueAt ASC` |
+| 앱 상태별 목록 | `appId ASC`, `state ASC`, `dueAt ASC` |
+| 만료·마감 임박 | `state ASC`, `dueAt ASC` |
+| 제출할 결정 claim | `state ASC`, `nextAttemptAt ASC` |
+
+```bash
+for fields in \
+  'appId:ascending,dueAt:ascending' \
+  'appId:ascending,state:ascending,dueAt:ascending' \
+  'state:ascending,dueAt:ascending' \
+  'state:ascending,nextAttemptAt:ascending'; do
+  args=()
+  IFS=',' read -r -a pairs <<< "$fields"
+  for pair in "${pairs[@]}"; do
+    args+=("--field-config=field-path=${pair%%:*},order=${pair##*:}")
+  done
+  gcloud firestore indexes composite create \
+    --project=seorilabs-platform --billing-project=seorilabs-platform \
+    --collection-group=pending_refund_reviews \
+    --query-scope=COLLECTION "${args[@]}"
+done
+```
+
+`state IN (...)`도 equality 필드로 인덱스의 첫 자리에 둔다. `dueAt`과
+`nextAttemptAt`은 range와 정렬에 함께 쓰므로 마지막 필드다.
+
 ## 단일 필드로 충분한 쿼리
 
 Firestore가 자동으로 인덱싱하므로 따로 만들지 않는다.
 
 - `iap_completion_outbox` where `status == dead_letter` — `CountDeadLetters`
 - `iap_users/{puid}/entitlements` where `active == true` — `ListActive`
+- `pending_refund_reviews` where `state IN (...)` — 전체 pending health count
+- `pending_refund_reviews` where `state == failed` — failed health count
 
 ## 인덱싱하지 않는 필드
 
@@ -68,6 +102,16 @@ gcloud firestore indexes fields update canonicalId \
 gcloud firestore indexes fields list \
   --project=seorilabs-platform --billing-project=seorilabs-platform \
   --collection-group=processed_orders
+```
+
+환불 검토의 `secret` map은 AES-GCM ciphertext라 조회 조건으로 사용할 일이 없다.
+불필요한 색인 복제를 막기 위해 단일 필드 인덱스를 끈다.
+
+```bash
+gcloud firestore indexes fields update secret \
+  --project=seorilabs-platform --billing-project=seorilabs-platform \
+  --collection-group=pending_refund_reviews \
+  --disable-indexes --quiet
 ```
 
 ## 확인

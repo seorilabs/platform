@@ -195,6 +195,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
+            --update-secrets="IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest" \
             --quiet
 
           gcloud run deploy platform-admin \
@@ -209,6 +210,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
+            --update-secrets="IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest" \
             --quiet
 
       # 배포가 전부 성공했다고 같은 태그가 됐다는 보장은 없다.
@@ -262,6 +264,42 @@ jobs:
           done
 
           [ "$fail" -eq 0 ] || { echo "선택한 IAP 환경($IAP_ENVIRONMENT)이 일치하지 않는다." >&2; exit 1; }
+
+      # pending token 봉투를 여는 keyring은 수신 role과 worker에만 있어야 한다.
+      # secret 값은 읽지 않고 참조 이름만 readback한다.
+      - name: Assert refund review secret boundary
+        run: |
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+          job_secret() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          env_name=IAP_REFUND_REVIEW_ENCRYPTION_KEYS
+          expected=iap-refund-review-encryption-keys
+          fail=0
+          actual=$(service_secret platform-iap "$env_name")
+          printf '%-18s %s=%s\n' platform-iap "$env_name" "$actual"
+          [ "$actual" = "$expected" ] || fail=1
+
+          actual=$(job_secret platform-worker "$env_name")
+          printf '%-18s %s=%s\n' platform-worker "$env_name" "$actual"
+          [ "$actual" = "$expected" ] || fail=1
+
+          for target in platform-api platform-ingest platform-admin; do
+            actual=$(service_secret "$target" "$env_name")
+            printf '%-18s %s=%s\n' "$target" "$env_name" "${actual:-<absent>}"
+            [ -z "$actual" ] || fail=1
+          done
+
+          [ "$fail" -eq 0 ] || { echo "환불 검토 secret role 경계가 올바르지 않다." >&2; exit 1; }
 
       # admin은 DRS로 비공개라 인증 없이는 403이 정상이다. 여기서
       # 확인하는 것은 공개 서비스 셋이 새 리비전으로 뜬 뒤 실제로

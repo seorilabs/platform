@@ -97,13 +97,15 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$ADMIN_URL/v1/admin/health"
 ```
 
 ```json
-{"ok":true,"result":{"environment":"production","deadLetterCount":0}}
+{"ok":true,"result":{"environment":"production","deadLetterCount":0,"pendingRefundReviewCount":0,"dueSoonRefundReviewCount":0,"failedRefundReviewCount":0}}
 ```
 
 `deadLetterCount`가 0이 아니면 마켓에 완료를 알리지 못한 주문이 있다.
 **Play는 3일 안에 acknowledge하지 않으면 자동 환불한다.** 급하다.
 
 `environment`가 예상과 다르면 잘못된 서비스를 보고 있는 것이다.
+`dueSoonRefundReviewCount`나 `failedRefundReviewCount`가 0이 아니면 8번 절차로
+queue를 바로 확인한다.
 
 ### 2. 점검 모드 켜기
 
@@ -322,7 +324,45 @@ curl -sS -X POST \
 `closed_not_started`에 resume를 시도하면 `sandbox_reset_closed` 409다. closure,
 intent, completion, barrier 문서를 직접 수정하거나 삭제하지 않는다.
 
-### 8. 원장 직접 조회
+### 8. Google Play 환불 검토 결정
+
+응답 기한은 수신 후 24시간이다. 이 조작은 Google의 첫 호출만 반영되므로
+잘못 선택한 값을 나중에 덮어쓸 수 없다.
+
+```bash
+APP_ID=lizard-tycoon
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  "$ADMIN_URL/v1/admin/apps/$APP_ID/iap/refund-reviews?state=pending&limit=20"
+```
+
+응답에는 `reviewId`, 숫자 `refundReason`, `receivedAt`, `dueAt`만 보이며
+pending token·order ID·ciphertext는 보이지 않아야 한다. 실제 이행·CS 증거를
+별도 원장에서 확인한 뒤 하나를 고른다.
+
+- `DECLINE`: 고객 환불을 거절하라고 Google에 제안
+- `APPROVE`: 고객 환불을 승인하라고 Google에 제안
+- `NEUTRAL`: 어느 쪽도 제안하지 않음
+
+```bash
+REVIEW_ID='<queue의 reviewId>'
+PREFERENCE='DECLINE'
+REQUEST_ID="refund-breakglass-$(date -u +%Y%m%dT%H%M%SZ)"
+
+curl -sS -X POST \
+  "$ADMIN_URL/v1/admin/apps/$APP_ID/iap/refund-reviews/$REVIEW_ID/decision" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Seori-Actor: ih" \
+  -H "Content-Type: application/json" \
+  -d "{\"requestId\":\"$REQUEST_ID\",\"expectedEnvironment\":\"production\",\"refundPreference\":\"$PREFERENCE\",\"sampleContentProvided\":false,\"reason\":\"verified_fulfillment\",\"confirmation\":\"RESPOND REFUND $APP_ID $REVIEW_ID $PREFERENCE\"}"
+```
+
+`sampleContentProvided`는 실제 sample 제공 여부를 명시하는 필수 boolean이다.
+`reason`은 `verified_fulfillment`, `customer_refund_supported`,
+`insufficient_evidence`, `internal_validation` 중 실제 근거와 맞는 값을 쓴다.
+202 이후에는 결정이 영구 확정됐고 worker 제출 대기 상태다. 같은 `requestId`와
+동일 payload만 안전하게 재시도할 수 있다.
+
+### 9. 원장 직접 조회
 
 Admin API도 못 쓸 때. `cmd/fs`는 이 저장소의 조회 전용 CLI다.
 
@@ -347,7 +387,7 @@ bq query --nouse_legacy_sql --maximum_bytes_billed=2000000000 \
 | 기능 | 상태 |
 |---|---|
 | 앱 전체 kill switch (`pause`) | 미구현. 점검 모드로 대신한다 |
-| 환불 검토 대기열 조회 | 미구현 |
+| 환불 검토 결정 수정·취소 | 의도적으로 미지원. Google 첫 호출 우선 계약 때문에 immutable |
 
 ## 하지 말 것
 
