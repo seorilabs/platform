@@ -79,6 +79,9 @@ func registerWebhooks(mux *http.ServeMux, cfg config.Config, d *deps) error {
 				Auditor:       audit,
 				PackageName:   ic.Play.PackageName,
 				AllowedEmails: splitList(os.Getenv("IAP_PLAY_RTDN_SENDERS")),
+				Apps:          d.registry,
+				RefundReviews: d.iap.ledger,
+				RefundSealer:  d.iap.refundKeys,
 			})
 			if err != nil {
 				return err
@@ -102,13 +105,23 @@ func newWorker(parts *iapParts, cfg config.Config, audit worker.Auditor) (*worke
 		completers[platform] = v
 	}
 
-	return worker.New(worker.Config{
+	workerConfig := worker.Config{
 		Outbox:      parts.ledger,
 		Completers:  completers,
 		Auditor:     audit,
 		MaxAttempts: cfg.IAP.CompletionMaxAttempts,
 		MaxAge:      cfg.IAP.CompletionMaxAge,
-	})
+	}
+	if playVerifier, ok := parts.verifiers[domain.PlatformGooglePlay]; ok {
+		responder, ok := playVerifier.(worker.RefundResponder)
+		if !ok || parts.refundKeys == nil {
+			return nil, errors.New("worker role에 Play 환불 검토 설정이 필요하다")
+		}
+		workerConfig.RefundReviews = parts.ledger
+		workerConfig.RefundOpener = parts.refundKeys
+		workerConfig.RefundResponder = responder
+	}
+	return worker.New(workerConfig)
 }
 
 // runWorker는 완료 재시도 워커를 한 번 돌린다.
@@ -143,6 +156,10 @@ func runWorker(ctx context.Context, cfg config.Config) error {
 		"claimed", stats.Claimed,
 		"completed", stats.Completed,
 		"failed", stats.Failed,
+		"refund_claimed", stats.RefundClaimed,
+		"refund_responded", stats.RefundResponded,
+		"refund_failed", stats.RefundFailed,
+		"refund_expired", stats.RefundExpired,
 	)
 	if err != nil {
 		return err

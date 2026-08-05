@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/iap/domain"
+	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 )
 
@@ -196,6 +197,43 @@ func (v *Verifier) CompleteGrant(ctx context.Context, p domain.VerifiedPurchase)
 	)
 
 	return v.doJSON(ctx, http.MethodPost, endpoint, []byte(`{}`), nil)
+}
+
+// ReviewRefund는 Google Play 환불 검토 의견을 제출한다.
+//
+// Google은 첫 호출만 판단에 사용한다. 호출자는 외부 요청 전에 결정을
+// 영구 확정하고 재시도마다 정확히 같은 input을 전달해야 한다. ADR 0014.
+func (v *Verifier) ReviewRefund(ctx context.Context, in refundreview.Submission) error {
+	if in.PackageName == "" || in.PackageName != v.packageName || in.OrderID == "" ||
+		in.PendingRefundToken == "" || !validRefundPreference(in.RefundPreference) {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"Play 환불 검토 요청이 올바르지 않아요")
+	}
+	body, err := json.Marshal(struct {
+		PendingRefundToken    string `json:"pendingRefundToken"`
+		RefundPreference      string `json:"refundPreference"`
+		SampleContentProvided bool   `json:"sampleContentProvided"`
+	}{
+		PendingRefundToken:    in.PendingRefundToken,
+		RefundPreference:      in.RefundPreference,
+		SampleContentProvided: in.SampleContentProvided,
+	})
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal,
+			"Play 환불 검토 요청을 만들지 못했어요")
+	}
+	endpoint := fmt.Sprintf("%s/androidpublisher/v3/applications/%s/orders/%s:reviewrefund",
+		v.baseURL, url.PathEscape(in.PackageName), url.PathEscape(in.OrderID))
+	return v.doJSON(ctx, http.MethodPost, endpoint, body, nil)
+}
+
+func validRefundPreference(value string) bool {
+	switch value {
+	case "DECLINE", "APPROVE", "NEUTRAL":
+		return true
+	default:
+		return false
+	}
 }
 
 // doJSON은 요청을 보내고 응답을 파싱한다.

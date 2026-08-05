@@ -189,6 +189,7 @@ func TestDecodeMaybeBase64(t *testing.T) {
 func TestMarketEnabledDetection(t *testing.T) {
 	setIAPBase(t)
 	t.Setenv("IAP_PLAY_PACKAGE_NAME", "com.seorilabs.lizardtycoon")
+	t.Setenv("IAP_REFUND_REVIEW_ENCRYPTION_KEYS", "2026-08:"+testKey('r'))
 	t.Setenv("IAP_APPLE_KEY", base64.StdEncoding.EncodeToString([]byte("key")))
 	t.Setenv("IAP_APPLE_KEY_ID", "2X9R4HXF34")
 	t.Setenv("IAP_APPLE_ISSUER_ID", "57246542-96fe-1a63-e053-0824d011072a")
@@ -201,6 +202,9 @@ func TestMarketEnabledDetection(t *testing.T) {
 
 	if !c.Play.Enabled() {
 		t.Error("Play가 꺼졌다")
+	}
+	if len(c.RefundReviewKeys) != 1 || c.RefundReviewKeys[0].ID != "2026-08" {
+		t.Errorf("환불 검토 키링 = %#v", c.RefundReviewKeys)
 	}
 	if !c.Apple.Enabled() {
 		t.Error("App Store가 꺼졌다")
@@ -218,6 +222,30 @@ func TestMarketEnabledDetection(t *testing.T) {
 	}
 	if partial.Apple.Enabled() {
 		t.Error("키 ID 없이 App Store가 켜졌다")
+	}
+}
+
+func TestPlayRequiresRefundReviewEncryptionKeys(t *testing.T) {
+	setIAPBase(t)
+	t.Setenv("IAP_PLAY_PACKAGE_NAME", "com.seorilabs.lizardtycoon")
+
+	if _, err := loadIAP(true); err == nil ||
+		!strings.Contains(err.Error(), "IAP_REFUND_REVIEW_ENCRYPTION_KEYS") {
+		t.Fatalf("환불 검토 키 없이 Play가 켜졌다: %v", err)
+	}
+
+	t.Setenv("IAP_REFUND_REVIEW_ENCRYPTION_KEYS", "current:"+testKey('a')+",old:"+testKey('b'))
+	cfg, err := loadIAP(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.RefundReviewKeys) != 2 || cfg.RefundReviewKeys[0].ID != "current" {
+		t.Fatalf("키 회전 순서 = %#v", cfg.RefundReviewKeys)
+	}
+
+	t.Setenv("IAP_REFUND_REVIEW_ENCRYPTION_KEYS", "weak:"+testKey('a')+",weak:"+testKey('b'))
+	if _, err := loadIAP(true); err == nil {
+		t.Fatal("중복 keyId를 통과시켰다")
 	}
 }
 

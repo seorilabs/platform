@@ -895,6 +895,10 @@ func (l *Ledger) CloseSandboxResetNotStarted(
 	if err != nil {
 		return false, err
 	}
+	refundDecisionPath, err := l.paths.refundReviewDecision(in.RequestID)
+	if err != nil {
+		return false, err
+	}
 
 	applied := false
 	err = l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
@@ -919,6 +923,10 @@ func (l *Ledger) CloseSandboxResetNotStarted(
 		if err != nil {
 			return err
 		}
+		refundDecisionExists, _, err := tx.Exists(refundDecisionPath)
+		if err != nil {
+			return err
+		}
 
 		if closureExists && (intentExists || completionExists) {
 			return platformerr.New(platformerr.CodeLedgerStateInvalid,
@@ -933,7 +941,7 @@ func (l *Ledger) CloseSandboxResetNotStarted(
 				"sandbox 초기화가 이미 시작되어 미시작으로 종결할 수 없어요")
 		}
 		if closureExists {
-			if grantExists || revokeExists {
+			if grantExists || revokeExists || refundDecisionExists {
 				return platformerr.New(platformerr.CodeLedgerStateInvalid,
 					"sandbox 초기화 종결 기록과 다른 운영 조작이 함께 존재해요")
 			}
@@ -952,7 +960,7 @@ func (l *Ledger) CloseSandboxResetNotStarted(
 			}
 			return nil
 		}
-		if grantExists || revokeExists {
+		if grantExists || revokeExists || refundDecisionExists {
 			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
 				"requestId가 다른 운영 조작에 이미 사용됐어요")
 		}
@@ -1123,6 +1131,10 @@ func (l *Ledger) FindSandboxResetReplay(
 	if err != nil {
 		return nil, false, err
 	}
+	refundDecisionPath, err := l.paths.refundReviewDecision(in.RequestID)
+	if err != nil {
+		return nil, false, err
+	}
 	intentSnap, intentExists, err := l.getOptional(ctx, intentPath)
 	if err != nil {
 		return nil, false, err
@@ -1143,7 +1155,11 @@ func (l *Ledger) FindSandboxResetReplay(
 	if err != nil {
 		return nil, false, err
 	}
-	if grantExists || revokeExists {
+	_, refundDecisionExists, err := l.getOptional(ctx, refundDecisionPath)
+	if err != nil {
+		return nil, false, err
+	}
+	if grantExists || revokeExists || refundDecisionExists {
 		return nil, false, platformerr.New(platformerr.CodeOperatorReplayMismatch,
 			"requestId가 다른 운영 조작에 이미 사용됐어요")
 	}
@@ -1289,6 +1305,10 @@ func (l *Ledger) prepareSandboxResetIntentWithClock(
 	if err != nil {
 		return sandboxResetRequestDoc{}, err
 	}
+	refundDecisionPath, err := l.paths.refundReviewDecision(in.RequestID)
+	if err != nil {
+		return sandboxResetRequestDoc{}, err
+	}
 	barrierPath, err := l.paths.sandboxResetBarrier(in.PlatformUserID)
 	if err != nil {
 		return sandboxResetRequestDoc{}, err
@@ -1325,11 +1345,15 @@ func (l *Ledger) prepareSandboxResetIntentWithClock(
 		if err != nil {
 			return err
 		}
+		refundDecisionExists, _, err := tx.Exists(refundDecisionPath)
+		if err != nil {
+			return err
+		}
 		barrier, err := l.readSandboxResetBarrier(tx, in.PlatformUserID)
 		if err != nil {
 			return err
 		}
-		if grantExists || revokeExists {
+		if grantExists || revokeExists || refundDecisionExists {
 			return platformerr.New(platformerr.CodeOperatorReplayMismatch,
 				"requestId가 다른 운영 조작에 이미 사용됐어요")
 		}

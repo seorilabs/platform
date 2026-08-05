@@ -37,6 +37,8 @@ const (
 	sandboxResetBarriers    = "sandbox_reset_barriers"
 	ownershipTransfers      = "iap_ownership_transfers"
 	adminMutationLimits     = "admin_mutation_limits"
+	pendingRefundReviews    = "pending_refund_reviews"
+	refundReviewDecisions   = "refund_review_decisions"
 )
 
 // pathBuilder는 환경 prefix를 붙여 경로를 만든다.
@@ -148,4 +150,19 @@ func (b pathBuilder) ownershipTransfer(orderKey string, sequence int64) (fspath.
 // adminMutationLimit는 인증된 OIDC principal별 durable rate gate다.
 func (b pathBuilder) adminMutationLimit(principalHash string) (fspath.Path, error) {
 	return b.parse(adminMutationLimits + "/" + principalHash)
+}
+
+// pendingRefundReview는 RTDN에서 받은 환불 검토 원장이다. 문서는 영구
+// 보존하고 외부 호출용 암호문만 terminal 상태에서 제거한다. ADR 0014.
+func (b pathBuilder) pendingRefundReview(reviewID string) (fspath.Path, error) {
+	return b.parse(pendingRefundReviews + "/" + reviewID)
+}
+
+func (b pathBuilder) pendingRefundReviewCollection() (fspath.Path, error) {
+	return b.parse(pendingRefundReviews)
+}
+
+// refundReviewDecision은 외부 호출 전에 확정하는 immutable 운영자 결정이다.
+func (b pathBuilder) refundReviewDecision(requestID string) (fspath.Path, error) {
+	return b.parse(refundReviewDecisions + "/" + requestID)
 }

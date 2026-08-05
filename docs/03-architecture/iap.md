@@ -78,8 +78,8 @@ append-only `iap_ownership_transfers` 복구 증거를 같은 트랜잭션에 �
 
 ### 5. 원장 문서 삭제 금지
 
-`processed_orders`, `processed_iap_events`, `pending_refund_reviews`, 운영자
-지급·회수·sandbox reset intent·completion·미시작 closure, sandbox reset barrier,
+`processed_orders`, `processed_iap_events`, `pending_refund_reviews`,
+`refund_review_decisions`, 운영자 지급·회수·sandbox reset intent·completion·미시작 closure, sandbox reset barrier,
 소유권 이전 증거 원장은 **영구 보존**한다.
 `iap_completion_outbox`만 완료·회수 시 삭제한다.
 
@@ -149,7 +149,8 @@ IAP 쪽 기존 계약은 닫혀 있으므로 그대로 두고, **플랫폼 SDK�
 | `processed_orders/{orderKey}` | sha256 | `puid`, `entitlementId`, `platform`, `productId`, `providerOrderId`, `platformAccountIdHash`, `state`, `observedAt`, `tombstone`, `transferSequence` |
 | `processed_iap_events/{eventKey}` | sha256 | `provider`, `status`, `attemptCount`, `leaseId`, `claimExpiresAt` |
 | `iap_completion_outbox/{orderKey}` | orderKey | `platform`, `action`, `status`, `attemptCount`, `nextAttemptAt`, `leaseId` |
-| `pending_refund_reviews/{hash}` | sha256 | `platform`, `orderId`, `dueAt` — 24시간 |
+| `pending_refund_reviews/{reviewId}` | pendingRefundToken sha256 | 앱·package·order sha256·환경·상태·`refundReason`·`dueAt`·암호화 봉투·worker lease. **영구 문서**, 종결 시 봉투 제거 |
+| `refund_review_decisions/{requestId}` | requestId | 외부 호출 전에 확정한 preference·sample 여부·고정 reason·actor. create-only **영구 결정** |
 | `iap_rate_limits/{…}` | | `windowStartedAt`, `count` |
 | `operator_entitlement_grants/{requestId}` | requestId | 운영자 지급 감사 원장. **영구** |
 | `operator_entitlement_revocations/{requestId}` | requestId | 대상 `grantRequestId`를 포함한 운영자 회수 감사 원장. **영구** |
@@ -279,10 +280,24 @@ eventId는 Pub/Sub `messageId`.
 |---|---|
 | `oneTimeProductNotification` | Play API 재조회 후 기존 주문 재조정 |
 | `voidedPurchaseNotification` | `refundType=1` 전액환불이면 revoke. **부분환불은 `partial_refund_unsupported` 422** |
-| `pendingRefundReviewNotification` | 24시간 `dueAt` 원장 기록만. **자동 응답하지 않는다** |
+| `pendingRefundReviewNotification` | registry package→app binding 확인 후 24시간 `dueAt` 원장 기록. token·orderId는 AES-256-GCM 봉투만 보존하고 entitlement는 바꾸지 않는다 |
 | `testNotification` | 무시 |
 
 > **Pub/Sub 재전송 시맨틱 재설계 필요.** 현재 `event_busy` 503이 Pub/Sub 재시도를 유발하는 구조인데, push subscription에서 이 흐름이 그대로 성립하는지 P6에서 검증한다.
+
+### Google Play 환불 검토 결정
+
+Backoffice는 안전 projection만 읽고 `DECLINE`, `APPROVE`, `NEUTRAL` 중 하나를
+선택한다. Admin API는 typed confirmation과 durable rate gate를 검증한 뒤
+`refund_review_decisions/{requestId}` 생성과 review의 `pending → decided` 전이를
+한 트랜잭션으로 커밋한다. Google `orders.reviewrefund`는 첫 호출만 반영하므로
+**이 결정을 외부 호출 전에 영구 확정하고 이후에는 같은 payload만 재시도**한다.
+
+`platform-worker`만 봉투를 열고 Google에 제출한다. 요청은 pending token,
+`refundPreference`, `sampleContentProvided` 세 필수 값만 포함한다. 사용량·PII
+증거는 신뢰 가능한 원장이 없으므로 보내지 않는다. 성공은 `responded`, 영구
+실패는 `failed`, 24시간이 지나면 `expired`로 종결하고 모든 종결 상태에서
+암호화 봉투를 제거한다. → ADR 0014
 
 ### 공통 이벤트 lease
 
@@ -304,11 +319,15 @@ Firebase는 `onSchedule` + `maxInstances:1, concurrency:1`로 **인프라가 단
 
 ### 동작
 
-5분 주기. 배치 최대 20건이되 **매 반복 1건씩 claim**한다 — 느린 앞 건이 뒤 건의 lease를 소진하지 않게 하기 위해서다.
+5분 주기. 완료 outbox와 환불 검토 결정을 각각 배치 최대 20건 처리하되
+**매 반복 1건씩 claim**한다 — 느린 앞 건이 뒤 건의 lease를 소진하지 않게 하기 위해서다.
 
 Google은 **완료 전에 Play 상태를 재조회**한다. 이미 acknowledged면 호출하지 않고 종료하고, revoked면 회수로 전환한다.
 
 Backoff는 `min(60초 × 2^(n-1), 6시간)`.
+
+환불 검토 제출 backoff는 마감 안에서 `min(60초 × 2^(n-1), 30분)`이며,
+sweep 뒤 claim 시점에도 `dueAt`을 다시 검사해 마감 이후 외부 호출을 막는다.
 
 Dead-letter 조건은 시도 횟수 초과, age 초과, 레코드 파손.
 

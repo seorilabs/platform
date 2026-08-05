@@ -6,8 +6,8 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 
 ## 현재 상태
 
-구현은 전부 끝났고 검증도 코드로 할 수 있는 것은 전부 했다.
-남은 셋은 외부 시스템에서 사람이 조작해야 한다.
+기존 구매·환불 IAP 경로는 구현과 실연동을 마쳤다. ADR 0014의 Google Play
+환불 검토는 코드 반영 뒤 Secret·인덱스 배포와 license tester 실응답 확인이 남는다.
 
 **Apple·Play 두 마켓으로 먼저 전환한다.** AIT는 인증서를 받은 뒤 붙인다.
 
@@ -20,10 +20,12 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 | 완료 호출 경로 | ✅ | ✅ | 클라이언트 담당 |
 | 완료 **반영** 확인 | ✅ | ✅ | — |
 | RTDN 실연동 | 해당 없음 | ✅ | — |
+| PendingRefundReview 수신·ReviewRefund 반영 | 해당 없음 | 코드 완료, **실연동 미검증** | — |
 | mTLS 배선 | — | — | ✅ |
 | API 계약 문서 대조 | — | — | ✅ |
 
-**Apple·Play 두 마켓은 전 항목을 통과했다.** AIT만 인증서를 기다린다.
+**기존 Apple·Play 구매 경로는 전 항목을 통과했다.** 신규 환불 검토 실연동과
+AIT 인증서는 별도 미완료 gate다.
 
 Play 완료 반영은 실제 활성 구매로 확인했다.
 
@@ -322,6 +324,68 @@ gcloud logging read 'resource.labels.service_name="platform-iap"
 기대: `200`, `알림 반영`
 
 ---
+
+## 2-1. Google Play 환불 검토 — Secret·인덱스·license tester 필요
+
+`pendingRefundToken`과 order ID는 평문으로 저장하지 않는다. 별도 AES-256-GCM
+keyring을 Secret Manager에서 `platform-iap`과 `platform-worker`에만 주입한다.
+값 형식은 `keyId:base64-32-byte-key`이며 첫 항목이 현재 암호화 키다.
+
+먼저 이 문서의 registry 절차로 `iap.google_play_package_name`을 `regsync`한다.
+Firestore가 이전 레지스트리 값이면 RTDN을 임의 앱에 귀속하지 않고
+`config_unavailable`로 재시도하므로, sync readback 전에는 서비스 배포를 진행하지 않는다.
+
+```bash
+REFUND_REVIEW_KEY_ID="$(date -u +%Y-%m)"
+{ printf '%s:' "$REFUND_REVIEW_KEY_ID"; openssl rand -base64 32 | tr -d '\n'; } \
+  | gcloud secrets create iap-refund-review-encryption-keys \
+      --project=seorilabs-platform --data-file=-
+unset REFUND_REVIEW_KEY_ID
+
+for sa in platform-iap platform-worker; do
+  gcloud secrets add-iam-policy-binding iap-refund-review-encryption-keys \
+    --project=seorilabs-platform \
+    --member="serviceAccount:${sa}@seorilabs-platform.iam.gserviceaccount.com" \
+    --role=roles/secretmanager.secretAccessor
+done
+```
+
+secret이 이미 있으면 `gcloud secrets versions add ... --data-file=-`로 새 버전을
+추가한다. 이전 봉투가 남아 있는 동안은 `newId:newKey,oldId:oldKey`처럼 최대 3개를
+유지하고, queue에 이전 `keyId`가 없어진 뒤에만 제거한다.
+
+복합 인덱스 네 개와 `secret` 단일 필드 인덱스 제외는
+[`infra/firestore/indexes.md`](../../infra/firestore/indexes.md)대로 먼저 적용하고
+전부 `READY`인지 확인한다. 배포 workflow가 아래 secret 연결까지 수행한다.
+
+```bash
+gcloud run services describe platform-iap \
+  --project=seorilabs-platform --region=asia-northeast3 --format=json \
+  | jq -r '.spec.template.spec.containers[0].env[]
+    | select(.name == "IAP_REFUND_REVIEW_ENCRYPTION_KEYS")
+    | .valueFrom.secretKeyRef.name'
+
+gcloud run jobs describe platform-worker \
+  --project=seorilabs-platform --region=asia-northeast3 --format=json \
+  | jq -r '.spec.template.spec.template.spec.containers[0].env[]
+    | select(.name == "IAP_REFUND_REVIEW_ENCRYPTION_KEYS")
+    | .valueFrom.secretKeyRef.name'
+```
+
+둘 다 `iap-refund-review-encryption-keys`여야 한다. `platform-api`,
+`platform-ingest`, `platform-admin`, Backoffice role에는 이 env와 secret IAM이
+없어야 한다.
+
+마지막 gate는 Play license tester의 실제 pending refund review다.
+
+1. tester 주문에서 검토 요청을 발생시킨다.
+2. `/platform/iap` queue에 token·order ID 없이 `pending` 항목이 보이는지 확인한다.
+3. 운영자가 근거를 보고 preference와 sample 여부를 확정한다.
+4. worker 실행 뒤 상태가 `responded`가 되고 Google 쪽 첫 결정이 같은 값인지 확인한다.
+5. Admin health의 `pendingRefundReviewCount`, `dueSoonRefundReviewCount`,
+   `failedRefundReviewCount`가 예상값인지 확인한다.
+
+실제 Google 반영 확인 전에는 이 기능을 운영 완료로 표시하지 않는다.
 
 ## 3. AppsInToss mTLS 인증서 — 뒤로 미룬다
 
@@ -699,10 +763,12 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$ADMIN_URL/v1/admin/health"
 ```
 
 `deadLetterCount`가 0이 아니면 마켓에 완료를 알리지 못한 주문이 있다.
+`dueSoonRefundReviewCount` 또는 `failedRefundReviewCount`가 0이 아니면 환불 검토
+queue를 바로 확인한다.
 
 ### 워커
 
-`platform-worker` Job이 5분마다 완료 outbox를 처리한다.
+`platform-worker` Job이 5분마다 완료 outbox와 확정된 환불 검토 결정을 처리한다.
 **이게 멈추면 Play가 3일 뒤부터 자동 환불을 시작한다.**
 
 ```bash
@@ -718,7 +784,7 @@ gcloud run jobs executions list --job=platform-worker \
 `state=ENABLED`이고 실행이 계속 성공해야 한다. 로그에서 처리량을 본다.
 
 ```
-완료 재시도 종료  claimed=0 completed=0 failed=0
+완료 재시도 종료  claimed=0 completed=0 failed=0 refund_claimed=0 refund_responded=0 refund_failed=0 refund_expired=0
 ```
 
 Job은 `RunOnce`로 한 번 돌고 끝난다. 남은 항목은 다음 실행이 집으므로

@@ -120,6 +120,29 @@ func (r *Registry) List(ctx context.Context) ([]App, error) {
 	return out, nil
 }
 
+// ResolveGooglePlayPackage는 RTDN packageName을 레지스트리 appId에 묶는다.
+// 등록되지 않은 package를 임의 앱으로 보내면 다른 앱의 환불 검토 원장을
+// 오염시키므로 일시적 설정 오류로 fail-closed한다. ADR 0014.
+func (r *Registry) ResolveGooglePlayPackage(ctx context.Context, packageName string) (string, error) {
+	if err := r.ensureFresh(ctx); err != nil {
+		return "", err
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, app := range r.apps {
+		if app.FeatureEnabled("iap") && app.MarketEnabled("google_play") &&
+			app.IAP.GooglePlayPackageName == packageName {
+			if err := app.EnsureUsable(); err != nil {
+				return "", err
+			}
+			return app.AppID, nil
+		}
+	}
+	return "", platformerr.New(platformerr.CodeConfigUnavailable,
+		"Google Play package에 연결된 앱 설정이 없어요")
+}
+
 // Reload는 캐시를 강제로 다시 채운다.
 func (r *Registry) Reload(ctx context.Context) error {
 	return r.load(ctx)
@@ -152,6 +175,15 @@ func (r *Registry) load(ctx context.Context) error {
 		return platformerr.Wrap(err, platformerr.CodeConfigUnavailable, "앱 설정을 불러오지 못했어요")
 	}
 
+	// package name 중복은 어느 appId로 귀속해도 위험하다. 두 항목 모두
+	// 제외해 요청 시 config_unavailable로 드러나게 한다.
+	packageCounts := make(map[string]int)
+	for _, a := range apps {
+		if a.Validate() == nil && a.FeatureEnabled("iap") && a.MarketEnabled("google_play") {
+			packageCounts[a.IAP.GooglePlayPackageName]++
+		}
+	}
+
 	next := make(map[string]App, len(apps))
 	for _, a := range apps {
 		if err := a.Validate(); err != nil {
@@ -159,6 +191,12 @@ func (r *Registry) load(ctx context.Context) error {
 			// 전체를 막으면 무관한 앱까지 중단된다.
 			slog.ErrorContext(ctx, "레지스트리 항목이 올바르지 않다. 건너뛴다",
 				"app_id", a.AppID, "err", err)
+			continue
+		}
+		if a.FeatureEnabled("iap") && a.MarketEnabled("google_play") &&
+			packageCounts[a.IAP.GooglePlayPackageName] != 1 {
+			slog.ErrorContext(ctx, "Google Play package name이 중복됐다. 앱을 건너뛴다",
+				"app_id", a.AppID)
 			continue
 		}
 		next[a.AppID] = a

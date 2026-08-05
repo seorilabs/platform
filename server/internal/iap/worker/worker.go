@@ -15,6 +15,7 @@ import (
 
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 )
 
@@ -35,6 +36,25 @@ type Completer interface {
 	CompleteGrant(ctx context.Context, p domain.VerifiedPurchase) error
 }
 
+// RefundReviewQueue는 Google 환불 검토 decision queue다.
+type RefundReviewQueue interface {
+	SweepExpiredRefundReviews(ctx context.Context, limit int) (int, error)
+	ClaimNextRefundReview(ctx context.Context) (ledger.RefundReviewWork, bool, error)
+	CompleteRefundReview(ctx context.Context, reviewID, leaseID string) error
+	FailRefundReview(ctx context.Context, reviewID, leaseID string,
+		errCode platformerr.Code, retryable bool) error
+}
+
+// RefundReviewOpener는 platform-iap이 봉인한 비밀을 worker에서만 연다.
+type RefundReviewOpener interface {
+	Open(envelope refundreview.Envelope, binding refundreview.Binding) (refundreview.Secret, error)
+}
+
+// RefundResponder는 Google의 첫-call-wins API에 immutable 결정을 제출한다.
+type RefundResponder interface {
+	ReviewRefund(ctx context.Context, in refundreview.Submission) error
+}
+
 // Auditor는 감사 원장에 기록한다.
 type Auditor interface {
 	Record(ctx context.Context, action, appID, puid, outcome string, detail map[string]any)
@@ -53,8 +73,11 @@ type Config struct {
 	//
 	// 자격증명이 없어 조립하지 못한 마켓은 여기 없다.
 	// 그 마켓 항목은 집지 않는다 — 집으면 시도 횟수만 축낸다.
-	Completers map[domain.Platform]Completer
-	Auditor    Auditor
+	Completers      map[domain.Platform]Completer
+	Auditor         Auditor
+	RefundReviews   RefundReviewQueue
+	RefundOpener    RefundReviewOpener
+	RefundResponder RefundResponder
 
 	MaxAttempts int
 	MaxAge      time.Duration
@@ -62,9 +85,12 @@ type Config struct {
 
 // Worker는 완료 재시도 워커다.
 type Worker struct {
-	outbox     Outbox
-	completers map[domain.Platform]Completer
-	auditor    Auditor
+	outbox          Outbox
+	completers      map[domain.Platform]Completer
+	auditor         Auditor
+	refundReviews   RefundReviewQueue
+	refundOpener    RefundReviewOpener
+	refundResponder RefundResponder
 
 	maxAttempts int
 	maxAge      time.Duration
@@ -83,21 +109,42 @@ func New(cfg Config) (*Worker, error) {
 		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid,
 			"재시도 횟수 상한이 올바르지 않아요")
 	}
+	refundParts := 0
+	if cfg.RefundReviews != nil {
+		refundParts++
+	}
+	if cfg.RefundOpener != nil {
+		refundParts++
+	}
+	if cfg.RefundResponder != nil {
+		refundParts++
+	}
+	if refundParts != 0 && refundParts != 3 {
+		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid,
+			"환불 검토 worker 설정이 완전하지 않아요")
+	}
 
 	return &Worker{
-		outbox:      cfg.Outbox,
-		completers:  cfg.Completers,
-		auditor:     cfg.Auditor,
-		maxAttempts: cfg.MaxAttempts,
-		maxAge:      cfg.MaxAge,
+		outbox:          cfg.Outbox,
+		completers:      cfg.Completers,
+		auditor:         cfg.Auditor,
+		refundReviews:   cfg.RefundReviews,
+		refundOpener:    cfg.RefundOpener,
+		refundResponder: cfg.RefundResponder,
+		maxAttempts:     cfg.MaxAttempts,
+		maxAge:          cfg.MaxAge,
 	}, nil
 }
 
 // Stats는 한 번 실행의 결과다.
 type Stats struct {
-	Claimed   int
-	Completed int
-	Failed    int
+	Claimed         int
+	Completed       int
+	Failed          int
+	RefundClaimed   int
+	RefundResponded int
+	RefundFailed    int
+	RefundExpired   int
 }
 
 // RunOnce는 대기열을 한 바퀴 처리한다.
@@ -135,7 +182,69 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 		}
 	}
 
+	if w.refundReviews != nil {
+		expired, err := w.refundReviews.SweepExpiredRefundReviews(ctx, maxBatch)
+		if err != nil {
+			return stats, err
+		}
+		stats.RefundExpired = expired
+		for range maxBatch {
+			if err := ctx.Err(); err != nil {
+				return stats, nil
+			}
+			item, found, err := w.refundReviews.ClaimNextRefundReview(ctx)
+			if err != nil {
+				return stats, err
+			}
+			if !found {
+				break
+			}
+			stats.RefundClaimed++
+			if w.respondRefundReview(ctx, item) {
+				stats.RefundResponded++
+			} else {
+				stats.RefundFailed++
+			}
+		}
+	}
+
 	return stats, nil
+}
+
+func (w *Worker) respondRefundReview(ctx context.Context, item ledger.RefundReviewWork) bool {
+	secret, err := w.refundOpener.Open(item.Secret, item.Binding)
+	if err == nil {
+		err = w.refundResponder.ReviewRefund(ctx, refundreview.Submission{
+			PackageName:           item.Binding.PackageName,
+			OrderID:               secret.OrderID,
+			PendingRefundToken:    secret.PendingRefundToken,
+			RefundPreference:      item.RefundPreference,
+			SampleContentProvided: item.SampleContentProvided,
+		})
+	}
+	if err == nil {
+		if err := w.refundReviews.CompleteRefundReview(ctx, item.ReviewID, item.LeaseID); err != nil {
+			slog.ErrorContext(ctx, "환불 검토 완료 기록 실패",
+				"review_id", item.ReviewID, "err", err)
+			return false
+		}
+		w.auditRefundReview(ctx, item, "ok", "")
+		return true
+	}
+
+	code := platformerr.CodeOf(err)
+	retryable := platformerr.IsRetryableErr(err)
+	slog.WarnContext(ctx, "환불 검토 제출 실패",
+		"review_id", item.ReviewID, "attempt", item.AttemptCount,
+		"code", string(code), "retryable", retryable)
+	if failErr := w.refundReviews.FailRefundReview(
+		ctx, item.ReviewID, item.LeaseID, code, retryable,
+	); failErr != nil {
+		slog.ErrorContext(ctx, "환불 검토 실패 기록 실패",
+			"review_id", item.ReviewID, "err", failErr)
+	}
+	w.auditRefundReview(ctx, item, string(code), string(code))
+	return false
 }
 
 // completeOne은 항목 하나를 마켓에 완료 처리한다.
@@ -185,4 +294,21 @@ func (w *Worker) audit(ctx context.Context, item ledger.OutboxItem, outcome, err
 		"attempt":    item.AttemptCount,
 		"error_code": errCode,
 	})
+}
+
+func (w *Worker) auditRefundReview(
+	ctx context.Context,
+	item ledger.RefundReviewWork,
+	outcome, errCode string,
+) {
+	if w.auditor == nil {
+		return
+	}
+	w.auditor.Record(ctx, "iap.refund_review_responded", item.Binding.AppID, "", outcome,
+		map[string]any{
+			"review_id":         item.ReviewID,
+			"attempt":           item.AttemptCount,
+			"refund_preference": item.RefundPreference,
+			"error_code":        errCode,
+		})
 }

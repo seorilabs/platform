@@ -141,14 +141,17 @@ done
 | `platform-iap` | `datastore.user`, `bigquery.dataEditor`, **`secretmanager.secretAccessor`** |
 | `platform-ingest` | `bigquery.dataEditor`, `bigquery.jobUser` |
 | `platform-admin` | `datastore.user`, `bigquery.dataEditor` |
-| `platform-worker` | `datastore.user` |
+| `platform-worker` | `datastore.user` + 환불 검토 keyring의 **resource-level** `secretAccessor` |
 | `platform-deployer` | `run.admin`, `artifactregistry.writer`, `iam.serviceAccountUser` |
 | **`backoffice-read`** | **프로젝트 역할 없음** |
 | **`backoffice-admin`** | **프로젝트 역할 없음** |
 
 > **`backoffice-read`, `backoffice-admin`에 프로젝트 역할을 주지 않는 것이 ADR 0001의 핵심이다.** 둘 다 `platform-admin`의 `run.invoker`만 받고, 애플리케이션의 read/write allowlist가 다시 권한을 가른다. RPI가 침해돼도 Firestore를 직접 조작할 수 없다.
 >
-> **`secretmanager.secretAccessor`는 `platform-iap`에만** 준다. 마켓 자격증명 격리(R3).
+> 프로젝트 전체 `secretmanager.secretAccessor`는 `platform-iap`에만 준다.
+> `platform-worker`에는 ADR 0014의 `iap-refund-review-encryption-keys`처럼
+> 실제 작업에 필요한 개별 secret resource만 accessor를 부여한다. Admin·API·ingest와
+> Backoffice에는 환불 token 복호화 권한을 주지 않는다.
 
 ### 6-1. Babycare Firebase custom token bridge IAM
 
@@ -270,5 +273,5 @@ gcloud run services update platform-api \
 
 - **WIF** — CI를 붙이는 P1에서 한다. org var `GOOGLE_WORKLOAD_IDENTITY_PROVIDER` 재사용
 - Cloud Monitoring 알림 정책 — Telegram 채널 연결 포함
-- Firestore 인덱스 — P4에서 원장 스키마와 함께
-- Secret Manager 시크릿 — P5에서 마켓 자격증명과 함께
+- 환불 검토 Firestore 인덱스 — `infra/firestore/indexes.md` 정의, 실제 `READY` 확인 필요
+- 환불 검토 keyring Secret — 생성·두 role 연결·부재 role readback 필요

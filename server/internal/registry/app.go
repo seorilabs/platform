@@ -85,6 +85,9 @@ type GA4Config struct {
 type IAPConfig struct {
 	LedgerEnvironment LedgerEnvironment `json:"ledger_environment" firestore:"ledger_environment"`
 	Markets           []string          `json:"markets" firestore:"markets"`
+	// GooglePlayPackageName은 RTDN packageName을 appId에 묶는 원장이다.
+	// 환경변수나 알림 payload만으로 앱을 추측하지 않는다. ADR 0014.
+	GooglePlayPackageName string `json:"google_play_package_name,omitempty" firestore:"google_play_package_name,omitempty"`
 	// EntitlementIDs는 이 앱에 지급할 수 있는 entitlement allowlist다.
 	// 전역 SKU 카탈로그는 상품 매핑의 원장이고, 이 목록은 앱 경계의 원장이다.
 	EntitlementIDs []string `json:"entitlement_ids" firestore:"entitlement_ids"`
@@ -93,6 +96,7 @@ type IAPConfig struct {
 var appIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 var entitlementIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 var serviceAccountPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{5,29}@[a-z0-9][a-z0-9-]{5,29}\.iam\.gserviceaccount\.com$`)
+var androidPackagePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
@@ -131,6 +135,14 @@ func (a App) Validate() error {
 	}
 	if a.FeatureEnabled("iap") && len(a.IAP.EntitlementIDs) == 0 {
 		return fmt.Errorf("%s: IAP 활성 앱에는 iap.entitlement_ids가 필요하다", a.AppID)
+	}
+	if a.FeatureEnabled("iap") && a.MarketEnabled("google_play") {
+		if !androidPackagePattern.MatchString(a.IAP.GooglePlayPackageName) ||
+			isPlaceholder(a.IAP.GooglePlayPackageName) {
+			return fmt.Errorf("%s: Google Play IAP에는 유효한 iap.google_play_package_name이 필요하다", a.AppID)
+		}
+	} else if a.IAP.GooglePlayPackageName != "" {
+		return fmt.Errorf("%s: Google Play IAP가 비활성인데 package name이 설정됐다", a.AppID)
 	}
 	if len(a.IAP.EntitlementIDs) > 100 {
 		return fmt.Errorf("%s: iap.entitlement_ids는 최대 100개다", a.AppID)
@@ -191,6 +203,16 @@ func (a App) FeatureEnabled(name string) bool {
 func (a App) EntitlementAllowed(entitlementID string) bool {
 	for _, allowed := range a.IAP.EntitlementIDs {
 		if allowed == entitlementID {
+			return true
+		}
+	}
+	return false
+}
+
+// MarketEnabled는 앱 레지스트리의 IAP 마켓 allowlist를 확인한다.
+func (a App) MarketEnabled(market string) bool {
+	for _, enabled := range a.IAP.Markets {
+		if enabled == market {
 			return true
 		}
 	}

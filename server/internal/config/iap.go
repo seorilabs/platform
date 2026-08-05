@@ -29,6 +29,10 @@ type IAPConfig struct {
 	// 불변식 11이다.
 	BindingKeys [][]byte
 
+	// RefundReviewKeys는 Google 환불 검토의 orderId와 pending token을
+	// 봉인하는 버전형 AES-256-GCM 키링이다. 첫 항목이 현재 키다.
+	RefundReviewKeys []EncryptionKey
+
 	Play  PlayConfig
 	Apple AppleConfig
 	Toss  TossConfig
@@ -39,6 +43,12 @@ type IAPConfig struct {
 	CompletionMaxAttempts int
 	// CompletionMaxAge는 완료를 포기하고 dead-letter로 보낼 나이다.
 	CompletionMaxAge time.Duration
+}
+
+// EncryptionKey는 Secret Manager에서 주입된 버전형 대칭키다.
+type EncryptionKey struct {
+	ID       string
+	Material []byte
 }
 
 // PlayConfig는 Google Play 설정이다.
@@ -148,6 +158,13 @@ func loadIAP(requireMarket bool) (IAPConfig, error) {
 		PackageName:        os.Getenv("IAP_PLAY_PACKAGE_NAME"),
 		ServiceAccountJSON: decodeMaybeBase64(os.Getenv("IAP_PLAY_SA_JSON")),
 	}
+	if c.Play.Enabled() {
+		refundKeys, err := loadEncryptionKeys("IAP_REFUND_REVIEW_ENCRYPTION_KEYS")
+		if err != nil {
+			return IAPConfig{}, err
+		}
+		c.RefundReviewKeys = refundKeys
+	}
 
 	c.Apple = AppleConfig{
 		KeyContent: decodeMaybeBase64(os.Getenv("IAP_APPLE_KEY")),
@@ -179,6 +196,34 @@ func loadIAP(requireMarket bool) (IAPConfig, error) {
 		return IAPConfig{}, err
 	}
 	return c, nil
+}
+
+// loadEncryptionKeys는 `keyId:base64`를 쉼표로 나눈 키링을 읽는다.
+// 첫 항목만 암호화에 쓰며 최대 3개를 허용해 안전한 회전을 지원한다.
+func loadEncryptionKeys(name string) ([]EncryptionKey, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil, fmt.Errorf("config: %s가 필요하다", name)
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > 3 {
+		return nil, fmt.Errorf("config: %s는 최대 3개 키만 허용한다", name)
+	}
+	keys := make([]EncryptionKey, 0, len(parts))
+	seen := map[string]bool{}
+	for i, part := range parts {
+		id, encoded, ok := strings.Cut(strings.TrimSpace(part), ":")
+		if !ok || id == "" || seen[id] {
+			return nil, fmt.Errorf("config: %s[%d] keyId가 올바르지 않다", name, i)
+		}
+		material, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil || len(material) != 32 {
+			return nil, fmt.Errorf("config: %s[%d]는 base64 32바이트 키여야 한다", name, i)
+		}
+		seen[id] = true
+		keys = append(keys, EncryptionKey{ID: id, Material: material})
+	}
+	return keys, nil
 }
 
 // loadIAPLimits는 재시도와 상한 값을 읽는다.

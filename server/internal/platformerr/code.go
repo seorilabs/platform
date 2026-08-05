@@ -41,9 +41,9 @@ const (
 //
 // 1단계에서 끄기로 한 의도된 상태다. 두 가지가 막고 있다.
 //
-//   Godot에 App Check SDK가 없다. 게임 클라이언트가 토큰을 못 만든다.
-//   Go SDK에 consume 옵션이 없다. Node Admin 전용이라 replay 방지를
-//   자체 nonce 저장소로 만들어야 한다.
+//	Godot에 App Check SDK가 없다. 게임 클라이언트가 토큰을 못 만든다.
+//	Go SDK에 consume 옵션이 없다. Node Admin 전용이라 replay 방지를
+//	자체 nonce 저장소로 만들어야 한다.
 //
 // 코드를 미리 지우지 않는 이유는 계약 때문이다. /v1은 영구히 깨지
 // 않으므로(R4) 나중에 켤 때 쓸 코드를 지금 확정해 둔다. 클라이언트가
@@ -115,6 +115,10 @@ const (
 	CodeEventClaimLost             Code = "event_claim_lost"
 	CodeEventCommitFailed          Code = "event_commit_failed"
 	CodeRefundReviewReplayMismatch Code = "refund_review_replay_mismatch"
+	CodeRefundReviewNotFound       Code = "refund_review_not_found"
+	CodeRefundReviewAlreadyDecided Code = "refund_review_already_decided"
+	CodeRefundReviewExpired        Code = "refund_review_expired"
+	CodeRefundReviewClaimLost      Code = "refund_review_claim_lost"
 )
 
 // 마켓 완료 처리 — 불변식 7과 연결된다
@@ -232,6 +236,10 @@ var statusByCode = map[Code]int{
 	CodeEventClaimLost:             http.StatusConflict,
 	CodeEventCommitFailed:          http.StatusServiceUnavailable,
 	CodeRefundReviewReplayMismatch: http.StatusConflict,
+	CodeRefundReviewNotFound:       http.StatusNotFound,
+	CodeRefundReviewAlreadyDecided: http.StatusConflict,
+	CodeRefundReviewExpired:        http.StatusConflict,
+	CodeRefundReviewClaimLost:      http.StatusConflict,
 
 	// 마켓 완료 처리
 	CodeProviderCompletionPending: http.StatusServiceUnavailable,
@@ -284,6 +292,7 @@ func IsRetryable(c Code) bool {
 		CodeProviderCompletionPending,
 		CodePlatformUnavailable,
 		CodeCatalogUnavailable,
+		CodeConfigUnavailable,
 		CodeRuntimeConfigInvalid,
 		CodeSecretConfigInvalid,
 		CodeSandboxResetPending:

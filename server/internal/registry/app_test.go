@@ -13,9 +13,45 @@ func validAppForTest() App {
 		Status:            StatusActive,
 		Features:          map[string]bool{"iap": true},
 		IAP: IAPConfig{
-			LedgerEnvironment: LedgerSandbox,
-			EntitlementIDs:    []string{"premium"},
+			LedgerEnvironment:     LedgerSandbox,
+			Markets:               []string{"google_play"},
+			GooglePlayPackageName: "com.seorilabs.testapp",
+			EntitlementIDs:        []string{"premium"},
 		},
+	}
+}
+
+func TestGooglePlayPackageValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*App)
+		wantErr string
+	}{
+		{
+			name:    "활성 Play 앱은 package 필수",
+			mutate:  func(app *App) { app.IAP.GooglePlayPackageName = "" },
+			wantErr: "google_play_package_name이 필요",
+		},
+		{
+			name:    "잘못된 package 거부",
+			mutate:  func(app *App) { app.IAP.GooglePlayPackageName = "not-a-package" },
+			wantErr: "google_play_package_name이 필요",
+		},
+		{
+			name:    "Play가 없으면 package 잔여값 거부",
+			mutate:  func(app *App) { app.IAP.Markets = []string{"app_store"} },
+			wantErr: "비활성인데 package name이 설정",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := validAppForTest()
+			tt.mutate(&app)
+			err := app.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -51,6 +87,7 @@ func TestIAPEntitlementAllowlistValidation(t *testing.T) {
 			mutate: func(app *App) {
 				app.Features["iap"] = false
 				app.IAP.EntitlementIDs = nil
+				app.IAP.GooglePlayPackageName = ""
 			},
 		},
 	}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 )
 
@@ -46,6 +47,23 @@ type Auditor interface {
 	Record(ctx context.Context, action, appID, puid, outcome string, detail map[string]any)
 }
 
+// RefundReviews는 pending refund review 원장을 기록한다.
+type RefundReviews interface {
+	RecordPendingRefundReview(ctx context.Context, in ledger.PendingRefundReviewInput) error
+	Environment() domain.Environment
+}
+
+// RefundReviewSealer는 외부 호출용 orderId와 token을 봉인한다.
+type RefundReviewSealer interface {
+	Seal(secret refundreview.Secret, binding refundreview.Binding) (refundreview.Envelope, error)
+}
+
+type refundReviewNotification struct {
+	OrderID            string
+	PendingRefundToken string
+	RefundReason       int64
+}
+
 // notification은 파싱된 알림이다.
 //
 // 마켓마다 형식이 달라도 여기까지 오면 같은 모양이다.
@@ -60,6 +78,11 @@ type notification struct {
 	Proof domain.Proof
 	// ObservedAt은 마켓이 알림을 만든 시각이다.
 	ObservedAt time.Time
+	// AppID와 PackageName은 Play RTDN을 registry 원장에 묶은 값이다.
+	AppID        string
+	PackageName  string
+	Platform     domain.Platform
+	RefundReview *refundReviewNotification
 }
 
 // hasProof는 재검증할 구매가 있는지 본다.
@@ -72,10 +95,12 @@ func (n notification) hasProof() bool {
 
 // processor는 알림 하나를 lease 아래에서 처리한다.
 type processor struct {
-	events     Events
-	reconciler Reconciler
-	auditor    Auditor
-	now        func() time.Time
+	events        Events
+	reconciler    Reconciler
+	auditor       Auditor
+	now           func() time.Time
+	refundReviews RefundReviews
+	refundSealer  RefundReviewSealer
 }
 
 // process는 파싱된 알림을 처리한다.
@@ -139,6 +164,9 @@ func (p *processor) reconcile(
 	n notification,
 	verifier Verifier,
 ) error {
+	if n.RefundReview != nil {
+		return p.recordRefundReview(ctx, n)
+	}
 	// 재검증할 것이 없는 알림이다. 점유만 하고 끝낸다.
 	// 구독이나 테스트 알림이 여기 온다.
 	if !n.hasProof() {
@@ -192,6 +220,41 @@ func (p *processor) reconcile(
 	return nil
 }
 
+func (p *processor) recordRefundReview(ctx context.Context, n notification) error {
+	if p.refundReviews == nil || p.refundSealer == nil || n.AppID == "" || n.PackageName == "" {
+		return platformerr.New(platformerr.CodeRuntimeConfigInvalid,
+			"환불 검토 원장이 준비되지 않았어요")
+	}
+	reviewID := refundreview.ReviewID(n.RefundReview.PendingRefundToken)
+	orderHash := refundreview.OrderIDHash(n.RefundReview.OrderID)
+	binding := refundreview.Binding{
+		ReviewID: reviewID, AppID: n.AppID, PackageName: n.PackageName,
+		OrderIDHash: orderHash, Environment: string(p.refundReviews.Environment()),
+	}
+	envelope, err := p.refundSealer.Seal(refundreview.Secret{
+		OrderID:            n.RefundReview.OrderID,
+		PendingRefundToken: n.RefundReview.PendingRefundToken,
+	}, binding)
+	if err != nil {
+		return err
+	}
+	if err := p.refundReviews.RecordPendingRefundReview(ctx, ledger.PendingRefundReviewInput{
+		ReviewID: reviewID, AppID: n.AppID, PackageName: n.PackageName,
+		OrderIDHash: orderHash, Environment: binding.Environment,
+		RefundReason: n.RefundReview.RefundReason, ReceivedAt: p.now().UTC(),
+		Secret: envelope,
+	}); err != nil {
+		return err
+	}
+	if p.auditor != nil {
+		p.auditor.Record(ctx, "iap.refund_review_received", n.AppID, "", "ok", map[string]any{
+			"review_id":     reviewID,
+			"refund_reason": n.RefundReview.RefundReason,
+		})
+	}
+	return nil
+}
+
 // isPermanent는 다시 시도해도 소용없는 실패인지 본다.
 //
 // 분류되지 않은 에러는 재시도 가능으로 본다. 기본값이 반대면
@@ -221,8 +284,8 @@ func (p *processor) audit(ctx context.Context, n notification, outcome, puid str
 	}
 	// appID는 알림에 없다. 주문에서 소유자를 찾아야 알 수 있는데
 	// 알림 경로에서는 그 조회가 항상 성공하지 않는다.
-	p.auditor.Record(ctx, "iap.notification", "", puid, outcome, map[string]any{
-		"platform": string(n.Proof.Platform),
+	p.auditor.Record(ctx, "iap.notification", n.AppID, puid, outcome, map[string]any{
+		"platform": string(n.Platform),
 		"kind":     n.Kind,
 	})
 }

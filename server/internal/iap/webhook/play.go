@@ -83,6 +83,19 @@ type developerNotification struct {
 	TestNotification *struct {
 		Version string `json:"version"`
 	} `json:"testNotification"`
+
+	PendingRefundReviewNotification *struct {
+		Version            string `json:"version"`
+		PendingRefundToken string `json:"pendingRefundToken"`
+		OrderID            string `json:"orderId"`
+		RefundReason       int64  `json:"refundReason"`
+		// obfuscatedAccountId와 obfuscatedProfileId는 필요하지 않아 정의하지 않는다.
+	} `json:"pendingRefundReviewNotification"`
+}
+
+// PlayAppResolver는 RTDN packageName을 registry appId에 묶는다.
+type PlayAppResolver interface {
+	ResolveGooglePlayPackage(ctx context.Context, packageName string) (string, error)
 }
 
 // PlayHandler는 Play RTDN 핸들러다.
@@ -93,6 +106,7 @@ type PlayHandler struct {
 	// allowedEmails가 비어 있지 않으면 그 서비스 계정만 허용한다.
 	allowedEmails map[string]bool
 	proc          *processor
+	apps          PlayAppResolver
 }
 
 // PlayConfig는 핸들러 조립 설정이다.
@@ -108,10 +122,14 @@ type PlayConfig struct {
 	// 비워두면 토큰 유효성만 본다. 그 경우 audience가 맞는 어떤
 	// Google 계정이든 알림을 보낼 수 있어 좁혀두는 편이 낫다.
 	AllowedEmails []string
+	Apps          PlayAppResolver
+	RefundReviews RefundReviews
+	RefundSealer  RefundReviewSealer
 }
 
 func NewPlayHandler(cfg PlayConfig) (*PlayHandler, error) {
-	if cfg.Validator == nil || cfg.Events == nil || cfg.Reconciler == nil {
+	if cfg.Validator == nil || cfg.Events == nil || cfg.Reconciler == nil || cfg.Apps == nil ||
+		cfg.RefundReviews == nil || cfg.RefundSealer == nil {
 		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid,
 			"Play 알림 설정이 올바르지 않아요")
 	}
@@ -132,11 +150,14 @@ func NewPlayHandler(cfg PlayConfig) (*PlayHandler, error) {
 		verifier:      cfg.Verifier,
 		packageName:   cfg.PackageName,
 		allowedEmails: allowed,
+		apps:          cfg.Apps,
 		proc: &processor{
-			events:     cfg.Events,
-			reconciler: cfg.Reconciler,
-			auditor:    cfg.Auditor,
-			now:        time.Now,
+			events:        cfg.Events,
+			reconciler:    cfg.Reconciler,
+			auditor:       cfg.Auditor,
+			now:           time.Now,
+			refundReviews: cfg.RefundReviews,
+			refundSealer:  cfg.RefundSealer,
 		},
 	}, nil
 }
@@ -165,6 +186,21 @@ func (h *PlayHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writePubSubError(w, err)
 		return
+	}
+	if n.PackageName != "" && n.Kind != "test" && n.Kind != "ignored" {
+		// verifier도 아직 단일 package 설정을 쓰므로 registry와 런타임 설정이
+		// 갈라지면 다른 앱으로 요청하지 않고 재시도 가능한 설정 오류로 막는다.
+		if n.PackageName != h.packageName {
+			writePubSubError(w, platformerr.New(platformerr.CodeConfigUnavailable,
+				"Play package 설정이 registry와 달라요"))
+			return
+		}
+		appID, resolveErr := h.apps.ResolveGooglePlayPackage(ctx, n.PackageName)
+		if resolveErr != nil {
+			writePubSubError(w, resolveErr)
+			return
+		}
+		n.AppID = appID
 	}
 
 	if err := h.proc.process(ctx, "google_play", n, h.verifier); err != nil {
@@ -241,7 +277,7 @@ func (h *PlayHandler) parse(raw []byte) (notification, error) {
 
 	// 멱등 키는 Pub/Sub messageId다.
 	// 같은 알림을 재전송해도 messageId는 유지된다.
-	n := notification{EventKey: push.Message.MessageID}
+	n := notification{EventKey: push.Message.MessageID, Platform: domain.PlatformGooglePlay}
 
 	// data가 비면 Pub/Sub 연결 확인용 빈 메시지다. 점유만 하고 끝낸다.
 	if push.Message.Data == "" {
@@ -261,11 +297,7 @@ func (h *PlayHandler) parse(raw []byte) (notification, error) {
 			"알림 내용을 해석하지 못했어요")
 	}
 
-	// 다른 앱의 알림이다. 우리 원장과 무관하다.
-	if dn.PackageName != "" && dn.PackageName != h.packageName {
-		return notification{}, platformerr.New(platformerr.CodeBundleMismatch,
-			"다른 앱의 알림이에요")
-	}
+	n.PackageName = dn.PackageName
 
 	n.ObservedAt = playEventTime(dn.EventTimeMillis)
 
@@ -273,6 +305,19 @@ func (h *PlayHandler) parse(raw []byte) (notification, error) {
 	case dn.TestNotification != nil:
 		// Play Console에서 보내는 연결 확인이다. 200을 줘야 설정이 완료된다.
 		n.Kind = "test"
+		return n, nil
+
+	case dn.PendingRefundReviewNotification != nil:
+		pending := dn.PendingRefundReviewNotification
+		if dn.PackageName == "" || pending.PendingRefundToken == "" || pending.OrderID == "" {
+			return notification{}, platformerr.New(platformerr.CodeProviderResponseInvalid,
+				"환불 검토 알림에 필수 값이 없어요")
+		}
+		n.Kind = "pending_refund_review"
+		n.RefundReview = &refundReviewNotification{
+			OrderID: pending.OrderID, PendingRefundToken: pending.PendingRefundToken,
+			RefundReason: pending.RefundReason,
+		}
 		return n, nil
 
 	case dn.VoidedPurchaseNotification != nil:

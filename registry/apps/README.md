@@ -29,6 +29,7 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   "iap": {
     "ledger_environment": "sandbox",     // sandbox | production
     "markets": ["google_play", "app_store", "apps_in_toss"],
+    "google_play_package_name": "com.seorilabs.lizardtycoon",
     "entitlement_ids": ["sp_galaxy_gecko"]
   },
   "cors_origins": []
@@ -43,6 +44,11 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
 `IAP_CATALOG_JSON`은 마켓 SKU와 entitlement의 전역 매핑이고, 이 목록은
 해당 앱에 운영자 지급할 수 있는 entitlement 경계다. 두 목록의 교집합만
 Admin API에 노출하고 지급·회수에 허용한다.
+
+활성 IAP 앱의 `markets`에 `google_play`가 있으면
+`iap.google_play_package_name`이 필수이며 앱 사이에 중복될 수 없다. Google Play
+RTDN의 package name은 이 값으로만 app ID에 연결한다. 환경변수나 알림 내용만으로
+앱을 추측하지 않는다.
 
 ## 왜 API key가 없는가
 

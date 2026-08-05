@@ -9,13 +9,45 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 )
 
 const testPackageName = "com.seorilabs.lizardtycoon"
+
+type fakePlayApps struct {
+	appID string
+	err   error
+}
+
+func (f *fakePlayApps) ResolveGooglePlayPackage(_ context.Context, packageName string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	if packageName != testPackageName {
+		return "", platformerr.New(platformerr.CodeConfigUnavailable, "등록되지 않은 package")
+	}
+	if f.appID == "" {
+		return "lizard-tycoon", nil
+	}
+	return f.appID, nil
+}
+
+type fakeRefundReviews struct {
+	inputs []ledger.PendingRefundReviewInput
+	err    error
+}
+
+func (f *fakeRefundReviews) RecordPendingRefundReview(_ context.Context, in ledger.PendingRefundReviewInput) error {
+	f.inputs = append(f.inputs, in)
+	return f.err
+}
+
+func (*fakeRefundReviews) Environment() domain.Environment { return domain.EnvSandbox }
 
 // fakeValidator는 Pub/Sub OIDC 검증을 대신한다.
 type fakeValidator struct {
@@ -31,9 +63,28 @@ func (f *fakeValidator) Validate(_ context.Context, token string) (string, error
 
 func newPlayHandler(t *testing.T, v *fakeValidator, ver Verifier, allowed ...string) (*PlayHandler, *fakeEvents, *fakeReconciler) {
 	t.Helper()
+	h, ev, rc, _, _ := newPlayHandlerParts(t, v, ver, &fakePlayApps{}, allowed...)
+	return h, ev, rc
+}
+
+func newPlayHandlerParts(
+	t *testing.T,
+	v *fakeValidator,
+	ver Verifier,
+	apps PlayAppResolver,
+	allowed ...string,
+) (*PlayHandler, *fakeEvents, *fakeReconciler, *fakeRefundReviews, *refundreview.Keyring) {
+	t.Helper()
 
 	ev := &fakeEvents{}
 	rc := &fakeReconciler{res: ledger.ReconcileResult{Known: true}}
+	refunds := &fakeRefundReviews{}
+	keys, err := refundreview.NewKeyring(refundreview.Key{
+		ID: "test", Material: []byte(strings.Repeat("k", 32)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := NewPlayHandler(PlayConfig{
 		Validator:     v,
@@ -42,11 +93,14 @@ func newPlayHandler(t *testing.T, v *fakeValidator, ver Verifier, allowed ...str
 		Reconciler:    rc,
 		PackageName:   testPackageName,
 		AllowedEmails: allowed,
+		Apps:          apps,
+		RefundReviews: refunds,
+		RefundSealer:  keys,
 	})
 	if err != nil {
 		t.Fatalf("핸들러 생성 실패: %v", err)
 	}
-	return h, ev, rc
+	return h, ev, rc, refunds, keys
 }
 
 // pushBody는 Pub/Sub push 본문을 만든다.
@@ -99,6 +153,72 @@ func voidedNotification() map[string]any {
 			"productType":   2,
 			"refundType":    refundTypeFull,
 		},
+	}
+}
+
+func pendingRefundReviewNotification() map[string]any {
+	return map[string]any{
+		"version": "1.0", "packageName": testPackageName,
+		"eventTimeMillis": "1785500000000",
+		"pendingRefundReviewNotification": map[string]any{
+			"version": "1.0", "pendingRefundToken": "pending-refund-token",
+			"orderId": "GPA.1234-5678", "refundReason": 7,
+			"obfuscatedAccountId": "must-not-persist",
+			"obfuscatedProfileId": "must-not-persist-either",
+		},
+	}
+}
+
+func TestPlayPendingRefundReviewIsSealedAndRecorded(t *testing.T) {
+	v := &fakeValidator{email: "pubsub@seorilabs-platform.iam.gserviceaccount.com"}
+	ver := &fakeVerifier{}
+	h, ev, rc, refunds, keys := newPlayHandlerParts(t, v, ver, &fakePlayApps{})
+
+	w := servePlay(t, h, pushBody(t, "msg-refund-review", pendingRefundReviewNotification()), "Bearer tok")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if ver.call != 0 || rc.call != 0 {
+		t.Fatal("환불 검토 알림에서 구매 재검증이나 entitlement 조정을 실행했다")
+	}
+	if len(ev.completed) != 1 || len(refunds.inputs) != 1 {
+		t.Fatalf("event=%v refund inputs=%d", ev.completed, len(refunds.inputs))
+	}
+	in := refunds.inputs[0]
+	if in.AppID != "lizard-tycoon" || in.PackageName != testPackageName ||
+		in.ReviewID != refundreview.ReviewID("pending-refund-token") ||
+		in.OrderIDHash != refundreview.OrderIDHash("GPA.1234-5678") || in.RefundReason != 7 {
+		t.Fatalf("record input=%#v", in)
+	}
+	if strings.Contains(in.Secret.Ciphertext, "pending-refund-token") ||
+		strings.Contains(in.Secret.Ciphertext, "GPA.1234-5678") {
+		t.Fatal("ciphertext에 비밀 원문이 보인다")
+	}
+	secret, err := keys.Open(in.Secret, refundreview.Binding{
+		ReviewID: in.ReviewID, AppID: in.AppID, PackageName: in.PackageName,
+		OrderIDHash: in.OrderIDHash, Environment: in.Environment,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret.PendingRefundToken != "pending-refund-token" || secret.OrderID != "GPA.1234-5678" {
+		t.Fatalf("secret=%#v", secret)
+	}
+	if in.ReceivedAt.IsZero() || time.Since(in.ReceivedAt) > time.Minute {
+		t.Fatalf("receivedAt=%v", in.ReceivedAt)
+	}
+}
+
+func TestPlayPendingRefundReviewRegistryFailureRetries(t *testing.T) {
+	apps := &fakePlayApps{err: platformerr.New(platformerr.CodeConfigUnavailable, "registry drift")}
+	h, ev, _, refunds, _ := newPlayHandlerParts(t,
+		&fakeValidator{email: "pubsub@x.com"}, &fakeVerifier{}, apps)
+	w := servePlay(t, h, pushBody(t, "msg-refund-registry", pendingRefundReviewNotification()), "Bearer tok")
+	if w.Code < 500 {
+		t.Fatalf("status=%d want 5xx", w.Code)
+	}
+	if len(ev.completed) != 0 || len(refunds.inputs) != 0 {
+		t.Fatal("app binding 실패인데 원장을 처리했다")
 	}
 }
 
@@ -278,7 +398,7 @@ func TestPlayAllowedSenders(t *testing.T) {
 	})
 }
 
-// 다른 앱의 알림은 우리 원장과 무관하다.
+// 다른 앱의 알림은 registry/config drift일 수 있어 버리지 않는다.
 func TestPlayRejectsOtherPackage(t *testing.T) {
 	dn := voidedNotification()
 	dn["packageName"] = "com.someone.else"
@@ -288,9 +408,8 @@ func TestPlayRejectsOtherPackage(t *testing.T) {
 
 	w := servePlay(t, h, pushBody(t, "msg-other", dn), "Bearer t")
 
-	// 재전송해도 결과가 같으므로 200으로 끊는다.
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
+	if w.Code < 500 {
+		t.Errorf("status = %d, want 5xx", w.Code)
 	}
 	if rc.call != 0 {
 		t.Error("다른 앱 알림을 반영했다")
@@ -404,11 +523,20 @@ func TestPlayRetryableFailureReturns5xx(t *testing.T) {
 
 func TestNewPlayHandlerValidation(t *testing.T) {
 	base := PlayConfig{
-		Validator:   &fakeValidator{},
-		Events:      &fakeEvents{},
-		Reconciler:  &fakeReconciler{},
-		PackageName: testPackageName,
+		Validator:     &fakeValidator{},
+		Events:        &fakeEvents{},
+		Reconciler:    &fakeReconciler{},
+		PackageName:   testPackageName,
+		Apps:          &fakePlayApps{},
+		RefundReviews: &fakeRefundReviews{},
 	}
+	keys, err := refundreview.NewKeyring(refundreview.Key{
+		ID: "test", Material: []byte(strings.Repeat("k", 32)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.RefundSealer = keys
 
 	if _, err := NewPlayHandler(base); err != nil {
 		t.Fatalf("정상 설정을 거부했다: %v", err)
