@@ -10,6 +10,7 @@ import { SessionManager, MemorySessionStore } from "../src/session.ts";
 import { Events, MemoryEventOutbox } from "../src/events.ts";
 import { Iap } from "../src/iap.ts";
 import { Config } from "../src/config.ts";
+import { Platform, SDK_VERSION } from "../src/index.ts";
 
 interface FakeCall {
   url: string;
@@ -359,11 +360,29 @@ describe("Events", () => {
     assert.equal(f.count, 0);
   });
 
+  it("start를 반복해도 세션 시작 이벤트는 한 번만 기록한다", async () => {
+    const f = fakeFetch([ok({})]);
+    const events = new Events({
+      transport: newTransport(f.impl, 0),
+      flushIntervalMs: 0,
+    });
+
+    events.start();
+    events.stop();
+    events.start();
+    await events.flush();
+
+    const body = f.calls[0]!.body as { events: Array<{ name: string; sessionId: string }> };
+    assert.deepEqual(body.events.map((event) => event.name), ["seori_session_start"]);
+    assert.ok(body.events[0]!.sessionId.length >= 8);
+  });
+
   it("outbox는 상한을 넘으면 오래된 것을 버린다", async () => {
     const outbox = new MemoryEventOutbox(3);
     await outbox.push([1, 2, 3, 4, 5].map((i) => ({
       eventId: `event-${i}`,
       name: `e${i}`,
+      sessionId: "session-1",
       params: {},
       tsUnixMs: i,
     })));
@@ -372,6 +391,95 @@ describe("Events", () => {
     const drained = await outbox.drain(10);
     // 뒤의 3개가 남는다
     assert.deepEqual(drained.map((e) => e.name), ["e3", "e4", "e5"]);
+  });
+});
+
+describe("Platform routing", () => {
+  it("API, ingest, IAP를 각각 지정한 호스트로 보낸다", async () => {
+    const f = fakeFetch([
+      ok({ values: {}, features: {}, sdk: { status: "ok" }, maintenance: { active: false } }),
+      ok({ accepted: 2, dropped: 0 }),
+    ]);
+    const platform = new Platform({
+      baseUrl: "https://api.platform.test",
+      ingestBaseUrl: "https://ingest.platform.test",
+      iapBaseUrl: "https://iap.platform.test",
+      appId: "happy-farm",
+      fetchImpl: f.impl,
+      maxRetries: 0,
+      eventFlushIntervalMs: 0,
+      eventAllowlist: ["seori_session_start", "game_start"],
+      eventContext: {
+        platform: "ait",
+        appVersion: "1.2.3",
+        locale: "ko-KR",
+      },
+    });
+
+    await platform.config.fetch({ appVersion: "1.2.3", platform: "android" });
+    platform.start();
+    platform.events.track({ name: "game_start" });
+    platform.events.track({ name: "crop_harvested" });
+    await platform.events.flush();
+
+    assert.equal(f.calls[0]!.url, "https://api.platform.test/v1/config?appVersion=1.2.3&platform=android");
+    assert.equal(f.calls[1]!.url, "https://ingest.platform.test/v1/events");
+    const body = f.calls[1]!.body as {
+      events: Array<{ name: string; sessionId: string }>;
+      context: Record<string, string>;
+    };
+    assert.deepEqual(body.events.map((event) => event.name), ["seori_session_start", "game_start"]);
+    assert.equal(new Set(body.events.map((event) => event.sessionId)).size, 1);
+    assert.deepEqual(body.context, {
+      platform: "ait",
+      appVersion: "1.2.3",
+      locale: "ko-KR",
+      sdkVersion: SDK_VERSION,
+    });
+  });
+
+  it("IAP는 별도 호스트를 사용한다", async () => {
+    const f = fakeFetch([
+      ok({
+        platformToken: "pt-1",
+        refreshToken: "rt-1",
+        platformUserId: "pu_1",
+        appUserId: "uid-1",
+        isAnonymous: false,
+        expiresIn: 3600,
+      }),
+      ok({ googlePlayObfuscatedAccountId: "gp", appStoreAppAccountToken: "ios" }),
+    ]);
+    const platform = new Platform({
+      baseUrl: "https://api.platform.test",
+      ingestBaseUrl: "https://ingest.platform.test",
+      iapBaseUrl: "https://iap.platform.test",
+      appId: "happy-farm",
+      fetchImpl: f.impl,
+      maxRetries: 0,
+    });
+
+    await platform.signIn({ kind: "firebase-id-token", value: "id-token" });
+    await platform.iap.accountReferences();
+
+    assert.equal(f.calls[0]!.url, "https://api.platform.test/v1/auth/session");
+    assert.equal(f.calls[1]!.url, "https://iap.platform.test/v1/iap/account-references");
+  });
+
+  it("별도 호스트가 없으면 baseUrl로 하위 호환된다", async () => {
+    const f = fakeFetch([ok({ accepted: 1, dropped: 0 })]);
+    const platform = new Platform({
+      baseUrl: "https://platform.test",
+      appId: "happy-farm",
+      fetchImpl: f.impl,
+      maxRetries: 0,
+      eventFlushIntervalMs: 0,
+    });
+
+    platform.start();
+    await platform.events.flush();
+
+    assert.equal(f.calls[0]!.url, "https://platform.test/v1/events");
   });
 });
 

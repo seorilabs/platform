@@ -13,7 +13,11 @@
  */
 
 import { Config, type ConfigOptions } from "./config.ts";
-import { Events, type EventOutbox } from "./events.ts";
+import {
+  Events,
+  type EventContextProvider,
+  type EventOutbox,
+} from "./events.ts";
 import { Iap } from "./iap.ts";
 import {
   MemorySessionStore,
@@ -23,6 +27,7 @@ import {
   type SessionStore,
 } from "./session.ts";
 import { Transport, type TransportOptions } from "./transport.ts";
+import { SDK_VERSION } from "./version.ts";
 
 export { PlatformError } from "./transport.ts";
 export { parseEnvelope, LOCAL_RESPONSE_INVALID } from "./envelope.ts";
@@ -37,9 +42,16 @@ export { MemorySessionStore, SessionManager } from "./session.ts";
 export { MemoryEventOutbox, Events } from "./events.ts";
 export { Iap } from "./iap.ts";
 export { Config } from "./config.ts";
+export { SDK_VERSION } from "./version.ts";
 
 export type { Credential, CredentialKind, Session, SessionStore } from "./session.ts";
-export type { EventInput, EventOutbox } from "./events.ts";
+export type {
+  EventContext,
+  EventContextProvider,
+  EventInput,
+  EventOutbox,
+  EventPlatform,
+} from "./events.ts";
 export type {
   Market,
   PurchaseProof,
@@ -52,6 +64,14 @@ export type { TransportOptions, RequestOptions } from "./transport.ts";
 export type { ParamValue } from "./normalize.ts";
 
 export interface PlatformOptions extends TransportOptions {
+  /** 이벤트 수집 호스트. 생략하면 baseUrl을 쓴다. */
+  ingestBaseUrl?: string;
+  /** IAP 호스트. 생략하면 baseUrl을 쓴다. */
+  iapBaseUrl?: string;
+  /** 플랫폼으로 보낼 저빈도 이벤트 이름. 생략하면 모든 이벤트를 허용한다. */
+  eventAllowlist?: readonly string[];
+  /** 이벤트 배치에 붙일 공통 실행 환경 정보. */
+  eventContext?: EventContextProvider;
   sessionStore?: SessionStore;
   eventOutbox?: EventOutbox;
   /** 이벤트 자동 전송 주기. 0이면 수동으로만 보낸다. */
@@ -69,6 +89,14 @@ export class Platform {
 
   constructor(opts: PlatformOptions) {
     this.transport = new Transport(opts);
+    const ingestTransport = new Transport({
+      ...opts,
+      baseUrl: opts.ingestBaseUrl ?? opts.baseUrl,
+    });
+    const iapTransport = new Transport({
+      ...opts,
+      baseUrl: opts.iapBaseUrl ?? opts.baseUrl,
+    });
 
     this.session = new SessionManager(
       this.transport,
@@ -77,7 +105,7 @@ export class Platform {
     );
 
     this.events = new Events({
-      transport: this.transport,
+      transport: ingestTransport,
       // 세션이 없어도 익명 수집이 동작해야 한다.
       getToken: async () => {
         try {
@@ -91,10 +119,17 @@ export class Platform {
         ? { flushIntervalMs: opts.eventFlushIntervalMs }
         : {}),
       ...(opts.now ? { now: opts.now } : {}),
+      ...(opts.eventAllowlist ? { allowlist: opts.eventAllowlist } : {}),
+      context: () => {
+        const value = typeof opts.eventContext === "function"
+          ? opts.eventContext()
+          : (opts.eventContext ?? {});
+        return { ...value, sdkVersion: value.sdkVersion ?? SDK_VERSION };
+      },
     });
 
     this.iap = new Iap({
-      transport: this.transport,
+      transport: iapTransport,
       // 결제는 인증이 필수다. 실패하면 그대로 던진다.
       getToken: () => this.session.token(),
     });

@@ -1,0 +1,65 @@
+name: Publish TypeScript SDK
+
+on:
+  push:
+    tags:
+      - "sdk-ts-v*.*.*"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-sdk-ts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: SDK 검증 및 GitHub Packages 발행
+    runs-on: seorilabs-rpi-arm64
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and GitHub Packages
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.16.0"
+          check-latest: false
+          registry-url: https://npm.pkg.github.com
+          scope: "@seorilabs"
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test, typecheck, and build
+        run: |
+          pnpm test
+          pnpm typecheck
+          pnpm build
+
+      - name: Verify tag and package versions
+        run: node scripts/check-sdk-ts-release.mjs "$GITHUB_REF_NAME"
+
+      - name: Pack and import smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/$(npm pack ./packages/sdk-ts --pack-destination "$RUNNER_TEMP" --silent)"
+          smoke_dir="$(mktemp -d "$RUNNER_TEMP/platform-sdk-smoke.XXXXXX")"
+          npm install --prefix "$smoke_dir" "$tarball"
+          cd "$smoke_dir"
+          node --input-type=module -e "import('@seorilabs/platform-sdk').then(({SDK_VERSION}) => { if (!SDK_VERSION) process.exit(1) })"
+
+      - name: Publish private package
+        run: npm publish ./packages/sdk-ts
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}

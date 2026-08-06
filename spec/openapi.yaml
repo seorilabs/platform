@@ -218,6 +218,8 @@ paths:
               type: object
               required: [events]
               properties:
+                context:
+                  $ref: '#/components/schemas/EventContext'
                 events:
                   type: array
                   minItems: 1
@@ -1305,6 +1307,27 @@ components:
             최대 25개. 정규화 규약은 spec/conformance/param-normalization.json이 정본이다.
             boolean은 1/0, NaN·Inf는 0, null은 drop, 객체·배열은 drop.
             PII 키 이름은 서버와 SDK 양쪽에서 drop한다.
+
+    EventContext:
+      type: object
+      additionalProperties: false
+      description: 이벤트 배치 전체에 공통인 비식별 실행 환경 정보
+      properties:
+        platform:
+          type: string
+          enum: [android, ios, web, ait]
+        appVersion:
+          type: string
+          maxLength: 32
+        locale:
+          type: string
+          maxLength: 16
+        ga4ClientId:
+          type: string
+          maxLength: 64
+        sdkVersion:
+          type: string
+          maxLength: 32
 
     VerifyPurchaseOutcome:
       type: object

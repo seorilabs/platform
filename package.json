@@ -4,7 +4,7 @@
   "private": true,
   "description": "Seorilabs 수평 공통 플랫폼 모노레포",
   "scripts": {
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && node --test scripts/check-sdk-ts-release.test.mjs",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build"
   },
