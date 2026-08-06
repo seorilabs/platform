@@ -101,13 +101,15 @@ internal/identity/service.go  KindAITLogin → "아직 지원하지 않는 로�
 
 4·5가 실패하면 Godot Web은 신원 없는 이벤트 전용으로 축소한다.
 
-### 2. App Check — 뼈대만 있다
+### 2. App Check — 검증기 구현, 앱별 강제 전환 대기
 
-에러 코드 4종(`platformerr/code.go`)과 registry `require_app_check` 필드가 있는데
-**검증 코드가 없다.** 1단계에서 끄기로 한 의도된 상태다.
+Firebase Admin SDK for Go 검증기와 custom-token·계정 삭제 경계의
+`X-Firebase-AppCheck` 처리를 구현했다. registry `require_app_check`가 false인 앱은
+기존 클라이언트 호환을 유지하고, true인 앱은 token이 없거나 유효하지 않으면 거부한다.
 
-Go SDK에 `consume` replay 방지가 없어 자체 nonce 저장소가 필요하고, Godot에는
-App Check SDK 자체가 없다.
+Go SDK에 `consume` replay 방지가 없어 일회성 IAP 요청에는 여전히 자체 nonce 저장소가
+필요하고, Godot에는 App Check SDK 자체가 없다. Babycare는 신규 RN 후보의 iOS App Attest와
+Android Play Integrity 실기기 확인 후 registry sync로 강제 전환한다.
 
 ### 3. 앱 확산
 
@@ -169,7 +171,8 @@ production 배포까지 완료했다.
 - 후속 main 배포 호환성: [run 30750946141](https://github.com/seorilabs/platform/actions/runs/30750946141) 뒤 `platform-api-00016-cdv` / `platform:bdbd69428900d85ab7ae4e9a58b32eee09e48f20`에서 babycare config 200과 custom-token POST-only route 유지
 - live smoke: UID 주입 거부, 신규 Firebase custom token 교환, 합성 legacy UID 보존,
   `Cache-Control: no-store`, 생성한 Firebase 사용자와 platform mapping cleanup
-- 남은 운영 gate: **App Check 또는 edge rate limit**(위 "남은 것" 2번), 실제 기존
+- 후속 구현: App Check 검증기와 `DELETE /v1/auth/firebase-account` 멱등 삭제 경계
+- 남은 운영 gate: 신규 RN 후보의 App Check 실기기 검증과 registry 강제 전환, 실제 기존
   사용자·실기기 migration
 
 registry의 `config`/`events`/`iap` 플래그는 전부 꺼져 있다. 브리지만 쓴다.

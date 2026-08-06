@@ -16,7 +16,8 @@ platform에 저장하면 공통 인프라 침해가 각 앱 Firebase로 번지�
 
 ## Decision
 
-`platform-api`에 `POST /v1/auth/firebase-custom-token`을 추가한다.
+`platform-api`에 `POST /v1/auth/firebase-custom-token`과
+`DELETE /v1/auth/firebase-account`를 둔다.
 
 - 기존 Firebase ID token이 있으면 현재 검증기에서 `aud`, `iss`, 서명, 만료를 확인하고
   같은 uid로 custom token을 만든다.
@@ -32,6 +33,12 @@ platform에 저장하면 공통 인프라 침해가 각 앱 Firebase로 번지�
 - `platform-api@seorilabs-platform`에는 레지스트리에 지정된 앱 service account의
   `iam.serviceAccounts.signJwt`만 허용한다. `platform-iap`, `platform-admin`, worker에는 주지 않는다.
 - 응답 token은 `Cache-Control: no-store`로 전달하고 서버·클라이언트 저장소와 로그에 남기지 않는다.
+- 앱 레지스트리의 `require_app_check`가 켜지면 두 공개 경로 모두 Firebase App Check
+  token을 해당 앱의 `firebase_project_id`에 묶어 검증한다. 구버전 호환을 위해 앱별로
+  관측 후 전환하며, 검증기 배포만으로 기존 클라이언트를 차단하지 않는다.
+- 계정 삭제는 유효한 Firebase ID token의 uid에 대응하는 Platform identity 매핑과
+  사용자 문서만 지운다. 매핑이 이미 없으면 성공으로 처리하고 새 매핑을 만들지 않는다.
+  IAP 감사 원장은 기존 삭제 계약대로 보존한다.
 
 ## Consequences
 
@@ -43,5 +50,6 @@ platform에 저장하면 공통 인프라 침해가 각 앱 Firebase로 번지�
   시 새 인증과 legacy migration은 실패하며 새 uid로 우회하지 않는다.
 - 앱별 service account 생성, IAM Credentials API 활성화, resource-level Token Creator 부여가
   배포 선행 조건이다.
-- 공개 bootstrap endpoint의 남용 비용 경계는 App Check 또는 edge rate limit 후속 작업으로
-  남는다. bridge를 활성화한 앱만 호출할 수 있고 Firebase uid 사칭은 허용하지 않는다.
+- 공개 bootstrap endpoint의 App Check 검증 경계를 제공한다. 실제 강제는 앱별
+  `require_app_check` 전환과 새 클라이언트 실기기 검증 뒤 수행한다. bridge를 활성화한
+  앱만 호출할 수 있고 Firebase uid 사칭은 허용하지 않는다.
