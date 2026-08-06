@@ -47,15 +47,7 @@ jobs:
           pnpm build
 
       - name: Verify tag and package versions
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag_version="${GITHUB_REF_NAME#sdk-ts-v}"
-          package_version="$(node -p "require('./packages/sdk-ts/package.json').version")"
-          sdk_version="$(node --input-type=module -e "import('./packages/sdk-ts/dist/version.js').then(({SDK_VERSION}) => console.log(SDK_VERSION))")"
-          test "$GITHUB_REF_NAME" = "sdk-ts-v$package_version"
-          test "$tag_version" = "$package_version"
-          test "$sdk_version" = "$package_version"
+        run: node scripts/check-sdk-ts-release.mjs "$GITHUB_REF_NAME"
 
       - name: Pack and import smoke
         shell: bash
