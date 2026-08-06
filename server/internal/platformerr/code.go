@@ -36,21 +36,9 @@ const (
 
 // App Check
 //
-// 아직 검증기가 없다. 이 코드들을 내는 곳이 한 군데도 없다.
-// registry의 require_app_check도 아무도 읽지 않는다.
-//
-// 1단계에서 끄기로 한 의도된 상태다. 두 가지가 막고 있다.
-//
-//	Godot에 App Check SDK가 없다. 게임 클라이언트가 토큰을 못 만든다.
-//	Go SDK에 consume 옵션이 없다. Node Admin 전용이라 replay 방지를
-//	자체 nonce 저장소로 만들어야 한다.
-//
-// 코드를 미리 지우지 않는 이유는 계약 때문이다. /v1은 영구히 깨지
-// 않으므로(R4) 나중에 켤 때 쓸 코드를 지금 확정해 둔다. 클라이언트가
-// 모르는 에러 코드를 받는 것보다 낫다.
-//
-// 켜는 시점의 전제: nonce 저장소 + 앱별 단계 적용. 전역 스위치로
-// 한 번에 켜면 App Check를 못 만드는 클라이언트가 결제에서 막힌다.
+// 앱별 require_app_check가 켜진 경로에서 사용한다. Go Admin SDK는
+// 표준 token 검증을 지원하지만 consume 기반 replay 방지는 지원하지
+// 않으므로, 일회성 보호가 필요한 IAP 경로는 별도 경계를 유지한다.
 const (
 	CodeAppCheckRequired    Code = "app_check_required"
 	CodeAppCheckInvalid     Code = "app_check_invalid"

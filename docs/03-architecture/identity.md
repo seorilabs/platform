@@ -62,6 +62,15 @@ POST /v1/auth/firebase-custom-token
   JSON은 platform에 두지 않는다.
 - 레지스트리 feature와 앱 프로젝트 service account가 모두 있어야 한다.
 - 응답 token은 1회용 전달값이다. 로그·Firestore·클라이언트 저장소에 남기지 않는다.
+- `require_app_check=true`인 앱은 `X-Firebase-AppCheck`를 필수로 받고 Firebase Admin
+  SDK for Go로 `firebase_project_id`에 묶어 검증한다. 이 스위치는 registry sync 후
+  적용되므로 새 앱 후보를 실기기에서 확인하기 전에는 켜지 않는다.
+
+계정 삭제는 같은 공개 bootstrap 경계의
+`DELETE /v1/auth/firebase-account`를 먼저 호출한다. Firebase ID token으로 uid를 확인하고
+기존 Platform identity 매핑과 PII 없는 사용자 문서를 삭제한다. 이미 삭제된 매핑은
+멱등 성공이며 IAP 감사 원장은 보존한다. 앱 프로젝트의 Auth와 Firestore 데이터 삭제는
+앱 backend가 이어서 수행한다.
 
 세부 보안 결정은 ADR 0013을 따른다.
 
@@ -71,7 +80,8 @@ POST /v1/auth/firebase-custom-token
 부여하고 registry sync와 production 배포를 완료했다. 최초 활성화 revision `platform-api-00015-xpx`에서 신규
 custom token 교환과 합성 legacy UID 보존, 임의 UID 주입 거부, `Cache-Control: no-store`를
 live 검증했으며 테스트 Firebase 사용자와 platform mapping은 삭제했다. 실제 기존 사용자·실기기
-migration과 App Check 또는 edge rate limit은 아직 release gate다. 같은 날 후속 main 배포
+migration은 아직 release gate다. App Check와 Firebase 계정 매핑 삭제 코드는 후속 변경에서
+추가했으며 신규 후보 확인 전 `require_app_check`는 false를 유지한다. 같은 날 후속 main 배포
 `platform-api-00016-cdv`에서도 babycare config 200과 custom-token POST-only route를 재확인했다.
 
 ### `checkRevoked` — 판단이 필요한 지점

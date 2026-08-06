@@ -21,6 +21,24 @@ type fakeVerifier struct {
 	err error
 }
 
+type fakeAppCheckVerifier struct {
+	err       error
+	token     string
+	projectID string
+	calls     int
+}
+
+func (f *fakeAppCheckVerifier) Verify(
+	_ context.Context,
+	token,
+	firebaseProjectID string,
+) error {
+	f.calls++
+	f.token = token
+	f.projectID = firebaseProjectID
+	return f.err
+}
+
 func (f fakeVerifier) Verify(_ context.Context, token string, _ registry.App) (Claims, error) {
 	if f.err != nil {
 		return Claims{}, f.err
@@ -59,6 +77,7 @@ type memRepo struct {
 	refresh  map[string]Session
 	created  int // 새로 만든 횟수
 	deleteOK bool
+	deleted  int
 }
 
 func newMemRepo() *memRepo {
@@ -84,6 +103,16 @@ func (m *memRepo) EnsureUser(_ context.Context, appID, uid string, _ bool) (stri
 	m.users[key] = p
 	m.created++
 	return p, nil
+}
+
+func (m *memRepo) LookupUser(
+	_ context.Context,
+	appID, uid string,
+) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.users[appID+"\x00"+uid]
+	return p, ok, nil
 }
 
 func (m *memRepo) SaveRefresh(_ context.Context, token string, sess Session, _ time.Time) error {
@@ -117,6 +146,7 @@ func (m *memRepo) DeleteUser(_ context.Context, appID, uid, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.users, appID+"\x00"+uid)
+	m.deleted++
 	return nil
 }
 
@@ -207,6 +237,115 @@ func TestCreateFirebaseCustomTokenPreservesExistingUID(t *testing.T) {
 	}
 	if result.PlatformUserID == "" {
 		t.Fatal("platform user 매핑이 생성되지 않았다")
+	}
+}
+
+func TestVerifyAppCheck(t *testing.T) {
+	t.Run("원장 스위치가 꺼져 있으면 token을 요구하지 않는다", func(t *testing.T) {
+		verifier := &fakeAppCheckVerifier{}
+		svc := newBridgeTestService(
+			t,
+			fakeVerifier{},
+			newMemRepo(),
+			&fakeCustomTokenIssuer{token: "signed-custom-token"},
+		).WithAppCheckVerifier(verifier)
+
+		if err := svc.VerifyAppCheck(context.Background(), "lizard-tycoon", ""); err != nil {
+			t.Fatalf("App Check 비활성 검증 실패: %v", err)
+		}
+		if verifier.calls != 0 {
+			t.Fatalf("검증 호출 = %d, want 0", verifier.calls)
+		}
+	})
+
+	newRequiredService := func(t *testing.T, verifier AppCheckVerifier) *Service {
+		t.Helper()
+		app := testApp()
+		app.Features = map[string]bool{"firebase_custom_token_bridge": true}
+		app.FirebaseCustomTokenServiceAccount =
+			"platform-auth@lizard-tycoon.iam.gserviceaccount.com"
+		app.RequireAppCheck = true
+		reg := registry.New(fakeSource{apps: []registry.App{app}})
+		issuer, err := NewSessionIssuer(
+			[]byte("0123456789abcdef0123456789abcdef"),
+			time.Hour,
+		)
+		if err != nil {
+			t.Fatalf("발급기 생성 실패: %v", err)
+		}
+		return NewService(reg, fakeVerifier{}, newMemRepo(), issuer).
+			WithCustomTokenIssuer(&fakeCustomTokenIssuer{token: "signed-custom-token"}).
+			WithAppCheckVerifier(verifier)
+	}
+
+	t.Run("필수 앱은 빈 token을 거부한다", func(t *testing.T) {
+		svc := newRequiredService(t, &fakeAppCheckVerifier{})
+		err := svc.VerifyAppCheck(context.Background(), "lizard-tycoon", "")
+		if platformerr.CodeOf(err) != platformerr.CodeAppCheckRequired {
+			t.Fatalf("code = %q, want %q", platformerr.CodeOf(err), platformerr.CodeAppCheckRequired)
+		}
+	})
+
+	t.Run("잘못된 token은 일반화된 에러로 거부한다", func(t *testing.T) {
+		svc := newRequiredService(t, &fakeAppCheckVerifier{err: errors.New("bad signature")})
+		err := svc.VerifyAppCheck(context.Background(), "lizard-tycoon", "invalid")
+		if platformerr.CodeOf(err) != platformerr.CodeAppCheckInvalid {
+			t.Fatalf("code = %q, want %q", platformerr.CodeOf(err), platformerr.CodeAppCheckInvalid)
+		}
+	})
+
+	t.Run("유효한 token은 Firebase 프로젝트에 묶어 검증한다", func(t *testing.T) {
+		verifier := &fakeAppCheckVerifier{}
+		svc := newRequiredService(t, verifier)
+		if err := svc.VerifyAppCheck(
+			context.Background(),
+			"lizard-tycoon",
+			" attested-token ",
+		); err != nil {
+			t.Fatalf("App Check 검증 실패: %v", err)
+		}
+		if verifier.token != "attested-token" || verifier.projectID != "lizard-tycoon" {
+			t.Fatalf("검증 입력 = token %q, project %q", verifier.token, verifier.projectID)
+		}
+	})
+}
+
+func TestDeleteFirebaseAccount(t *testing.T) {
+	repo := newMemRepo()
+	if _, err := repo.EnsureUser(
+		context.Background(),
+		"lizard-tycoon",
+		"firebase-user",
+		false,
+	); err != nil {
+		t.Fatalf("test user 생성 실패: %v", err)
+	}
+	svc := newBridgeTestService(
+		t,
+		fakeVerifier{},
+		repo,
+		&fakeCustomTokenIssuer{token: "signed-custom-token"},
+	)
+
+	if err := svc.DeleteFirebaseAccount(
+		context.Background(),
+		"lizard-tycoon",
+		"firebase-user",
+	); err != nil {
+		t.Fatalf("Firebase account mapping 삭제 실패: %v", err)
+	}
+	if repo.deleted != 1 || len(repo.users) != 0 {
+		t.Fatalf("삭제 결과 = deleted %d, users %d", repo.deleted, len(repo.users))
+	}
+	if err := svc.DeleteFirebaseAccount(
+		context.Background(),
+		"lizard-tycoon",
+		"firebase-user",
+	); err != nil {
+		t.Fatalf("이미 삭제된 Firebase account 재삭제 실패: %v", err)
+	}
+	if repo.created != 1 || repo.deleted != 1 {
+		t.Fatalf("재삭제 결과 = created %d, deleted %d", repo.created, repo.deleted)
 	}
 }
 

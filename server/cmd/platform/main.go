@@ -138,6 +138,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 				return nil, err
 			}
 			svc.WithCustomTokenIssuer(customTokens)
+			svc.WithAppCheckVerifier(identity.NewFirebaseAppCheckVerifier())
 		}
 		d.identity = identity.NewHandler(svc)
 		d.adminUsers = users

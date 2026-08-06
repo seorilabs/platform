@@ -51,6 +51,7 @@ paths:
       security: []
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
         - $ref: '#/components/parameters/SeoriSdk'
         - $ref: '#/components/parameters/SeoriRuntime'
         - $ref: '#/components/parameters/SeoriAppVer'
@@ -146,6 +147,53 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/firebase-account:
+    delete:
+      tags: [auth]
+      summary: Firebase 사용자 Platform 매핑 삭제
+      description: |
+        앱의 Firebase ID token을 검증하고 해당 uid의 Platform identity 매핑과
+        PII 없는 사용자 문서를 삭제한다. Firebase Auth와 앱 데이터 삭제는 앱
+        프로젝트가 이어서 수행한다. IAP 감사 원장은 삭제하지 않는다.
+      operationId: deleteFirebaseAccount
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appId, firebaseIdToken]
+              additionalProperties: false
+              properties:
+                appId: { $ref: '#/components/schemas/AppId' }
+                firebaseIdToken:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+      responses:
+        '200':
+          description: 삭제 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [deleted]
+                        properties:
+                          deleted: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /config:
