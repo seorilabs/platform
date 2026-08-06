@@ -41,6 +41,12 @@ type TokenVerifier interface {
 	Verify(ctx context.Context, token string, app registry.App) (Claims, error)
 }
 
+// AppCheckVerifier는 Firebase App Check token을 앱 프로젝트에 묶어 검증한다.
+// 인터페이스는 검증을 소비하는 Service 쪽에 둔다.
+type AppCheckVerifier interface {
+	Verify(ctx context.Context, token, firebaseProjectID string) error
+}
+
 // UserRepository는 identity 저장소다.
 type UserRepository interface {
 	// EnsureUser는 (appID, uid)에 대응하는 platform_user_id를 돌려준다.
@@ -48,6 +54,9 @@ type UserRepository interface {
 	// 없으면 만들고 있으면 기존 것을 쓴다. 동시 호출에도 하나만 만들어야 한다.
 	// 여러 개가 만들어지면 같은 사람의 결제 원장이 갈라진다.
 	EnsureUser(ctx context.Context, appID, uid string, anonymous bool) (string, error)
+	// LookupUser는 삭제 같은 멱등 경로에서 기존 매핑만 읽는다.
+	// 매핑이 없을 때 새 사용자를 만들면 안 된다.
+	LookupUser(ctx context.Context, appID, uid string) (platformUserID string, found bool, err error)
 
 	// SaveRefresh는 갱신 토큰을 저장한다. 원문이 아니라 해시로 저장한다.
 	SaveRefresh(ctx context.Context, token string, sess Session, expiresAt time.Time) error
@@ -95,6 +104,7 @@ type Service struct {
 	users        UserRepository
 	issuer       *SessionIssuer
 	customTokens CustomTokenIssuer
+	appCheck     AppCheckVerifier
 	refreshTTL   time.Duration
 	now          func() time.Time
 }
@@ -120,6 +130,51 @@ func NewService(
 func (s *Service) WithCustomTokenIssuer(issuer CustomTokenIssuer) *Service {
 	s.customTokens = issuer
 	return s
+}
+
+// WithAppCheckVerifier는 공개 bootstrap 경로의 앱 증명을 연결한다.
+func (s *Service) WithAppCheckVerifier(verifier AppCheckVerifier) *Service {
+	s.appCheck = verifier
+	return s
+}
+
+// VerifyAppCheck는 앱별 원장 스위치가 켜진 경우에만 App Check를 강제한다.
+// 구버전 클라이언트를 끊지 않고 앱별로 관측 후 전환하기 위한 경계다.
+func (s *Service) VerifyAppCheck(ctx context.Context, appID, token string) error {
+	app, err := s.registry.GetUsable(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if !app.RequireAppCheck {
+		return nil
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return platformerr.New(
+			platformerr.CodeAppCheckRequired,
+			"앱 확인 token이 필요해요",
+		)
+	}
+	if len(token) > 8192 {
+		return platformerr.New(
+			platformerr.CodeAppCheckInvalid,
+			"앱 확인 token이 올바르지 않아요",
+		)
+	}
+	if s.appCheck == nil {
+		return platformerr.New(
+			platformerr.CodePlatformUnavailable,
+			"앱 확인 서비스를 사용할 수 없어요",
+		)
+	}
+	if err := s.appCheck.Verify(ctx, token, app.FirebaseProjectID); err != nil {
+		return platformerr.Wrap(
+			err,
+			platformerr.CodeAppCheckInvalid,
+			"앱 확인 token이 올바르지 않아요",
+		)
+	}
+	return nil
 }
 
 // CreateFirebaseCustomToken은 platform 신원을 Firebase custom token으로 잇는다.
@@ -198,6 +253,45 @@ func (s *Service) CreateFirebaseCustomToken(
 		AppUserID:           uid,
 		PlatformUserID:      platformUserID,
 	}, nil
+}
+
+// DeleteFirebaseAccount는 검증된 Firebase uid의 Platform identity만 지운다.
+// Firebase Auth와 앱 데이터는 해당 Firebase 프로젝트가 이어서 삭제하며,
+// IAP 감사 원장은 기존 DeleteUser 계약에 따라 보존한다.
+func (s *Service) DeleteFirebaseAccount(
+	ctx context.Context,
+	appID string,
+	firebaseIDToken string,
+) error {
+	app, err := s.registry.GetUsable(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if !app.FeatureEnabled("firebase_custom_token_bridge") {
+		return platformerr.New(
+			platformerr.CodeAuthForbidden,
+			"이 앱은 Firebase account bridge를 사용하지 않아요",
+		)
+	}
+	firebaseIDToken = strings.TrimSpace(firebaseIDToken)
+	if firebaseIDToken == "" || len(firebaseIDToken) > 4096 {
+		return platformerr.New(
+			platformerr.CodeRequestInvalid,
+			"Firebase token이 올바르지 않아요",
+		)
+	}
+	claims, err := s.verifier.Verify(ctx, firebaseIDToken, app)
+	if err != nil {
+		return err
+	}
+	platformUserID, found, err := s.users.LookupUser(ctx, app.AppID, claims.UID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	return s.users.DeleteUser(ctx, app.AppID, claims.UID, platformUserID)
 }
 
 // WithClock은 시계를 주입한다. 테스트용이다.

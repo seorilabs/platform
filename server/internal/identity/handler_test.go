@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 func TestFirebaseCustomTokenHandler(t *testing.T) {
@@ -81,4 +83,78 @@ func TestFirebaseCustomTokenHandler(t *testing.T) {
 			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 		}
 	})
+}
+
+func TestFirebaseCustomTokenHandlerRequiresAppCheck(t *testing.T) {
+	customTokens := &fakeCustomTokenIssuer{token: "signed-custom-token"}
+	appCheck := &fakeAppCheckVerifier{}
+	service := newBridgeTestService(t, fakeVerifier{}, newMemRepo(), customTokens)
+	app := testApp()
+	app.Features = map[string]bool{"firebase_custom_token_bridge": true}
+	app.FirebaseCustomTokenServiceAccount =
+		"platform-auth@lizard-tycoon.iam.gserviceaccount.com"
+	app.RequireAppCheck = true
+	service.registry = registry.New(fakeSource{apps: []registry.App{app}})
+	service.WithAppCheckVerifier(appCheck)
+	mux := http.NewServeMux()
+	NewHandler(service).Register(mux)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/auth/firebase-custom-token",
+		bytes.NewBufferString(`{"appId":"lizard-tycoon"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(AppHeader, "lizard-tycoon")
+	request.Header.Set("X-Firebase-AppCheck", "attested-token")
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if appCheck.token != "attested-token" {
+		t.Fatalf("App Check token = %q", appCheck.token)
+	}
+}
+
+func TestDeleteFirebaseAccountHandler(t *testing.T) {
+	service := newBridgeTestService(
+		t,
+		fakeVerifier{},
+		newMemRepo(),
+		&fakeCustomTokenIssuer{token: "signed-custom-token"},
+	)
+	mux := http.NewServeMux()
+	NewHandler(service).Register(mux)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/v1/auth/firebase-account",
+		bytes.NewBufferString(
+			`{"appId":"lizard-tycoon","firebaseIdToken":"firebase-user"}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(AppHeader, "lizard-tycoon")
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Deleted bool `json:"deleted"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("응답 decode 실패: %v", err)
+	}
+	if !envelope.OK || !envelope.Result.Deleted {
+		t.Fatalf("response = %#v", envelope)
+	}
 }

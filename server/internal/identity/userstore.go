@@ -206,6 +206,48 @@ func (r *StoreRepository) EnsureUser(
 	return result, nil
 }
 
+// LookupUser는 기존 identity 매핑만 읽는다. 삭제 재시도 중 새 매핑이
+// 생기지 않도록 EnsureUser와 분리한다.
+func (r *StoreRepository) LookupUser(
+	ctx context.Context,
+	appID, uid string,
+) (string, bool, error) {
+	idPath, err := identityPath(appID, uid)
+	if err != nil {
+		return "", false, platformerr.Wrap(
+			err,
+			platformerr.CodeInternal,
+			"사용자를 확인하지 못했어요",
+		)
+	}
+	snap, err := r.store.Get(ctx, idPath)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, platformerr.Wrap(
+			err,
+			platformerr.CodeInternal,
+			"사용자를 확인하지 못했어요",
+		)
+	}
+	var doc identityDoc
+	if err := snap.DataTo(&doc); err != nil {
+		return "", false, platformerr.Wrap(
+			err,
+			platformerr.CodeInternal,
+			"사용자를 확인하지 못했어요",
+		)
+	}
+	if doc.PlatformUserID == "" {
+		return "", false, platformerr.New(
+			platformerr.CodeLedgerStateInvalid,
+			"사용자 매핑이 올바르지 않아요",
+		)
+	}
+	return doc.PlatformUserID, true, nil
+}
+
 // LookupSupportUser는 platformUserId 또는 정확한 supportCode로 사용자를
 // 찾는다. 이메일·이름·전화번호·Firebase UID는 반환하지 않는다.
 func (r *StoreRepository) LookupSupportUser(ctx context.Context, reference string) (SupportUser, error) {

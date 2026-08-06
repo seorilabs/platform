@@ -53,9 +53,8 @@ type App struct {
 
 	Features map[string]bool `json:"features" firestore:"features"`
 
-	// RequireAppCheck는 아직 아무도 읽지 않는다. 검증기가 없다.
-	// true로 두어도 막히지 않으므로 보안 통제로 믿으면 안 된다.
-	// 사정은 platformerr의 App Check 코드 주석에 적었다.
+	// RequireAppCheck는 공개 bootstrap 경로에서도 유효한 App Check
+	// token을 요구한다. 앱별 단계 적용을 위해 전역 환경변수 대신 원장에 둔다.
 	RequireAppCheck bool `json:"require_app_check" firestore:"require_app_check"`
 
 	GA4 GA4Config `json:"ga4" firestore:"ga4"`

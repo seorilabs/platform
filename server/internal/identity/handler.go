@@ -28,8 +28,47 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/session", httpx.Wrap(h.createSession))
 	mux.HandleFunc("POST /v1/auth/firebase-custom-token", httpx.Wrap(h.createFirebaseCustomToken))
+	mux.HandleFunc("DELETE /v1/auth/firebase-account", httpx.Wrap(h.deleteFirebaseAccount))
 	mux.HandleFunc("POST /v1/auth/refresh", httpx.Wrap(h.refresh))
 	mux.HandleFunc("DELETE /v1/users/me", httpx.Wrap(h.deleteMe))
+}
+
+type deleteFirebaseAccountRequest struct {
+	AppID           string `json:"appId"`
+	FirebaseIDToken string `json:"firebaseIdToken"`
+}
+
+func (h *Handler) deleteFirebaseAccount(w http.ResponseWriter, r *http.Request) error {
+	var req deleteFirebaseAccountRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if req.AppID == "" || req.FirebaseIDToken == "" {
+		return platformerr.New(
+			platformerr.CodeRequestInvalid,
+			"appId와 Firebase token이 필요해요",
+		)
+	}
+	appID, err := resolveAppID(r, req.AppID)
+	if err != nil {
+		return err
+	}
+	if err := h.svc.VerifyAppCheck(
+		r.Context(),
+		appID,
+		r.Header.Get("X-Firebase-AppCheck"),
+	); err != nil {
+		return err
+	}
+	if err := h.svc.DeleteFirebaseAccount(
+		r.Context(),
+		appID,
+		req.FirebaseIDToken,
+	); err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusOK, map[string]bool{"deleted": true})
+	return nil
 }
 
 type createFirebaseCustomTokenRequest struct {
@@ -52,6 +91,13 @@ func (h *Handler) createFirebaseCustomToken(w http.ResponseWriter, r *http.Reque
 	}
 	appID, err := resolveAppID(r, req.AppID)
 	if err != nil {
+		return err
+	}
+	if err := h.svc.VerifyAppCheck(
+		r.Context(),
+		appID,
+		r.Header.Get("X-Firebase-AppCheck"),
+	); err != nil {
 		return err
 	}
 	result, err := h.svc.CreateFirebaseCustomToken(
