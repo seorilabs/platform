@@ -8,13 +8,14 @@ RN 앱이 플랫폼을 쓰는 최소 형태.
 // package.json
 {
   "dependencies": {
-    "@seorilabs/platform-sdk": "github:seorilabs/platform#v0.1.0"
+    "@seorilabs/platform-sdk": "0.1.0"
   }
 }
 ```
 
-소비자가 넷을 넘으면 GitHub Packages로 옮긴다. 그전까지는 git tag가
-가볍고 충분하다.
+private GitHub Packages이므로 소비 저장소와 CI 모두 `read:packages` 인증이
+필요하다. 저장소에는 `@seorilabs:registry=https://npm.pkg.github.com`만 두고
+토큰은 파일이나 번들에 넣지 않는다.
 
 ## 2. 조립
 
@@ -22,15 +23,24 @@ RN 앱이 플랫폼을 쓰는 최소 형태.
 import { createPlatform } from "@seorilabs/platform-sdk";
 
 export const platform = createPlatform({
-  baseUrl: process.env.EXPO_PUBLIC_PLATFORM_URL!,
+  baseUrl: "https://platform-api-….run.app",
+  ingestBaseUrl: "https://platform-ingest-….run.app",
+  iapBaseUrl: "https://platform-iap-….run.app",
   appId: "my-app",
+  eventAllowlist: ["seori_session_start", "onboarding_complete"],
+  eventContext: {
+    platform: "android",
+    appVersion: "1.0.0",
+    locale: "ko-KR",
+  },
   sessionStore: new AsyncStorageSessionStore(),
 });
 
 platform.start();  // 이벤트 자동 전송 시작
 ```
 
-`baseUrl`은 클라이언트 식별값이지 Secret이 아니다. 번들에 들어가도 된다.
+세 URL은 Secret이 아니다. 별도 이벤트·IAP URL을 생략하면 하위 호환을 위해
+`baseUrl`을 사용한다.
 
 ### 세션 저장소
 

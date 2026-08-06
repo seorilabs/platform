@@ -2,18 +2,21 @@
 
 ## 입장 — GA4를 대체하지 않는다
 
-**SDK가 단일 진입점이 되고, 빌드별로 sink 구성이 다르다.**
+**기존 GA4 전송을 유지하면서 저빈도 핵심 이벤트만 플랫폼에 복제한다.**
 
 ```
-seori.events.log(name, params)
-   ├─ sink A: GA4 MP 직접   설정이 있을 때만
-   └─ sink B: 플랫폼 ingest  항상
+앱 analytics tracker
+   ├─ sink A: 기존 GA4 또는 AIT Measurement Protocol
+   └─ sink B: 플랫폼 ingest - 앱별 allowlist만
 ```
 
 | 빌드 | sink A | sink B | 결과 |
 |---|---|---|---|
 | Godot 네이티브 · RN | O | O | **GA4 geo 그대로. 회귀 0** |
-| **AIT** | **X — 번들에 비밀값 금지** | O | **플랫폼이 서버측 MP 릴레이** |
+| **AIT** | **O — 기존 직접 전송 유지** | O | **1차 연동은 dual sink** |
+
+플랫폼의 AIT GA4 서버 릴레이는 아직 구현되지 않았다. 릴레이가 구현·검증되기
+전에는 기존 Measurement Protocol과 비밀값 검증 게이트를 제거하지 않는다.
 
 ## 순수 릴레이를 채택하지 않은 이유
 

@@ -1,0 +1,42 @@
+{
+  "app_id": "happy-farm",
+  "display_name": "해피팜",
+  "firebase_project_id": "happy-farm-tycoon",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": true,
+    "iap": false,
+    "firebase_custom_token_bridge": false
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "iap": {
+    "ledger_environment": "production",
+    "markets": ["google_play", "app_store", "apps_in_toss"],
+    "entitlement_ids": []
+  },
+  "platform_event_allowlist": [
+    "seori_session_start",
+    "seori_sdk_error",
+    "game_start",
+    "first_seed_selected",
+    "first_meaningful_harvest",
+    "onboarding_step_view",
+    "onboarding_complete",
+    "onboarding_skip",
+    "onboarding_stall",
+    "ad_reward_click",
+    "ad_reward_completed",
+    "ad_reward_failed",
+    "ad_limit_blocked",
+    "interstitial_shown",
+    "notification_opened",
+    "update_gate_shown",
+    "update_gate_store_click"
+  ],
+  "cors_origins": [],
+  "blocked_uids": []
+}

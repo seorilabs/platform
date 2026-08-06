@@ -13,6 +13,19 @@ export interface EventInput {
   params?: Record<string, unknown>;
 }
 
+export type EventPlatform = "android" | "ios" | "web" | "ait";
+
+/** 배치 전체에 공통으로 붙는 비식별 실행 환경 정보. */
+export interface EventContext {
+  platform?: EventPlatform;
+  appVersion?: string;
+  locale?: string;
+  ga4ClientId?: string;
+  sdkVersion?: string;
+}
+
+export type EventContextProvider = EventContext | (() => EventContext);
+
 interface NormalizedEvent {
   /**
    * 이벤트 고유 식별자.
@@ -23,6 +36,7 @@ interface NormalizedEvent {
    */
   eventId: string;
   name: string;
+  sessionId: string;
   params: Record<string, ParamValue>;
   /**
    * 클라이언트가 이벤트를 만든 시각(epoch ms).
@@ -104,6 +118,8 @@ export interface EventsOptions {
   outbox?: EventOutbox;
   flushIntervalMs?: number;
   now?: () => number;
+  allowlist?: readonly string[];
+  context?: EventContextProvider;
 }
 
 export class Events {
@@ -112,10 +128,14 @@ export class Events {
   private readonly outbox: EventOutbox;
   private readonly flushIntervalMs: number;
   private readonly now: () => number;
+  private readonly allowlist: ReadonlySet<string> | undefined;
+  private readonly context: EventContextProvider | undefined;
+  private readonly sessionId = newEventID();
 
   private buffer: NormalizedEvent[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private flushing = false;
+  private started = false;
 
   constructor(opts: EventsOptions) {
     this.transport = opts.transport;
@@ -123,6 +143,8 @@ export class Events {
     this.outbox = opts.outbox ?? new MemoryEventOutbox();
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_MS;
     this.now = opts.now ?? Date.now;
+    this.allowlist = opts.allowlist ? new Set(opts.allowlist) : undefined;
+    this.context = opts.context;
   }
 
   /**
@@ -131,12 +153,13 @@ export class Events {
    * 던지지 않는다. 계측 때문에 게임이 멈추면 안 된다.
    */
   track(event: EventInput): void {
-    if (!event.name) {
+    if (!event.name || (this.allowlist && !this.allowlist.has(event.name))) {
       return;
     }
     this.buffer.push({
       eventId: newEventID(),
       name: event.name,
+      sessionId: this.sessionId,
       params: normalizeParams(event.params ?? {}),
       tsUnixMs: this.now(),
     });
@@ -148,7 +171,12 @@ export class Events {
 
   /** 주기적 전송을 시작한다. */
   start(): void {
-    if (this.timer) {
+    if (!this.started) {
+      this.started = true;
+      this.track({ name: "seori_session_start" });
+    }
+
+    if (this.timer || this.flushIntervalMs <= 0) {
       return;
     }
     this.timer = setInterval(() => void this.flush(), this.flushIntervalMs);
@@ -211,8 +239,16 @@ export class Events {
       method: "POST",
       path: "/v1/events",
       token,
-      body: { events: batch },
+      body: {
+        events: batch,
+        context: this.resolveContext(),
+      },
     });
+  }
+
+  private resolveContext(): EventContext {
+    const value = typeof this.context === "function" ? this.context() : (this.context ?? {});
+    return { ...value };
   }
 
   private async resolveToken(): Promise<string | undefined> {
