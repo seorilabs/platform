@@ -215,6 +215,18 @@ type fakeUsers struct {
 	user       identity.SupportUser
 	err        error
 	references []string
+
+	counts    identity.UserCounts
+	countErr  error
+	countedAt []time.Time
+}
+
+func (f *fakeUsers) CountUsers(_ context.Context, now time.Time) (identity.UserCounts, error) {
+	f.countedAt = append(f.countedAt, now)
+	if f.countErr != nil {
+		return identity.UserCounts{}, f.countErr
+	}
+	return f.counts, nil
 }
 
 func (f *fakeUsers) LookupSupportUser(_ context.Context, reference string) (identity.SupportUser, error) {
@@ -2362,6 +2374,138 @@ func TestHealthMismatchesIsAlwaysArray(t *testing.T) {
 	w := serve(t, h, http.MethodGet, "/v1/admin/health", "", "tok", "syous")
 	if !strings.Contains(w.Body.String(), `"environmentMismatches":[]`) {
 		t.Errorf("빈 배열이 아니다: %s", w.Body.String())
+	}
+}
+
+func TestMetricsReportsUserCounts(t *testing.T) {
+	measuredAt := time.Date(2026, 8, 7, 13, 21, 28, 0, time.UTC)
+
+	tests := []struct {
+		name   string
+		counts identity.UserCounts
+		want   []string
+	}{
+		{
+			name:   "집계값을 그대로 노출한다",
+			counts: identity.UserCounts{Total: 1204, ActiveDay: 87, ActiveWeek: 341},
+			want: []string{
+				`"totalUsers":1204`,
+				`"dailyActiveUsers":87`,
+				`"weeklyActiveUsers":341`,
+			},
+		},
+		{
+			// 0은 "집계 실패"가 아니라 "아직 아무도 없음"이다. 화면이
+			// 둘을 구분하려면 0도 정상 응답으로 와야 한다.
+			name:   "0도 정상 응답이다",
+			counts: identity.UserCounts{},
+			want: []string{
+				`"totalUsers":0`,
+				`"dailyActiveUsers":0`,
+				`"weeklyActiveUsers":0`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth, err := NewAuthenticator(
+				&fakeValidator{email: backofficeSA},
+				[]string{backofficeReadSA}, []string{backofficeSA},
+			)
+			if err != nil {
+				t.Fatalf("인증기 생성 실패: %v", err)
+			}
+			users := &fakeUsers{counts: tt.counts}
+			h, err := NewHandler(
+				&fakeLedger{}, &fakeConfig{}, users,
+				&fakeApps{}, &fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+			)
+			if err != nil {
+				t.Fatalf("핸들러 생성 실패: %v", err)
+			}
+			h.WithClock(func() time.Time { return measuredAt })
+
+			w := serve(t, h, http.MethodGet, "/v1/admin/metrics", "", "tok", "syous")
+			if w.Code != http.StatusOK {
+				t.Fatalf("지표 조회 실패: %d %s", w.Code, w.Body.String())
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(w.Body.String(), want) {
+					t.Errorf("%s가 없다: %s", want, w.Body.String())
+				}
+			}
+			// 활성 정의를 값으로 박아 둔 계약이다. 나중에 이벤트 기반
+			// 집계를 붙일 때 화면이 정의 변화를 알아채는 유일한 신호다.
+			if !strings.Contains(w.Body.String(), `"activitySource":"session_last_seen"`) {
+				t.Errorf("활성 판정 근거가 없다: %s", w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), `"measuredAt":"2026-08-07T13:21:28Z"`) {
+				t.Errorf("집계 기준 시각이 없다: %s", w.Body.String())
+			}
+			// 세 값이 같은 기준 시각으로 집계돼야 DAU가 WAU보다 큰
+			// 착시가 생기지 않는다.
+			if len(users.countedAt) != 1 || !users.countedAt[0].Equal(measuredAt) {
+				t.Errorf("집계 기준 시각이 전달되지 않았다: %v", users.countedAt)
+			}
+		})
+	}
+}
+
+// 지표는 read 등급이다. 조작 자격증명 없이도 규모를 볼 수 있어야 한다.
+func TestMetricsIsReadRole(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeReadSA},
+		[]string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatalf("인증기 생성 실패: %v", err)
+	}
+	h, err := NewHandler(
+		&fakeLedger{}, &fakeConfig{}, &fakeUsers{},
+		&fakeApps{}, &fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatalf("핸들러 생성 실패: %v", err)
+	}
+
+	w := serve(t, h, http.MethodGet, "/v1/admin/metrics", "", "tok", "reader")
+	if w.Code != http.StatusOK {
+		t.Fatalf("read 자격증명으로 지표를 못 봤다: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// 집계가 실패해도 health는 영향받지 않아야 한다.
+//
+// 개요 화면이 무너진 원인이 정확히 이 결합이었다. 조회 하나가
+// 실패하면서 운영자가 원장 환경을 볼 창구까지 함께 닫혔다.
+func TestMetricsFailureDoesNotAffectHealth(t *testing.T) {
+	auth, err := NewAuthenticator(
+		&fakeValidator{email: backofficeSA},
+		[]string{backofficeReadSA}, []string{backofficeSA},
+	)
+	if err != nil {
+		t.Fatalf("인증기 생성 실패: %v", err)
+	}
+	h, err := NewHandler(
+		&fakeLedger{}, &fakeConfig{},
+		&fakeUsers{countErr: errors.New("firestore 집계 불통")},
+		&fakeApps{}, &fakeCatalog{allowed: true}, auth, &fakeAuditor{},
+	)
+	if err != nil {
+		t.Fatalf("핸들러 생성 실패: %v", err)
+	}
+
+	if w := serve(t, h, http.MethodGet, "/v1/admin/metrics", "", "tok", "syous"); w.Code == http.StatusOK {
+		t.Fatalf("집계 실패가 성공으로 나왔다: %s", w.Body.String())
+	}
+
+	w := serve(t, h, http.MethodGet, "/v1/admin/health", "", "tok", "syous")
+	if w.Code != http.StatusOK {
+		t.Fatalf("지표 실패로 health가 죽었다: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"environment"`) {
+		t.Errorf("원장 환경이 없다: %s", w.Body.String())
 	}
 }
 
