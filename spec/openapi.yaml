@@ -550,6 +550,40 @@ paths:
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /admin/metrics:
+    get:
+      tags: [admin]
+      summary: 플랫폼 사용자 규모 지표 조회
+      description: |
+        앱을 가로지르는 플랫폼 전체 사용자 규모다. 앱별 제품 지표가 아니다.
+
+        **원장 환경과 무관하다.** `users` 컬렉션은 identity가 소유하고
+        sandbox/production 원장 prefix를 타지 않으므로, 이 값은 sandbox
+        원장을 보고 있을 때도 같은 배포 환경 전체를 센다.
+
+        활성 사용자는 `lastSeenAt` 기준이고 `lastSeenAt`은 세션 발급과
+        갱신에서만 갱신된다. 따라서 앱을 열었지만 토큰이 아직 유효해
+        재발급이 없었던 사용자는 세지 않는다. GA4 DAU와 정의가 다르다.
+      operationId: getAdminMetrics
+      security: [{ AdminOidc: [] }]
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        $ref: '#/components/schemas/AdminUserMetrics'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /admin/orders/recent:
     get:
       tags: [admin]
@@ -1479,6 +1513,36 @@ components:
         ledger:
           allOf: [{ $ref: '#/components/schemas/LedgerEnvironment' }]
           description: 이 서비스가 실제로 읽고 쓰는 환경
+
+    AdminUserMetrics:
+      type: object
+      required:
+        [totalUsers, dailyActiveUsers, weeklyActiveUsers, activitySource, measuredAt]
+      additionalProperties: false
+      properties:
+        totalUsers:
+          type: integer
+          minimum: 0
+          description: 플랫폼이 발급한 platform_user_id 총 개수
+        dailyActiveUsers:
+          type: integer
+          minimum: 0
+          description: measuredAt 기준 24시간 안에 lastSeenAt이 갱신된 사용자 수
+        weeklyActiveUsers:
+          type: integer
+          minimum: 0
+          description: measuredAt 기준 7일 안에 lastSeenAt이 갱신된 사용자 수
+        activitySource:
+          type: string
+          enum: [session_last_seen]
+          description: |
+            활성 판정 근거를 값으로 박아 둔다. 나중에 이벤트 기반 집계를
+            추가하면 화면이 어느 정의를 보고 있는지 구분해야 하는데,
+            숫자만 오면 조용히 뜻이 바뀐다.
+        measuredAt:
+          type: string
+          format: date-time
+          description: 서버가 집계 기준으로 삼은 시각
 
     LedgerEnvironment:
       type: string
