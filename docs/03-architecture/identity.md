@@ -137,6 +137,22 @@ lizard-tycoon 원장은 Firebase `uid`를 소유자 키로 쓴다. 플랫폼으�
 
 orphan은 Firestore TTL로 `lastSeenAt + 400일`에 자동 삭제한다.
 
+## 사용자 규모 지표 — `lastSeenAt`의 의미 한계
+
+`GET /v1/admin/metrics`가 `users` 컬렉션을 집계해 전체 사용자 수와 활성 사용자 수를 준다. 백오피스 플랫폼 개요 화면이 이 값을 그린다.
+
+**활성 판정은 `lastSeenAt` 기준이고, `lastSeenAt`은 `EnsureUser`에서만 갱신된다.** `EnsureUser`는 세션 발급(`POST /v1/auth/session`)과 갱신(`POST /v1/auth/refresh`) 경로에서만 불린다. 그래서:
+
+- 앱을 열었지만 access token이 아직 유효해 재발급이 없었던 사용자는 **세지 않는다.**
+- 결과적으로 **GA4 DAU보다 작게 나오는 것이 정상**이다. 두 값을 같은 것으로 두면 안 된다.
+- 실질적으로 "24시간 안에 세션을 새로 받은 사용자 수"다.
+
+응답의 `activitySource: "session_last_seen"`이 이 정의를 값으로 박아 둔 것이다. 나중에 `/v1/events` 기반 집계를 붙이면 같은 숫자 필드에 다른 정의가 들어올 수 있는데, 근거 값이 없으면 화면이 조용히 뜻이 바뀐 값을 그대로 그린다.
+
+**동시 접속은 이 경로로 낼 수 없다.** 세션 heartbeat도 활성 세션 테이블도 없다. 필요하면 `/v1/events`의 `session_id`를 BigQuery에서 최근 N분으로 집계하는 별도 설계가 필요하다.
+
+`users`는 identity가 소유하고 IAP 원장의 sandbox/production prefix를 타지 않는다. **sandbox 원장을 보고 있어도 이 지표는 배포 환경 전체를 센다.**
+
 ## PII 정책
 
 > **플랫폼은 개인정보를 저장하지 않는다.** 갖는 식별자는 `platform_user_id`와 `(app_id, firebase_uid)` 매핑뿐이다. 이메일·이름·전화번호는 각 앱의 Firebase Auth에만 남는다.

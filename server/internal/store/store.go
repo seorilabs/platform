@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/firestore"
+	firestorepb "cloud.google.com/go/firestore/apiv1/firestorepb"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -257,6 +258,48 @@ func (c *Client) Query(
 		q = build(q)
 	}
 	return q.Documents(ctx), nil
+}
+
+// Count는 조건에 맞는 문서 수를 서버 집계로 센다.
+//
+// Query로 받아 세는 것과 결과는 같지만 과금과 지연이 다르다. 집계는
+// 인덱스 엔트리 1000개당 읽기 1회로 끝나고 문서 본문을 내려받지 않는다.
+// 전체 사용자 수처럼 컬렉션 크기에 비례해 커지는 값은 문서를 훑으면
+// 사용자가 늘수록 화면이 느려지고 비용이 선형으로 붙는다.
+//
+// 반환 타입이 int가 아니라 int64인 것은 Firestore 집계 결과가
+// int64이기 때문이다. 여기서 좁히면 호출자가 경계를 못 본다.
+func (c *Client) Count(
+	ctx context.Context,
+	p fspath.Path,
+	build func(firestore.Query) firestore.Query,
+) (int64, error) {
+	col, err := c.Collection(p)
+	if err != nil {
+		return 0, err
+	}
+	q := col.Query
+	if build != nil {
+		q = build(q)
+	}
+
+	const alias = "count"
+	result, err := q.NewAggregationQuery().WithCount(alias).Get(ctx)
+	if err != nil {
+		return 0, mapErr(err, p)
+	}
+
+	// 집계 결과는 any 맵으로 온다. 타입 단언이 실패하면 SDK가 계약을
+	// 바꾼 것이므로 0을 정상값으로 흘려보내지 않고 에러로 만든다.
+	value, ok := result[alias]
+	if !ok {
+		return 0, fmt.Errorf("store: %s 집계 결과에 %q가 없다", p, alias)
+	}
+	pbValue, ok := value.(*firestorepb.Value)
+	if !ok {
+		return 0, fmt.Errorf("store: %s 집계 결과 타입이 예상과 다르다: %T", p, value)
+	}
+	return pbValue.GetIntegerValue(), nil
 }
 
 // IsDone은 iterator 종료 여부를 판정한다.

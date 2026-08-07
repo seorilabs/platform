@@ -61,6 +61,10 @@ type Ledger interface {
 // Users는 PII 없는 고객지원 사용자 조회 포트다.
 type Users interface {
 	LookupSupportUser(ctx context.Context, reference string) (identity.SupportUser, error)
+	// CountUsers는 개별 사용자를 특정하지 않는 집계다. 운영자가 지금
+	// 보고 있는 플랫폼의 규모를 알아야 한 건짜리 조회 결과를 해석할 수
+	// 있다.
+	CountUsers(ctx context.Context, now time.Time) (identity.UserCounts, error)
 }
 
 // Apps는 GitHub registry/apps/*.json에서 동기화된 앱 설정 조회 포트다.
@@ -91,6 +95,13 @@ type Handler struct {
 	catalog Catalog
 	auditor Auditor
 	auth    *Authenticator
+	now     func() time.Time
+}
+
+// WithClock은 시계를 주입한다. 테스트용이다.
+func (h *Handler) WithClock(now func() time.Time) *Handler {
+	h.now = now
+	return h
 }
 
 func NewHandler(
@@ -108,7 +119,7 @@ func NewHandler(
 	}
 	return &Handler{
 		ledger: l, config: cfg, users: users, apps: apps, catalog: catalog,
-		auth: auth, auditor: auditor,
+		auth: auth, auditor: auditor, now: time.Now,
 	}, nil
 }
 
@@ -127,6 +138,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"GET /v1/admin/apps/{appId}/iap/refund-reviews": h.refundReviews,
 		"GET /v1/admin/iap/sandbox-resets/{requestId}":  h.sandboxResetStatus,
 		"GET /v1/admin/health":                          h.health,
+		"GET /v1/admin/metrics":                         h.metrics,
 	}
 	writeRoutes := map[string]httpx.Handler{
 		// 조작 — 등급 C. reason과 requestId가 필수다
@@ -220,6 +232,32 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) error {
 		"pendingRefundReviewCount": refundHealth.Pending,
 		"dueSoonRefundReviewCount": refundHealth.DueSoon,
 		"failedRefundReviewCount":  refundHealth.Failed,
+	})
+	return nil
+}
+
+// metrics는 플랫폼 전체 사용자 규모다.
+//
+// health와 나눠 둔다. health는 운영자가 조작 전에 반드시 보는 값이라
+// 싸고 빨라야 하는데, 지표는 컬렉션 집계라 성격이 다르다. 한 응답에
+// 묶으면 집계가 느려지거나 실패할 때 조작 판단에 필요한 환경 표시까지
+// 함께 사라진다. 백오피스 개요 화면이 실제로 그렇게 무너진 적이 있다.
+func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) error {
+	now := h.now()
+	counts, err := h.users.CountUsers(r.Context(), now)
+	if err != nil {
+		return err
+	}
+
+	httpx.WriteOK(w, http.StatusOK, map[string]any{
+		"totalUsers":        counts.Total,
+		"dailyActiveUsers":  counts.ActiveDay,
+		"weeklyActiveUsers": counts.ActiveWeek,
+		// 활성 판정 근거를 값으로 박는다. 나중에 이벤트 기반 집계를
+		// 붙이면 같은 필드에 다른 정의가 들어올 수 있는데, 숫자만
+		// 오면 화면이 조용히 뜻이 바뀐 값을 그대로 그린다.
+		"activitySource": "session_last_seen",
+		"measuredAt":     now.UTC().Format(time.RFC3339),
 	})
 	return nil
 }
