@@ -330,6 +330,63 @@ func supportUserFromSnapshot(puid string, snap *firestore.DocumentSnapshot) (Sup
 	}, nil
 }
 
+// UserCounts는 플랫폼 전체 사용자 규모 요약이다.
+//
+// 앱별 제품 지표가 아니라 플랫폼이 발급한 platform_user_id의 규모다.
+// users 컬렉션은 identity가 소유하고 IAP 원장의 sandbox/production
+// prefix를 타지 않으므로, sandbox 원장을 보고 있어도 이 값은 배포
+// 환경(production 또는 stg_) 전체를 센다.
+type UserCounts struct {
+	Total int64
+	// ActiveDay와 ActiveWeek는 lastSeenAt 기준이다.
+	//
+	// lastSeenAt은 EnsureUser가 갱신하고, EnsureUser는 세션 발급과
+	// 갱신 경로에서만 불린다. 그래서 앱을 열었지만 access token이 아직
+	// 유효해 재발급이 없었던 사용자는 여기 안 잡힌다. GA4 DAU보다
+	// 작게 나오는 게 정상이고, 두 값을 같은 것으로 두면 안 된다.
+	ActiveDay  int64
+	ActiveWeek int64
+}
+
+// CountUsers는 전체·일간·주간 사용자 수를 센다.
+//
+// 세 번의 집계 쿼리를 순차로 돌린다. 같은 트랜잭션이 아니므로 세 값의
+// 기준 시각이 미세하게 어긋날 수 있지만, 운영 화면의 규모 감각을 주는
+// 값이라 정합성보다 비용이 중요하다. 트랜잭션으로 묶으면 컬렉션 전체를
+// 잠그는 비용이 붙는다.
+func (r *StoreRepository) CountUsers(ctx context.Context, now time.Time) (UserCounts, error) {
+	col, err := fspath.Parse(usersCollection)
+	if err != nil {
+		return UserCounts{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자 지표를 집계하지 못했어요")
+	}
+
+	total, err := r.store.Count(ctx, col, nil)
+	if err != nil {
+		return UserCounts{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자 지표를 집계하지 못했어요")
+	}
+
+	activeSince := func(d time.Duration) (int64, error) {
+		return r.store.Count(ctx, col, func(q firestore.Query) firestore.Query {
+			return q.Where("lastSeenAt", ">=", now.Add(-d))
+		})
+	}
+
+	day, err := activeSince(24 * time.Hour)
+	if err != nil {
+		return UserCounts{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자 지표를 집계하지 못했어요")
+	}
+	week, err := activeSince(7 * 24 * time.Hour)
+	if err != nil {
+		return UserCounts{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자 지표를 집계하지 못했어요")
+	}
+
+	return UserCounts{Total: total, ActiveDay: day, ActiveWeek: week}, nil
+}
+
 // supportPrefix는 app_id에서 지원 코드 접두사를 만든다.
 // lizard-tycoon → LT
 func supportPrefix(appID string) string {
