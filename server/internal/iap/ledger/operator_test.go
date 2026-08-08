@@ -1,6 +1,8 @@
 package ledger
 
 import (
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,31 +87,35 @@ func TestOperatorPurchaseUsesGrantRequestAsSourceKey(t *testing.T) {
 	}
 }
 
-func TestValidOperatorRecordFailsClosed(t *testing.T) {
+func TestInvalidOperatorFieldsNamesTheViolation(t *testing.T) {
 	base := newOperatorDoc(validOperatorInput(), time.Unix(1, 0).UTC())
-	if !validOperatorRecord(base, "grant") {
-		t.Fatal("정상 지급 기록을 거부했다")
+	if f := invalidOperatorFields(base, "grant"); len(f) > 0 {
+		t.Fatalf("정상 지급 기록을 거부했다: %v", f)
 	}
 	revoke := base
 	revoke.GrantRequestID = "grant-1"
-	if !validOperatorRecord(revoke, "revoke") {
-		t.Fatal("정상 회수 기록을 거부했다")
+	if f := invalidOperatorFields(revoke, "revoke"); len(f) > 0 {
+		t.Fatalf("정상 회수 기록을 거부했다: %v", f)
 	}
 
+	// 어긴 필드 "이름"까지 고정한다. 원장 접근 권한이 없는 운영자에게는
+	// 이 이름이 유일한 진단 단서다.
 	tests := []struct {
 		name   string
 		kind   string
 		mutate func(*operatorDoc)
+		want   string
 	}{
-		{"requestId PII", "grant", func(doc *operatorDoc) { doc.RequestID = "person@example.com" }},
-		{"grantRequestId PII", "revoke", func(doc *operatorDoc) { doc.GrantRequestID = "person@example.com" }},
-		{"PUID PII", "grant", func(doc *operatorDoc) { doc.PlatformUserID = "person@example.com" }},
-		{"entitlement PII", "grant", func(doc *operatorDoc) { doc.EntitlementID = "person@example.com" }},
-		{"actor 이메일", "grant", func(doc *operatorDoc) { doc.ActorLogin = "person@example.com" }},
-		{"reason 자유 서술", "grant", func(doc *operatorDoc) { doc.Reason = "customer asked" }},
-		{"appId PII", "grant", func(doc *operatorDoc) { doc.AppID = "person@example.com" }},
-		{"createdAt 없음", "grant", func(doc *operatorDoc) { doc.CreatedAt = time.Time{} }},
-		{"지급에 grantRequestId", "grant", func(doc *operatorDoc) { doc.GrantRequestID = "grant-1" }},
+		{"requestId PII", "grant", func(doc *operatorDoc) { doc.RequestID = "person@example.com" }, "requestId"},
+		{"grantRequestId PII", "revoke", func(doc *operatorDoc) { doc.GrantRequestID = "person@example.com" }, "grantRequestId"},
+		{"PUID PII", "grant", func(doc *operatorDoc) { doc.PlatformUserID = "person@example.com" }, "platformUserId"},
+		{"entitlement PII", "grant", func(doc *operatorDoc) { doc.EntitlementID = "person@example.com" }, "entitlementId"},
+		{"actor 이메일", "grant", func(doc *operatorDoc) { doc.ActorLogin = "person@example.com" }, "actorLogin"},
+		{"reason 자유 서술", "grant", func(doc *operatorDoc) { doc.Reason = "customer asked" }, "reason"},
+		{"appId PII", "grant", func(doc *operatorDoc) { doc.AppID = "person@example.com" }, "appId"},
+		{"appId 없음", "grant", func(doc *operatorDoc) { doc.AppID = "" }, "appId"},
+		{"createdAt 없음", "grant", func(doc *operatorDoc) { doc.CreatedAt = time.Time{} }, "createdAt"},
+		{"지급에 grantRequestId", "grant", func(doc *operatorDoc) { doc.GrantRequestID = "grant-1" }, "grantRequestId"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,9 +124,44 @@ func TestValidOperatorRecordFailsClosed(t *testing.T) {
 				doc.GrantRequestID = "grant-1"
 			}
 			tt.mutate(&doc)
-			if validOperatorRecord(doc, tt.kind) {
-				t.Error("브라우저 응답에 부적합한 기록을 허용했다")
+
+			fields := invalidOperatorFields(doc, tt.kind)
+			if len(fields) == 0 {
+				t.Fatal("브라우저 응답에 부적합한 기록을 허용했다")
+			}
+			if !slices.Contains(fields, tt.want) {
+				t.Errorf("어긴 필드로 %q를 지목하지 않았다: %v", tt.want, fields)
 			}
 		})
+	}
+}
+
+// 로그가 값을 흘리면 fail-closed의 의미가 없어진다. 자유 서술 사유와
+// 이메일 원문 actor를 브라우저에서 막아 놓고 로그로 내보내면 같은 값이
+// Cloud Logging에 그대로 남는다.
+func TestInvalidOperatorFieldsLeaksNoValues(t *testing.T) {
+	doc := newOperatorDoc(validOperatorInput(), time.Unix(1, 0).UTC())
+	doc.ActorLogin = "person@example.com"
+	doc.Reason = "고객이 환불을 요청했고 전화번호는 010-0000-0000"
+
+	joined := strings.Join(invalidOperatorFields(doc, "grant"), ",")
+	if strings.Contains(joined, "person@example.com") ||
+		strings.Contains(joined, "010-0000-0000") ||
+		strings.Contains(joined, "고객이") {
+		t.Errorf("어긴 값이 필드 목록에 섞였다: %s", joined)
+	}
+}
+
+func TestSafeDocIDHidesOffContractIDs(t *testing.T) {
+	if got := safeDocID("req-01JABCDE"); got != "req-01JABCDE" {
+		t.Errorf("정상 ID를 가렸다: %s", got)
+	}
+	// 계약 밖 ID는 무엇이 들어 있을지 알 수 없으므로 원문을 남기지 않는다.
+	got := safeDocID("person@example.com")
+	if strings.Contains(got, "person@example.com") {
+		t.Errorf("계약 밖 ID 원문이 로그로 나간다: %s", got)
+	}
+	if !strings.Contains(got, "18") {
+		t.Errorf("길이 단서가 없다: %s", got)
 	}
 }
