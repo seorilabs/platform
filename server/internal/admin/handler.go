@@ -37,8 +37,8 @@ var (
 type Ledger interface {
 	ListRecentOrders(ctx context.Context, limit int) ([]ledger.OrderSummary, error)
 	ListUserEntitlements(ctx context.Context, puid string) ([]ledger.UserEntitlement, error)
-	ListOperatorGrants(ctx context.Context, limit int) ([]ledger.OperatorRecord, error)
-	ListOperatorRevocations(ctx context.Context, limit int) ([]ledger.OperatorRecord, error)
+	ListOperatorGrants(ctx context.Context, limit int) (ledger.OperatorRecordPage, error)
+	ListOperatorRevocations(ctx context.Context, limit int) (ledger.OperatorRecordPage, error)
 	FindOperatorReplay(ctx context.Context, in ledger.OperatorInput, revoke bool) (ledger.OperatorResult, bool, error)
 	FindSandboxResetReplay(ctx context.Context, in ledger.SandboxResetInput) ([]string, bool, error)
 	GetSandboxResetStatus(ctx context.Context, requestID string) (ledger.SandboxResetStatus, error)
@@ -618,10 +618,19 @@ func (h *Handler) recentOrders(w http.ResponseWriter, r *http.Request) error {
 	// 않고 빈 appId로 둔다.
 	appByUser := make(map[string]string, len(orders))
 	result := make([]adminOrder, 0, len(orders))
+	hidden := 0
 	for i := range orders {
-		if !validAdminOrderSummary(orders[i]) {
-			return platformerr.New(platformerr.CodeLedgerStateInvalid,
-				"주문 원장에 브라우저로 노출할 수 없는 값이 있어요")
+		// 계약 밖 주문은 건너뛴다. 예전에는 여기서 전체를 거부했는데,
+		// 레거시 주문 하나가 최근 주문 화면을 통째로 닫아 버렸다.
+		// 값을 브라우저로 안 보내는 목적은 건너뛰기로도 똑같이 달성된다.
+		if fields := invalidOrderFields(orders[i]); len(fields) > 0 {
+			hidden++
+			// 필드 이름만 남긴다. 값에는 마켓 식별자나 계약 밖 문자열이
+			// 들어 있을 수 있다.
+			slog.Warn("계약을 만족하지 않는 주문을 목록에서 제외했다",
+				"order_key", safeOrderKey(orders[i].OrderKey),
+				"invalid_fields", strings.Join(fields, ","))
+			continue
 		}
 		puid := orders[i].PlatformUserID
 		appID := ""
@@ -636,8 +645,13 @@ func (h *Handler) recentOrders(w http.ResponseWriter, r *http.Request) error {
 					}
 				} else {
 					if user.PlatformUserID != puid || !adminAppIDPattern.MatchString(user.AppID) {
-						return platformerr.New(platformerr.CodeLedgerStateInvalid,
-							"주문의 사용자 binding이 올바르지 않아요")
+						// binding이 깨진 것도 그 주문 하나의 문제다.
+						// 목록 전체를 막을 이유가 없다.
+						hidden++
+						slog.Warn("사용자 binding이 올바르지 않아 주문을 목록에서 제외했다",
+							"order_key", safeOrderKey(orders[i].OrderKey))
+						appByUser[puid] = ""
+						continue
 					}
 					appID = user.AppID
 				}
@@ -659,26 +673,66 @@ func (h *Handler) recentOrders(w http.ResponseWriter, r *http.Request) error {
 		})
 	}
 
-	httpx.WriteOK(w, http.StatusOK, map[string]any{"orders": result})
+	httpx.WriteOK(w, http.StatusOK, map[string]any{
+		"orders": result,
+		// 0이 아니면 이 목록은 불완전하다. 화면이 반드시 표시해야 한다.
+		"hiddenOrderCount": hidden,
+	})
 	return nil
 }
 
-func validAdminOrderSummary(order ledger.OrderSummary) bool {
-	if !adminOrderKeyPattern.MatchString(order.OrderKey) ||
-		!domain.Platform(order.Platform).Valid() {
-		return false
+// safeOrderKey는 주문 키를 로그에 남겨도 되는 형태로 좁힌다.
+//
+// 정상 orderKey는 sha256 hex라 그대로 남겨도 안전하다. 형식을 벗어난
+// 문서는 무엇이 들어 있을지 알 수 없으므로 길이만 남긴다.
+func safeOrderKey(key string) string {
+	if adminOrderKeyPattern.MatchString(key) {
+		return key
+	}
+	return fmt.Sprintf("(형식 밖, %d자)", len(key))
+}
+
+// invalidOrderFields는 계약을 어긴 필드 이름을 돌려준다.
+//
+// bool로는 진단이 안 된다. 원장 접근 권한은 운영자에게도 없어서,
+// 무엇이 어긋났는지 로그로 말해 주지 않으면 고칠 방법이 없다.
+func invalidOrderFields(order ledger.OrderSummary) []string {
+	var fields []string
+	if !adminOrderKeyPattern.MatchString(order.OrderKey) {
+		fields = append(fields, "orderKey")
+	}
+	if !domain.Platform(order.Platform).Valid() {
+		fields = append(fields, "platform")
 	}
 	switch domain.State(order.State) {
 	case domain.StateActive, domain.StatePending, domain.StateRevoked, domain.StateInvalid:
 	default:
-		return false
+		fields = append(fields, "state")
 	}
 	if order.Tombstone {
-		return order.PlatformUserID == "" && order.EntitlementID == "" && order.ProductID == ""
+		// tombstone은 소유자와 상품을 지운 기록이다. 값이 남아 있으면
+		// 삭제가 끝나지 않은 것이므로 브라우저로 보내지 않는다.
+		if order.PlatformUserID != "" {
+			fields = append(fields, "platformUserId")
+		}
+		if order.EntitlementID != "" {
+			fields = append(fields, "entitlementId")
+		}
+		if order.ProductID != "" {
+			fields = append(fields, "productId")
+		}
+		return fields
 	}
-	return adminPlatformUserPattern.MatchString(order.PlatformUserID) &&
-		adminEntitlementPattern.MatchString(order.EntitlementID) &&
-		adminProductIDPattern.MatchString(order.ProductID)
+	if !adminPlatformUserPattern.MatchString(order.PlatformUserID) {
+		fields = append(fields, "platformUserId")
+	}
+	if !adminEntitlementPattern.MatchString(order.EntitlementID) {
+		fields = append(fields, "entitlementId")
+	}
+	if !adminProductIDPattern.MatchString(order.ProductID) {
+		fields = append(fields, "productId")
+	}
+	return fields
 }
 
 // user는 platformUserId 또는 정확한 supportCode로 PII 없는 요약을 찾는다.
@@ -785,8 +839,12 @@ func (h *Handler) operatorGrants(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
-		"grants":      adminOperatorRecords(grants),
-		"revocations": adminOperatorRecords(revocations),
+		"grants":      adminOperatorRecords(grants.Records),
+		"revocations": adminOperatorRecords(revocations.Records),
+		// 0이 아니면 이 목록은 불완전하다. 감사 이력이라 조용한 누락이
+		// 잘못된 결론으로 이어지므로 건수를 계약에 실어 화면까지 보낸다.
+		"hiddenGrantCount":      grants.Hidden,
+		"hiddenRevocationCount": revocations.Hidden,
 	})
 	return nil
 }
