@@ -67,11 +67,11 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 
 ## 등록된 앱
 
-| app_id | 원장 환경 | IAP | entitlements |
-|---|---|---|---|
-| `babycare` | 미사용 | 비활성 | — |
-| `cycle-pair` | production | 비활성 | — |
-| `lizard-tycoon` | sandbox | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` — App Review 기간 |
+| app_id | 원장 환경 | Events | IAP | entitlements |
+|---|---|---|---|---|
+| `babycare` | 미사용 | 핵심 퍼널·광고 | 비활성 | — |
+| `cycle-pair` | production | 비활성 | 비활성 | — |
+| `lizard-tycoon` | sandbox | 활성 | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` — App Review 기간 |
 
 ## ledger_environment가 서비스와 다르면
 

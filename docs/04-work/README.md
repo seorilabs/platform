@@ -28,7 +28,7 @@ Apple·Play 두 마켓 실기기 검증과 레거시 Firebase Functions 셧다�
 |---|---|---|---|---|
 | `lizard-tycoon` | ✅ | ✅ | ✅ | **sandbox 원장**. App Review 기간, entitlement 2종 |
 | `cycle-pair` | — | — | — | Firebase 게스트 인증 |
-| `babycare` | ✖ | ✖ | ✖ | Firebase custom token bridge만 (ADR 0013) |
+| `babycare` | ✖ | ✔ | ✖ | Firebase custom token bridge + 핵심 퍼널·광고 이벤트 |
 
 **레지스트리는 파일을 고치는 것만으로 반영되지 않는다.** `cmd/regsync`를 사람이
 돌린다 — [registry/apps/README.md](../../registry/apps/README.md).
@@ -175,7 +175,10 @@ production 배포까지 완료했다.
 - 남은 운영 gate: 신규 RN 후보의 App Check 실기기 검증과 registry 강제 전환, 실제 기존
   사용자·실기기 migration
 
-registry의 `config`/`events`/`iap` 플래그는 전부 꺼져 있다. 브리지만 쓴다.
+registry의 `events`와 `firebase_custom_token_bridge`를 켠다. `config`/`iap`은
+계속 끄고, 이벤트는 `bc_` 핵심 퍼널과 `core_screen_view`·`core_ad_*`만
+allowlist로 수집한다. GA4는 타깃별 adapter로 보내고 Platform은 같은 이벤트의
+운영·coverage sink로 사용한다.
 
 ### P2 이벤트 수집 + SDK
 
