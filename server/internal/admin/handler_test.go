@@ -84,6 +84,9 @@ type fakeLedger struct {
 	resetCloseErr     error
 	rateCalls         []string
 	rateErr           error
+
+	hiddenGrants      int
+	hiddenRevocations int
 	// env가 비어 있으면 sandbox로 본다. production 거부를 볼 때만 채운다.
 	env domain.Environment
 }
@@ -94,11 +97,11 @@ func (f *fakeLedger) ListRecentOrders(context.Context, int) ([]ledger.OrderSumma
 func (f *fakeLedger) ListUserEntitlements(_ context.Context, _ string) ([]ledger.UserEntitlement, error) {
 	return f.entitlements, f.err
 }
-func (f *fakeLedger) ListOperatorGrants(context.Context, int) ([]ledger.OperatorRecord, error) {
-	return f.grants, f.err
+func (f *fakeLedger) ListOperatorGrants(context.Context, int) (ledger.OperatorRecordPage, error) {
+	return ledger.OperatorRecordPage{Records: f.grants, Hidden: f.hiddenGrants}, f.err
 }
-func (f *fakeLedger) ListOperatorRevocations(context.Context, int) ([]ledger.OperatorRecord, error) {
-	return f.revocations, f.err
+func (f *fakeLedger) ListOperatorRevocations(context.Context, int) (ledger.OperatorRecordPage, error) {
+	return ledger.OperatorRecordPage{Records: f.revocations, Hidden: f.hiddenRevocations}, f.err
 }
 func (f *fakeLedger) FindOperatorReplay(
 	_ context.Context,
@@ -596,7 +599,12 @@ func TestRecentOrders(t *testing.T) {
 	}
 }
 
-func TestRecentOrdersRejectsUnsafeOwnerBinding(t *testing.T) {
+// 계약 밖 주문은 목록에서 빠지되 목록 자체는 살아 있어야 한다.
+//
+// 예전에는 여기서 500을 냈다. 그 결과 레거시 주문 하나가 최근 주문
+// 화면을 통째로 닫았다. 값을 브라우저로 안 보낸다는 목적은 건너뛰기로도
+// 똑같이 달성되므로, 두 성질을 함께 고정한다.
+func TestRecentOrdersHidesUnsafeOwnerBinding(t *testing.T) {
 	tests := []struct {
 		name  string
 		order ledger.OrderSummary
@@ -618,16 +626,46 @@ func TestRecentOrdersRejectsUnsafeOwnerBinding(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newHandler(t, &fakeLedger{orders: []ledger.OrderSummary{tt.order}},
+			// 정상 주문을 함께 넣어 "하나가 나머지를 죽이지 않는다"를 본다.
+			safe := ledger.OrderSummary{
+				OrderKey: strings.Repeat("a", 64), PlatformUserID: "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+				EntitlementID: "sp_a", Platform: "app_store", ProductID: "sku_a", State: "active",
+			}
+			h := newHandler(t, &fakeLedger{orders: []ledger.OrderSummary{tt.order, safe}},
 				&fakeValidator{email: backofficeSA}, &fakeAuditor{})
 			w := serve(t, h, http.MethodGet, "/v1/admin/orders/recent", "", "tok", "reader")
-			if w.Code != http.StatusInternalServerError {
-				t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+			if w.Code != http.StatusOK {
+				t.Fatalf("계약 밖 주문 하나가 목록 전체를 막았다: %d %s", w.Code, w.Body.String())
 			}
+			// 안전 성질은 그대로다. 값이 브라우저로 나가면 안 된다.
 			if strings.Contains(w.Body.String(), "person@example.com") {
 				t.Fatalf("잘못된 원장 값이 응답에 노출됐다: %s", w.Body.String())
 			}
+
+			_, result, _ := decodeEnvelope(t, w)
+			orders, _ := result["orders"].([]any)
+			if len(orders) != 1 {
+				t.Fatalf("정상 주문이 살아남지 않았다: %v", orders)
+			}
+			// 조용한 누락이 되면 안 된다. 감사 목적상 몇 건이 빠졌는지가
+			// 화면까지 가야 한다.
+			if result["hiddenOrderCount"] != float64(1) {
+				t.Errorf("제외 건수가 %v다", result["hiddenOrderCount"])
+			}
 		})
+	}
+}
+
+// 문제 없는 목록에서는 0이어야 한다. 상수로 1을 넣어 두면 화면이
+// 늘 경고를 띄우게 되고, 곧 아무도 안 보게 된다.
+func TestRecentOrdersReportsZeroHiddenWhenClean(t *testing.T) {
+	h := newHandler(t, &fakeLedger{orders: []ledger.OrderSummary{{
+		OrderKey: strings.Repeat("d", 64), Platform: "app_store", State: "revoked", Tombstone: true,
+	}}}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodGet, "/v1/admin/orders/recent", "", "tok", "reader")
+	_, result, _ := decodeEnvelope(t, w)
+	if result["hiddenOrderCount"] != float64(0) {
+		t.Errorf("제외 건수가 %v다", result["hiddenOrderCount"])
 	}
 }
 
@@ -1025,6 +1063,48 @@ func TestOperatorHistoryUsesExplicitResponseDTO(t *testing.T) {
 	assertExactJSONKeys(t, revoke,
 		"requestId", "grantRequestId", "platformUserId", "entitlementId", "actorLogin",
 		"reason", "appId", "createdAt", "kind")
+}
+
+// 계약 밖 감사 기록이 있어도 나머지는 보이고, 몇 건이 빠졌는지 알린다.
+//
+// 감사 이력이라 조용한 누락이 특히 위험하다. 운영자가 짧아진 목록을 보고
+// "지급한 적 없다"는 잘못된 결론을 내릴 수 있다.
+func TestOperatorHistoryReportsHiddenCounts(t *testing.T) {
+	l := &fakeLedger{
+		grants: []ledger.OperatorRecord{{
+			RequestID: "grant-1", PlatformUserID: testPUID, EntitlementID: "sp_a",
+			ActorLogin: "ih", Reason: testGrantReason, AppID: "a", Kind: "grant",
+		}},
+		hiddenGrants:      2,
+		hiddenRevocations: 1,
+	}
+	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodGet, "/v1/admin/operator-grants", "", "tok", "reader")
+	if w.Code != http.StatusOK {
+		t.Fatalf("계약 밖 기록이 목록 전체를 막았다: %d %s", w.Code, w.Body.String())
+	}
+
+	_, result, _ := decodeEnvelope(t, w)
+	if grants, _ := result["grants"].([]any); len(grants) != 1 {
+		t.Errorf("정상 기록이 살아남지 않았다: %v", grants)
+	}
+	if result["hiddenGrantCount"] != float64(2) {
+		t.Errorf("제외 지급 건수가 %v다", result["hiddenGrantCount"])
+	}
+	if result["hiddenRevocationCount"] != float64(1) {
+		t.Errorf("제외 회수 건수가 %v다", result["hiddenRevocationCount"])
+	}
+}
+
+// 깨끗한 목록에서는 0이어야 한다. 늘 경고가 뜨면 아무도 안 본다.
+func TestOperatorHistoryReportsZeroHiddenWhenClean(t *testing.T) {
+	h := newHandler(t, &fakeLedger{}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	w := serve(t, h, http.MethodGet, "/v1/admin/operator-grants", "", "tok", "reader")
+	_, result, _ := decodeEnvelope(t, w)
+	if result["hiddenGrantCount"] != float64(0) ||
+		result["hiddenRevocationCount"] != float64(0) {
+		t.Errorf("제외 건수가 0이 아니다: %v", result)
+	}
 }
 
 // 지급은 requestId와 reason이 있어야 한다.
@@ -2542,6 +2622,42 @@ func TestHealthSurvivesRegistryFailure(t *testing.T) {
 //
 // 응답은 누가 health를 부를 때만 보인다. 알림을 걸 수 있는 신호는 로그다.
 // 이 한 줄이 로그 기반 지표의 근거가 되므로 필드 이름이 계약이다.
+// 제외된 주문의 진단 단서가 실제 로그로 나가는지 본다.
+//
+// 필드 이름을 만드는 함수만 test하면 그 값이 slog까지 도달하는지는
+// 모른다. 원장 접근 권한이 없어 이 로그가 유일한 진단 단서이므로
+// 실제 출력을 캡처해 고정한다. 동시에 값이 새지 않는 것도 함께 본다.
+func TestHiddenOrderLogsFieldNamesWithoutValues(t *testing.T) {
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	h := newHandler(t, &fakeLedger{orders: []ledger.OrderSummary{{
+		OrderKey: strings.Repeat("b", 64), PlatformUserID: "person@example.com",
+		Platform: "app_store", State: "revoked", Tombstone: true,
+	}}}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	if w := serve(t, h, http.MethodGet, "/v1/admin/orders/recent", "", "tok", "reader"); w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "invalid_fields") ||
+		!strings.Contains(logged, "platformUserId") {
+		t.Errorf("어긴 필드 이름이 로그에 없다: %s", logged)
+	}
+	if !strings.Contains(logged, strings.Repeat("b", 64)) {
+		t.Errorf("어느 주문인지 알 단서가 로그에 없다: %s", logged)
+	}
+	// 브라우저에서 막은 값을 로그로 내보내면 fail-closed의 의미가 없다.
+	if strings.Contains(logged, "person@example.com") {
+		t.Errorf("어긴 값이 로그로 샜다: %s", logged)
+	}
+}
+
 func TestEnvironmentMismatchLogsWarning(t *testing.T) {
 	var buf bytes.Buffer
 	original := slog.Default()

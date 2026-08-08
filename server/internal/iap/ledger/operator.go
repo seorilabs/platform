@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -683,61 +685,82 @@ type OperatorRecord struct {
 }
 
 // ListOperatorGrants는 최근 운영자 지급을 읽는다.
-func (l *Ledger) ListOperatorGrants(ctx context.Context, limit int) ([]OperatorRecord, error) {
+func (l *Ledger) ListOperatorGrants(ctx context.Context, limit int) (OperatorRecordPage, error) {
 	return l.listOperatorRecords(ctx, operatorGrants, "grant", limit)
 }
 
 // ListOperatorRevocations는 최근 운영자 회수를 읽는다.
-func (l *Ledger) ListOperatorRevocations(ctx context.Context, limit int) ([]OperatorRecord, error) {
+func (l *Ledger) ListOperatorRevocations(ctx context.Context, limit int) (OperatorRecordPage, error) {
 	return l.listOperatorRecords(ctx, operatorRevocations, "revoke", limit)
+}
+
+// OperatorRecordPage는 목록과 계약 위반으로 제외된 건수다.
+//
+// Hidden을 값으로 돌려주는 이유는 감사 이력이기 때문이다. 조용히 빼면
+// 운영자가 "이 사용자에게 지급한 적 없다"는 잘못된 결론을 내릴 수 있다.
+// 몇 건이 가려졌는지는 반드시 화면까지 가야 한다.
+type OperatorRecordPage struct {
+	Records []OperatorRecord
+	Hidden  int
 }
 
 func (l *Ledger) listOperatorRecords(
 	ctx context.Context,
 	collection, kind string,
 	limit int,
-) ([]OperatorRecord, error) {
+) (OperatorRecordPage, error) {
 	if limit <= 0 || limit > maxListLimit {
 		limit = defaultListLimit
 	}
 
 	col, err := l.paths.operatorCollection(collection)
 	if err != nil {
-		return nil, err
+		return OperatorRecordPage{}, err
 	}
 
 	iter, err := l.store.Query(ctx, col, func(q firestore.Query) firestore.Query {
 		return q.OrderBy("createdAt", firestore.Desc).Limit(limit)
 	})
 	if err != nil {
-		return nil, err
+		return OperatorRecordPage{}, err
 	}
 	defer iter.Stop()
 
-	out := make([]OperatorRecord, 0, limit)
+	page := OperatorRecordPage{Records: make([]OperatorRecord, 0, limit)}
 	for {
 		snap, err := iter.Next()
 		if store.IsDone(err) {
-			return out, nil
+			return page, nil
 		}
 		if err != nil {
-			return nil, err
+			return OperatorRecordPage{}, err
 		}
 
 		var doc operatorDoc
 		if err := snap.DataTo(&doc); err != nil {
-			return nil, platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid,
-				"운영 기록을 읽지 못했어요")
+			// 문서 하나가 스키마에 안 맞는 것과 컬렉션을 못 읽는 것은
+			// 다르다. 전자는 건너뛸 수 있는 데이터 문제다.
+			page.Hidden++
+			slog.Warn("운영 기록 문서를 변환하지 못해 목록에서 제외했다",
+				"collection", collection, "doc_id", safeDocID(snap.Ref.ID))
+			continue
 		}
 		// 자유 서술 reason, 이메일 원문 actor, 계약 형식 밖의 식별자가 있는
-		// 레거시 레코드는 마이그레이션 전까지 fail-closed해 브라우저로
-		// 노출하지 않는다.
-		if !validOperatorRecord(doc, kind) {
-			return nil, platformerr.New(platformerr.CodeLedgerStateInvalid,
-				"운영 기록에 노출할 수 없는 감사 값이 있어요")
+		// 레거시 레코드는 브라우저로 내보내지 않는다. 다만 그 레코드 하나
+		// 때문에 목록 전체를 막지는 않는다. 실제로 레거시 레코드 하나가
+		// 백오피스의 운영자 이력 화면을 통째로 닫아 버린 적이 있다.
+		if fields := invalidOperatorFields(doc, kind); len(fields) > 0 {
+			page.Hidden++
+			// 필드 "이름"만 남긴다. 값에는 자유 서술 사유나 이메일 원문이
+			// 들어 있을 수 있어 로그로도 내보내면 안 된다.
+			slog.Warn("계약을 만족하지 않는 운영 기록을 목록에서 제외했다",
+				"collection", collection,
+				"doc_id", safeDocID(snap.Ref.ID),
+				"invalid_fields", strings.Join(fields, ","))
+			continue
 		}
 
-		out = append(out, OperatorRecord{
+		page.Records = append(page.Records, OperatorRecord{
 			RequestID:      doc.RequestID,
 			GrantRequestID: doc.GrantRequestID,
 			PlatformUserID: doc.PlatformUserID,
@@ -751,23 +774,60 @@ func (l *Ledger) listOperatorRecords(
 	}
 }
 
-func validOperatorRecord(doc operatorDoc, kind string) bool {
-	if !operatorRequestIDPattern.MatchString(doc.RequestID) ||
-		!operatorPUIDPattern.MatchString(doc.PlatformUserID) ||
-		!operatorEntitlementPattern.MatchString(doc.EntitlementID) ||
-		!operatorActorPattern.MatchString(doc.ActorLogin) ||
-		!ValidAdminMutationReason(doc.Reason) ||
-		!operatorAppIDPattern.MatchString(doc.AppID) || doc.CreatedAt.IsZero() {
-		return false
+// safeDocID는 문서 ID를 로그에 남겨도 되는 형태로 좁힌다.
+//
+// 어느 문서인지 알아야 고칠 수 있으므로 ID 자체는 필요하다. 다만 ID도
+// 결국 저장된 값이라 계약 밖 문서에서는 무엇이 들어 있을지 알 수 없다.
+// 형식을 만족할 때만 그대로 남기고, 아니면 길이만 남긴다.
+func safeDocID(id string) string {
+	if operatorRequestIDPattern.MatchString(id) {
+		return id
+	}
+	return fmt.Sprintf("(형식 밖, %d자)", len(id))
+}
+
+// invalidOperatorFields는 계약을 어긴 필드 이름을 돌려준다.
+//
+// bool 대신 이름 목록을 주는 이유는 진단 때문이다. "안 맞는다"만 알면
+// Firestore를 직접 열어 보기 전에는 무엇을 고쳐야 할지 알 수 없는데,
+// 원장 접근 권한은 운영자에게도 없다.
+func invalidOperatorFields(doc operatorDoc, kind string) []string {
+	var fields []string
+	if !operatorRequestIDPattern.MatchString(doc.RequestID) {
+		fields = append(fields, "requestId")
+	}
+	if !operatorPUIDPattern.MatchString(doc.PlatformUserID) {
+		fields = append(fields, "platformUserId")
+	}
+	if !operatorEntitlementPattern.MatchString(doc.EntitlementID) {
+		fields = append(fields, "entitlementId")
+	}
+	if !operatorActorPattern.MatchString(doc.ActorLogin) {
+		fields = append(fields, "actorLogin")
+	}
+	if !ValidAdminMutationReason(doc.Reason) {
+		fields = append(fields, "reason")
+	}
+	if !operatorAppIDPattern.MatchString(doc.AppID) {
+		fields = append(fields, "appId")
+	}
+	if doc.CreatedAt.IsZero() {
+		fields = append(fields, "createdAt")
 	}
 	switch kind {
 	case "grant":
-		return doc.GrantRequestID == ""
+		// 지급 레코드에 회수 대상이 있으면 종류를 잘못 읽고 있는 것이다.
+		if doc.GrantRequestID != "" {
+			fields = append(fields, "grantRequestId")
+		}
 	case "revoke":
-		return operatorRequestIDPattern.MatchString(doc.GrantRequestID)
+		if !operatorRequestIDPattern.MatchString(doc.GrantRequestID) {
+			fields = append(fields, "grantRequestId")
+		}
 	default:
-		return false
+		fields = append(fields, "kind")
 	}
+	return fields
 }
 
 // 조회 상한. 백오피스가 실수로 전체를 긁어가지 못하게 한다.

@@ -171,7 +171,7 @@ paths:
               required: [appId, firebaseIdToken]
               additionalProperties: false
               properties:
-                appId: { $ref: '#/components/schemas/AppId' }
+                appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
                 firebaseIdToken:
                   type: string
                   minLength: 1
@@ -588,6 +588,10 @@ paths:
     get:
       tags: [admin]
       summary: 최근 IAP 주문 조회
+      description: |
+        계약 형식을 만족하지 않는 주문은 목록에서 제외하고 `hiddenOrderCount`로
+        건수만 알린다. 건수가 0이 아니면 이 목록은 불완전하므로 화면이 반드시
+        표시해야 한다.
       operationId: listAdminRecentOrders
       security: [{ AdminOidc: [] }]
       parameters:
@@ -605,11 +609,15 @@ paths:
                     properties:
                       result:
                         type: object
-                        required: [orders]
+                        required: [orders, hiddenOrderCount]
                         properties:
                           orders:
                             type: array
                             items: { $ref: '#/components/schemas/AdminOrder' }
+                          hiddenOrderCount:
+                            type: integer
+                            minimum: 0
+                            description: 계약 위반으로 제외된 주문 수
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
@@ -694,6 +702,14 @@ paths:
     get:
       tags: [admin]
       summary: 운영자 지급과 회수 이력 조회
+      description: |
+        계약 형식을 만족하지 않는 레코드는 목록에서 제외하고 `hidden*Count`로
+        건수만 알린다. 자유 서술 reason이나 이메일 원문 actor 같은 값이
+        브라우저로 나가지 않게 하면서도, 목록 하나가 통째로 막히지 않게 한다.
+
+        **건수가 0이 아니면 이 목록은 불완전하다.** 감사 이력이라 조용히
+        누락되면 운영자가 잘못된 결론을 내릴 수 있으므로 화면은 이 값을
+        반드시 표시해야 한다.
       operationId: listAdminOperatorGrants
       security: [{ AdminOidc: [] }]
       parameters:
@@ -711,7 +727,8 @@ paths:
                     properties:
                       result:
                         type: object
-                        required: [grants, revocations]
+                        required:
+                          [grants, revocations, hiddenGrantCount, hiddenRevocationCount]
                         properties:
                           grants:
                             type: array
@@ -719,6 +736,14 @@ paths:
                           revocations:
                             type: array
                             items: { $ref: '#/components/schemas/AdminOperatorRecord' }
+                          hiddenGrantCount:
+                            type: integer
+                            minimum: 0
+                            description: 계약 위반으로 제외된 지급 기록 수
+                          hiddenRevocationCount:
+                            type: integer
+                            minimum: 0
+                            description: 계약 위반으로 제외된 회수 기록 수
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
