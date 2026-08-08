@@ -6,12 +6,30 @@
   "status": "active",
   "features": {
     "config": false,
-    "events": false,
+    "events": true,
     "iap": false,
     "firebase_custom_token_bridge": true
   },
   "require_app_check": false,
-  "platform_event_allowlist": [],
+  "ga4": {
+    "event_prefix": "bc_"
+  },
+  "platform_event_allowlist": [
+    "seori_session_start",
+    "seori_sdk_error",
+    "core_screen_view",
+    "core_ad_request",
+    "core_ad_impression",
+    "core_ad_reward",
+    "bc_onboarding_complete",
+    "bc_group_created",
+    "bc_invite_created",
+    "bc_invite_joined",
+    "bc_first_log",
+    "bc_log_create",
+    "bc_log_update",
+    "bc_log_delete"
+  ],
   "cors_origins": [],
   "blocked_uids": []
 }
