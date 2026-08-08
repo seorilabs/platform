@@ -338,19 +338,26 @@ func supportUserFromSnapshot(puid string, snap *firestore.DocumentSnapshot) (Sup
 // 환경(production 또는 stg_) 전체를 센다.
 type UserCounts struct {
 	Total int64
-	// ActiveDay와 ActiveWeek는 lastSeenAt 기준이다.
+	// ActiveHour, ActiveDay, ActiveWeek는 lastSeenAt 기준이다.
 	//
 	// lastSeenAt은 EnsureUser가 갱신하고, EnsureUser는 세션 발급과
 	// 갱신 경로에서만 불린다. 그래서 앱을 열었지만 access token이 아직
 	// 유효해 재발급이 없었던 사용자는 여기 안 잡힌다. GA4 DAU보다
 	// 작게 나오는 게 정상이고, 두 값을 같은 것으로 두면 안 된다.
+	//
+	// ActiveHour를 따로 두는 이유는 해상도 때문이다. 24시간 롤링 값을
+	// 1시간마다 찍으면 이웃한 두 점이 창을 23/24 공유해서 곡선이
+	// 뭉개진다. 시간대별 활동 패턴을 보려면 창이 겹치지 않아야 한다.
+	// 세션 TTL이 1시간이라 이 값이 동시 접속에 가장 가까운 근사이기도
+	// 하지만, 진짜 동접은 아니다 — heartbeat가 없다.
+	ActiveHour int64
 	ActiveDay  int64
 	ActiveWeek int64
 }
 
-// CountUsers는 전체·일간·주간 사용자 수를 센다.
+// CountUsers는 전체·시간·일간·주간 사용자 수를 센다.
 //
-// 세 번의 집계 쿼리를 순차로 돌린다. 같은 트랜잭션이 아니므로 세 값의
+// 네 번의 집계 쿼리를 순차로 돌린다. 같은 트랜잭션이 아니므로 값들의
 // 기준 시각이 미세하게 어긋날 수 있지만, 운영 화면의 규모 감각을 주는
 // 값이라 정합성보다 비용이 중요하다. 트랜잭션으로 묶으면 컬렉션 전체를
 // 잠그는 비용이 붙는다.
@@ -373,6 +380,11 @@ func (r *StoreRepository) CountUsers(ctx context.Context, now time.Time) (UserCo
 		})
 	}
 
+	hour, err := activeSince(time.Hour)
+	if err != nil {
+		return UserCounts{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"사용자 지표를 집계하지 못했어요")
+	}
 	day, err := activeSince(24 * time.Hour)
 	if err != nil {
 		return UserCounts{}, platformerr.Wrap(err, platformerr.CodeInternal,
@@ -384,7 +396,12 @@ func (r *StoreRepository) CountUsers(ctx context.Context, now time.Time) (UserCo
 			"사용자 지표를 집계하지 못했어요")
 	}
 
-	return UserCounts{Total: total, ActiveDay: day, ActiveWeek: week}, nil
+	return UserCounts{
+		Total:      total,
+		ActiveHour: hour,
+		ActiveDay:  day,
+		ActiveWeek: week,
+	}, nil
 }
 
 // supportPrefix는 app_id에서 지원 코드 접두사를 만든다.
