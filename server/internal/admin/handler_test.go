@@ -2467,9 +2467,10 @@ func TestMetricsReportsUserCounts(t *testing.T) {
 	}{
 		{
 			name:   "집계값을 그대로 노출한다",
-			counts: identity.UserCounts{Total: 1204, ActiveDay: 87, ActiveWeek: 341},
+			counts: identity.UserCounts{Total: 1204, ActiveHour: 12, ActiveDay: 87, ActiveWeek: 341},
 			want: []string{
 				`"totalUsers":1204`,
+				`"hourlyActiveUsers":12`,
 				`"dailyActiveUsers":87`,
 				`"weeklyActiveUsers":341`,
 			},
@@ -2481,6 +2482,7 @@ func TestMetricsReportsUserCounts(t *testing.T) {
 			counts: identity.UserCounts{},
 			want: []string{
 				`"totalUsers":0`,
+				`"hourlyActiveUsers":0`,
 				`"dailyActiveUsers":0`,
 				`"weeklyActiveUsers":0`,
 			},

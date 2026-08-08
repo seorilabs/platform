@@ -250,7 +250,10 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	httpx.WriteOK(w, http.StatusOK, map[string]any{
-		"totalUsers":        counts.Total,
+		"totalUsers": counts.Total,
+		// 시계열로 찍을 때 해상도를 주는 값이다. 24시간 롤링을 1시간마다
+		// 찍으면 창이 23/24 겹쳐 곡선이 뭉개진다.
+		"hourlyActiveUsers": counts.ActiveHour,
 		"dailyActiveUsers":  counts.ActiveDay,
 		"weeklyActiveUsers": counts.ActiveWeek,
 		// 활성 판정 근거를 값으로 박는다. 나중에 이벤트 기반 집계를

@@ -1542,13 +1542,26 @@ components:
     AdminUserMetrics:
       type: object
       required:
-        [totalUsers, dailyActiveUsers, weeklyActiveUsers, activitySource, measuredAt]
+        [totalUsers, hourlyActiveUsers, dailyActiveUsers, weeklyActiveUsers,
+         activitySource, measuredAt]
       additionalProperties: false
       properties:
         totalUsers:
           type: integer
           minimum: 0
           description: 플랫폼이 발급한 platform_user_id 총 개수
+        hourlyActiveUsers:
+          type: integer
+          minimum: 0
+          description: |
+            measuredAt 기준 1시간 안에 lastSeenAt이 갱신된 사용자 수.
+
+            시계열로 찍을 때 해상도를 주는 값이다. 24시간 롤링 값을
+            1시간마다 찍으면 이웃한 두 점이 창을 23/24 공유해 곡선이
+            뭉개지지만, 이 값은 창이 겹치지 않아 시간대별 굴곡이 남는다.
+
+            세션 TTL이 1시간이라 동시 접속에 가장 가까운 근사지만
+            동시 접속은 아니다. heartbeat가 없어 실제 동접은 측정하지 않는다.
         dailyActiveUsers:
           type: integer
           minimum: 0
