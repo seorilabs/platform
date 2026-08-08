@@ -2622,6 +2622,42 @@ func TestHealthSurvivesRegistryFailure(t *testing.T) {
 //
 // 응답은 누가 health를 부를 때만 보인다. 알림을 걸 수 있는 신호는 로그다.
 // 이 한 줄이 로그 기반 지표의 근거가 되므로 필드 이름이 계약이다.
+// 제외된 주문의 진단 단서가 실제 로그로 나가는지 본다.
+//
+// 필드 이름을 만드는 함수만 test하면 그 값이 slog까지 도달하는지는
+// 모른다. 원장 접근 권한이 없어 이 로그가 유일한 진단 단서이므로
+// 실제 출력을 캡처해 고정한다. 동시에 값이 새지 않는 것도 함께 본다.
+func TestHiddenOrderLogsFieldNamesWithoutValues(t *testing.T) {
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	h := newHandler(t, &fakeLedger{orders: []ledger.OrderSummary{{
+		OrderKey: strings.Repeat("b", 64), PlatformUserID: "person@example.com",
+		Platform: "app_store", State: "revoked", Tombstone: true,
+	}}}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+
+	if w := serve(t, h, http.MethodGet, "/v1/admin/orders/recent", "", "tok", "reader"); w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "invalid_fields") ||
+		!strings.Contains(logged, "platformUserId") {
+		t.Errorf("어긴 필드 이름이 로그에 없다: %s", logged)
+	}
+	if !strings.Contains(logged, strings.Repeat("b", 64)) {
+		t.Errorf("어느 주문인지 알 단서가 로그에 없다: %s", logged)
+	}
+	// 브라우저에서 막은 값을 로그로 내보내면 fail-closed의 의미가 없다.
+	if strings.Contains(logged, "person@example.com") {
+		t.Errorf("어긴 값이 로그로 샜다: %s", logged)
+	}
+}
+
 func TestEnvironmentMismatchLogsWarning(t *testing.T) {
 	var buf bytes.Buffer
 	original := slog.Default()
