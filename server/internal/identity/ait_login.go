@@ -96,7 +96,7 @@ func (c *AITLoginClient) call(ctx context.Context, method, path string, body []b
 	if err != nil {
 		return platformerr.Wrap(err, platformerr.CodeProviderUnavailable, "AppsInToss 로그인 서버에 연결하지 못했어요")
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		return platformerr.Wrap(err, platformerr.CodeProviderUnavailable, "AppsInToss 로그인 응답을 읽지 못했어요")

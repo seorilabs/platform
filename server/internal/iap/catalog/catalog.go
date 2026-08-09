@@ -255,10 +255,6 @@ func (c *Catalog) IDs() []string {
 	return out
 }
 
-func skuKey(p domain.Platform, sku string) string {
-	return appSKUKey("", p, sku)
-}
-
 func appSKUKey(appID string, p domain.Platform, sku string) string {
 	return appID + "\x00" + string(p) + "\x00" + sku
 }

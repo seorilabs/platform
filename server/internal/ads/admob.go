@@ -131,7 +131,7 @@ func (v *AdMobVerifier) key(ctx context.Context, id string, force bool) (*ecdsa.
 	if err != nil {
 		return nil, platformerr.Wrap(err, platformerr.CodeSSVKeyUnavailable, "AdMob 검증 키를 받지 못했어요")
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return nil, platformerr.New(platformerr.CodeSSVKeyUnavailable, "AdMob 검증 키 응답이 올바르지 않아요")
 	}

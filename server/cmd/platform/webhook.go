@@ -149,11 +149,6 @@ func registerWebhooks(mux *http.ServeMux, cfg config.Config, d *deps) error {
 	return nil
 }
 
-// newWorker는 완료 재시도 워커를 조립한다.
-func newWorker(parts *iapParts, cfg config.Config, audit worker.Auditor) (*worker.Worker, error) {
-	return newWorkerFor("", parts.ledger, parts.verifiers, parts.refundKeys, cfg, audit)
-}
-
 func newWorkerFor(
 	appID string,
 	appLedger *ledger.Ledger,
