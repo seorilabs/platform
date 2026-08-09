@@ -72,9 +72,18 @@ Apple App Review의 인앱결제는 sandbox 거래다. 플랫폼은 자동 fallb
 registry를 production으로 되돌리고 `regsync`를 적용한 다음, Deploy workflow의
 `iap_environment=production` 배포와 production 실거래 검증을 마쳐야 한다.
 
-2026-08-09 App Store 공개 상태를 확인했으므로 `lizard-tycoon` registry를
-production으로 복구한다. sandbox 심사·테스트 원장은 production으로 복사하지 않고
-분리 보존한다.
+2026-08-09 App Store 공개 상태를 확인하고 `lizard-tycoon` registry와 런타임을
+production으로 복구했다. sandbox 심사·테스트 원장은 production으로 복사하지 않고
+분리 보존했다.
+
+- Firestore `apps/lizard-tycoon`: `ledger_environment=production`,
+  `legacy_unscoped_ledger=true`
+- `platform-iap-00029-659`, `platform-admin-00033-ktl`: ready, 트래픽 100%,
+  `IAP_LEDGER_ENVIRONMENT=production`
+- `platform-worker`: `IAP_LEDGER_ENVIRONMENT=production`, 전환 후 정기 실행 성공
+- `platform-iap`과 `platform-admin`: `/health/ready` 성공, 전환 이후 ERROR 로그 없음
+- 배포 이미지는 기존 `4921fb5f5c0b9776a3e02a1ac14293ae8fcf191b`를 유지했다.
+  production 실결제·복원은 별도 실기기 gate다.
 
 ---
 
