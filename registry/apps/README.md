@@ -27,7 +27,7 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   "ga4": { "event_prefix": "" },
   "platform_event_allowlist": ["purchase_verified", "..."],
   "iap": {
-    "ledger_environment": "sandbox",     // sandbox | production
+    "ledger_environment": "production",  // sandbox | production
     "legacy_unscoped_ledger": true,       // 기존 lizard 원장만 사용
     "markets": ["google_play", "app_store", "apps_in_toss"],
     "google_play_package_name": "com.seorilabs.lizardtycoon",
@@ -85,7 +85,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `babycare` | 미사용 | 핵심 퍼널·광고 | 비활성 | 비활성 | — |
 | `cycle-pair` | production | 비활성 | 비활성 | 비활성 | — |
 | `happy-farm` | production | 활성 | 활성 | 활성 | `ad_free` |
-| `lizard-tycoon` | sandbox | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` — App Review 기간 |
+| `lizard-tycoon` | production | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
 | `slotmachine-game` | 미사용 | 비활성 | 비활성 | 활성 | — |
 
 ## ledger_environment가 서비스와 다르면

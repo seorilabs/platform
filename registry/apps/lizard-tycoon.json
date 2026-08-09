@@ -14,7 +14,7 @@
     "event_prefix": ""
   },
   "iap": {
-    "ledger_environment": "sandbox",
+    "ledger_environment": "production",
     "legacy_unscoped_ledger": true,
     "markets": ["google_play", "app_store", "apps_in_toss"],
     "google_play_package_name": "com.seorilabs.lizardtycoon",
