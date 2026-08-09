@@ -81,8 +81,9 @@ POST /v1/auth/firebase-custom-token
 custom token 교환과 합성 legacy UID 보존, 임의 UID 주입 거부, `Cache-Control: no-store`를
 live 검증했으며 테스트 Firebase 사용자와 platform mapping은 삭제했다. 실제 기존 사용자·실기기
 migration은 아직 release gate다. App Check와 Firebase 계정 매핑 삭제 코드는 후속 변경에서
-추가했으며 신규 후보 확인 전 `require_app_check`는 false를 유지한다. 같은 날 후속 main 배포
-`platform-api-00016-cdv`에서도 babycare config 200과 custom-token POST-only route를 재확인했다.
+추가했으며 2026-08-09 Google Play 설치 v1.1.2의 token을 확인해 `require_app_check=true`로
+전환했다. 같은 날 후속 main 배포 `platform-api-00016-cdv`에서도 babycare config 200과
+custom-token POST-only route를 재확인했다.
 
 ### `checkRevoked` — 판단이 필요한 지점
 
