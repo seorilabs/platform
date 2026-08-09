@@ -30,6 +30,8 @@ tags:
     description: 이벤트 수집
   - name: iap
     description: 인앱결제 검증과 entitlement
+  - name: ads
+    description: 광고 정책과 보상 claim
   - name: webhook
     description: 마켓 서버 알림 수신
   - name: user
@@ -522,6 +524,93 @@ paths:
                     properties:
                       result:
                         $ref: '#/components/schemas/WebhookOutcome'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /iap/webhooks/apple/{appId}:
+    post:
+      tags: [webhook]
+      summary: 앱 범위 App Store Server Notification v2 수신
+      description: |
+        신규 앱용 고정 appId 경로다. composition root가 registry의 appId와
+        bundle ID, verifier, 앱 범위 원장을 결합하며 payload의 bundle ID도 다시 검증한다.
+        기존 `/iap/webhooks/apple` 계약은 lizard-tycoon 호환을 위해 유지한다.
+      operationId: receiveAppStoreNotificationForApp
+      security: []
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signedPayload]
+              additionalProperties: false
+              properties:
+                signedPayload: { type: string }
+      responses:
+        '200':
+          description: 처리 또는 무시
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/WebhookOutcome' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /iap/webhooks/play/{appId}:
+    post:
+      tags: [webhook]
+      summary: 앱 범위 Google Play RTDN 수신
+      description: |
+        신규 앱용 고정 appId 경로다. composition root가 registry의 appId와
+        package name, verifier, 앱 범위 원장을 결합하며 RTDN package name도 다시 검증한다.
+        기존 `/iap/webhooks/play` 계약은 lizard-tycoon 호환을 위해 유지한다.
+      operationId: receiveGooglePlayRtdnForApp
+      security:
+        - PubSubOidc: []
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: object
+                  required: [data, messageId]
+                  properties:
+                    data: { type: string, format: byte }
+                    messageId: { type: string }
+                    publishTime: { type: string, format: date-time }
+                subscription: { type: string }
+      responses:
+        '200':
+          description: 처리 또는 무시
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/WebhookOutcome' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -1136,6 +1225,186 @@ paths:
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /ads/policy:
+    get:
+      tags: [ads]
+      summary: 현재 사용자의 광고 정책 조회
+      operationId: getAdsPolicy
+      parameters: [{ $ref: '#/components/parameters/SeoriApp' }]
+      responses:
+        '200':
+          description: 정책 조회 성공
+          content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdsPolicy' } } }] } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /ads/reward-claims:
+    post:
+      tags: [ads]
+      summary: 보상 광고 claim 생성
+      operationId: createAdRewardClaim
+      parameters: [{ $ref: '#/components/parameters/SeoriApp' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateAdRewardClaimRequest' } } } }
+      responses:
+        '201': { description: 생성 또는 동일 requestId 결과, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /ads/reward-claims/{claimId}:
+    get:
+      tags: [ads]
+      summary: 본인 보상 claim 조회
+      operationId: getAdRewardClaim
+      parameters:
+        - { $ref: '#/components/parameters/SeoriApp' }
+        - { name: claimId, in: path, required: true, schema: { type: string, pattern: '^cl_[0-9a-f-]{36}$' } }
+      responses:
+        '200': { description: 조회 성공, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /ads/reward-claims/{claimId}/confirm:
+    post:
+      tags: [ads]
+      summary: AppsInToss 클라이언트 보상 확인
+      description: AppsInToss claim만 client_confirmed로 전이한다. server_verified로 승격하지 않는다.
+      operationId: confirmAdRewardClaim
+      parameters:
+        - { $ref: '#/components/parameters/SeoriApp' }
+        - { name: claimId, in: path, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [transactionId], additionalProperties: false, properties: { transactionId: { type: string, maxLength: 256 } } } } } }
+      responses:
+        '200': { description: 확인 성공, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /ads/reward-claims/{claimId}/ack:
+    post:
+      tags: [ads]
+      summary: 앱 로컬 보상 정산 완료 기록
+      operationId: acknowledgeAdRewardClaim
+      parameters:
+        - { $ref: '#/components/parameters/SeoriApp' }
+        - { name: claimId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: delivered 전이 또는 멱등 성공, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /ads/admob/ssv/{appId}:
+    get:
+      tags: [ads]
+      summary: AdMob server-side verification callback
+      operationId: confirmAdMobSsv
+      security: []
+      parameters:
+        - { name: appId, in: path, required: true, schema: { type: string } }
+        - { name: signature, in: query, required: true, schema: { type: string } }
+        - { name: key_id, in: query, required: true, schema: { type: string } }
+        - { name: custom_data, in: query, required: true, schema: { type: string } }
+        - { name: user_id, in: query, required: true, schema: { type: string } }
+        - { name: transaction_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 서명 검증과 claim 확인 성공 또는 Google probe }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /admin/ads/health:
+    get:
+      tags: [admin, ads]
+      summary: Ads 서비스 운영 상태
+      security: [{ AdminOidc: [] }]
+      responses:
+        '200':
+          description: 상태 조회 성공
+          content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, required: [result], properties: { result: { $ref: '#/components/schemas/AdminAdsHealth' } } }] } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /admin/apps/{appId}/ads/config:
+    get:
+      tags: [admin, ads]
+      summary: 앱 광고 레지스트리 설정 조회
+      security: [{ AdminOidc: [] }]
+      parameters: [{ name: appId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: suffix만 포함한 읽기 전용 설정
+          content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, required: [result], properties: { result: { $ref: '#/components/schemas/AdminAdsConfig' } } }] } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/users/{puid}/ads:
+    get:
+      tags: [admin, ads]
+      summary: 사용자 광고 정책과 감사 이력
+      security: [{ AdminOidc: [] }]
+      parameters: [{ name: puid, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: PII 없는 광고 정책
+          content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, required: [result], properties: { result: { $ref: '#/components/schemas/AdminUserAds' } } }] } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/ads/reward-claims:
+    get:
+      tags: [admin, ads]
+      summary: 보상 claim 진단 목록
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - { name: appId, in: query, schema: { type: string } }
+        - { name: provider, in: query, schema: { type: string, enum: [admob, apps_in_toss] } }
+        - { name: state, in: query, schema: { type: string, enum: [accepted, confirmed, delivered, expired] } }
+        - { name: assurance, in: query, schema: { type: string, enum: [pending, server_verified, client_confirmed] } }
+        - { name: placement, in: query, schema: { type: string } }
+        - { name: reference, in: query, description: 정확한 supportCode 또는 claim ID, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        '200':
+          description: 원문 transaction과 사용자 식별자를 제외한 목록
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [claims]
+                        additionalProperties: false
+                        properties:
+                          claims: { type: array, items: { $ref: '#/components/schemas/AdRewardClaim' } }
+
+  /admin/ads/suppressions/grant:
+    post:
+      tags: [admin, ads]
+      summary: 운영자 광고 차단 추가
+      security: [{ AdminOidc: [] }]
+      parameters: [{ $ref: '#/components/parameters/AdminActor' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminAdsSuppressionRequest' } } } }
+      responses:
+        '200': { description: 반영 또는 이미 active인 멱등 성공, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, required: [result], properties: { result: { $ref: '#/components/schemas/AdminAdsSuppressionResult' } } }] } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/ads/suppressions/revoke:
+    post:
+      tags: [admin, ads]
+      summary: 운영자 광고 차단 회수
+      security: [{ AdminOidc: [] }]
+      parameters: [{ $ref: '#/components/parameters/AdminActor' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminAdsSuppressionRequest' } } } }
+      responses:
+        '200': { description: 회수 또는 동일 requestId 멱등 성공, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, required: [result], properties: { result: { $ref: '#/components/schemas/AdminAdsSuppressionResult' } } }] } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
 components:
   securitySchemes:
     PlatformToken:
@@ -1273,6 +1542,169 @@ components:
             value:
               type: string
               maxLength: 4096
+            referrer:
+              type: string
+              enum: [DEFAULT, SANDBOX]
+              description: ait-login에서만 필수인 appLogin referrer
+
+    AdsPolicy:
+      type: object
+      required: [appUsesAds, adsEnabled, disabledBy, checkedAt]
+      additionalProperties: false
+      properties:
+        appUsesAds: { type: boolean }
+        adsEnabled: { type: boolean }
+        disabledBy: { type: array, items: { type: string, enum: [operator, ad_free] } }
+        checkedAt: { type: string, format: date-time }
+
+    AdReward:
+      type: object
+      required: [key, amount]
+      additionalProperties: false
+      properties:
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,127}$' }
+        amount: { type: integer, minimum: 1 }
+
+    CreateAdRewardClaimRequest:
+      type: object
+      required: [requestId, placement, provider, clientPlatform, reward]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, maxLength: 128 }
+        placement: { type: string, maxLength: 128 }
+        provider: { type: string, enum: [admob, apps_in_toss] }
+        clientPlatform: { type: string, enum: [android, ios, apps_in_toss] }
+        reward: { $ref: '#/components/schemas/AdReward' }
+
+    AdRewardClaim:
+      type: object
+      required: [claimId, appId, placement, provider, clientPlatform, reward, state, assurance, createdAt, expiresAt]
+      additionalProperties: false
+      properties:
+        claimId: { type: string }
+        appId: { type: string }
+        placement: { type: string }
+        provider: { type: string, enum: [admob, apps_in_toss] }
+        clientPlatform: { type: string, enum: [android, ios, apps_in_toss] }
+        reward: { $ref: '#/components/schemas/AdReward' }
+        state: { type: string, enum: [accepted, confirmed, delivered, expired] }
+        assurance: { type: string, enum: [pending, server_verified, client_confirmed] }
+        createdAt: { type: string, format: date-time }
+        confirmedAt: { type: string, format: date-time }
+        acknowledgedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        admobSsv:
+          type: object
+          additionalProperties: false
+          required: [customData, userId]
+          properties:
+            customData: { type: string }
+            userId: { type: string }
+
+    AdminAdsHealth:
+      type: object
+      required: [status, invalidSignatureCount, stalePendingClaimCount, policyFailureCount, checkedAt]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [ok] }
+        lastSsvSuccessAt: { type: string, format: date-time }
+        invalidSignatureCount: { type: integer, minimum: 0 }
+        stalePendingClaimCount: { type: integer, minimum: 0 }
+        policyFailureCount: { type: integer, minimum: 0 }
+        checkedAt: { type: string, format: date-time }
+
+    AdminAdsProviderConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        androidAdUnitSuffix: { type: string }
+        iosAdUnitSuffix: { type: string }
+        adGroupSuffix: { type: string }
+        rewardItem: { type: string }
+        rewardAmount: { type: integer, minimum: 0 }
+
+    AdminAdsRewardRange:
+      type: object
+      required: [key, min_amount, max_amount]
+      additionalProperties: false
+      properties:
+        key: { type: string }
+        min_amount: { type: integer, minimum: 1 }
+        max_amount: { type: integer, minimum: 1 }
+
+    AdminAdsConfig:
+      type: object
+      required: [appId, providers, placements, registrySyncedAt]
+      additionalProperties: false
+      properties:
+        appId: { type: string }
+        providers: { type: array, items: { type: string, enum: [admob, apps_in_toss] } }
+        registrySyncedAt: { type: string, format: date-time }
+        placements:
+          type: array
+          items:
+            type: object
+            required: [id, format, providers, dailyLimit, cooldownSeconds]
+            additionalProperties: false
+            properties:
+              id: { type: string }
+              format: { type: string, enum: [rewarded, interstitial] }
+              providers:
+                type: object
+                additionalProperties: { $ref: '#/components/schemas/AdminAdsProviderConfig' }
+              reward: { $ref: '#/components/schemas/AdminAdsRewardRange' }
+              dailyLimit: { type: integer, minimum: 1 }
+              cooldownSeconds: { type: integer, minimum: 0 }
+
+    AdminAdsSuppressionRecord:
+      type: object
+      required: [requestId, appId, platformUserId, actorLogin, reason, operation, applied, createdAt]
+      additionalProperties: false
+      properties:
+        requestId: { type: string }
+        grantRequestId: { type: string }
+        appId: { type: string }
+        platformUserId: { type: string }
+        actorLogin: { type: string }
+        reason: { $ref: '#/components/schemas/AdminMutationReason' }
+        operation: { type: string, enum: [grant, revoke] }
+        applied: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    AdminUserAds:
+      type: object
+      required: [appId, platformUserId, supportCode, isAnonymous, authType, lastSeenAt, policy, auditHistory]
+      additionalProperties: false
+      properties:
+        appId: { type: string }
+        platformUserId: { type: string }
+        supportCode: { type: string }
+        isAnonymous: { type: boolean }
+        authType: { type: string, enum: [firebase, firebase_bridge, apps_in_toss, anonymous] }
+        lastSeenAt: { type: string, format: date-time }
+        policy: { $ref: '#/components/schemas/AdsPolicy' }
+        auditHistory: { type: array, items: { $ref: '#/components/schemas/AdminAdsSuppressionRecord' } }
+
+    AdminAdsSuppressionResult:
+      type: object
+      required: [applied, requestId]
+      additionalProperties: false
+      properties:
+        applied: { type: boolean }
+        requestId: { type: string }
+        activeGrantRequestId: { type: string }
+
+    AdminAdsSuppressionRequest:
+      type: object
+      required: [requestId, appId, platformUserId, reason, confirmation]
+      additionalProperties: false
+      properties:
+        requestId: { type: string, maxLength: 128 }
+        appId: { type: string }
+        platformUserId: { type: string }
+        grantRequestId: { type: string, maxLength: 128 }
+        reason: { $ref: '#/components/schemas/AdminMutationReason' }
+        confirmation: { type: string, maxLength: 300 }
 
     CreateFirebaseCustomTokenRequest:
       type: object
@@ -1676,13 +2108,14 @@ components:
 
     AdminUser:
       type: object
-      required: [platformUserId, appId, supportCode, isAnonymous, createdAt, lastSeenAt]
+      required: [platformUserId, appId, supportCode, isAnonymous, authType, createdAt, lastSeenAt]
       additionalProperties: false
       properties:
         platformUserId: { type: string, pattern: '^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$' }
         appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
         supportCode: { type: string, pattern: '^[A-Z]{1,3}-[0-9A-HJKMNP-TV-Z]{8}$' }
         isAnonymous: { type: boolean }
+        authType: { type: string, enum: [firebase, firebase_bridge, apps_in_toss, anonymous] }
         createdAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
 

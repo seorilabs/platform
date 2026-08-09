@@ -69,6 +69,7 @@ const maxBatch = 20
 // Config는 워커 설정이다.
 type Config struct {
 	Outbox Outbox
+	AppID  string
 	// Completers는 마켓별 완료 처리기다.
 	//
 	// 자격증명이 없어 조립하지 못한 마켓은 여기 없다.
@@ -85,6 +86,7 @@ type Config struct {
 
 // Worker는 완료 재시도 워커다.
 type Worker struct {
+	appID           string
 	outbox          Outbox
 	completers      map[domain.Platform]Completer
 	auditor         Auditor
@@ -125,6 +127,7 @@ func New(cfg Config) (*Worker, error) {
 	}
 
 	return &Worker{
+		appID:           cfg.AppID,
 		outbox:          cfg.Outbox,
 		completers:      cfg.Completers,
 		auditor:         cfg.Auditor,
@@ -289,7 +292,7 @@ func (w *Worker) audit(ctx context.Context, item ledger.OutboxItem, outcome, err
 		return
 	}
 	// 소유자는 대기열에 없다. 필요하면 orderKey로 주문을 찾는다.
-	w.auditor.Record(ctx, "iap.completion_retry", "", "", outcome, map[string]any{
+	w.auditor.Record(ctx, "iap.completion_retry", w.appID, "", outcome, map[string]any{
 		"platform":   string(item.Purchase.Platform),
 		"attempt":    item.AttemptCount,
 		"error_code": errCode,

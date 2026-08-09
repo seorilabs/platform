@@ -33,3 +33,5 @@ ADR과 장기 의사결정을 관리한다.
 | [0012](0012-sandbox-reset-durable-intent.md) | sandbox reset은 영구 intent로 시작 순서를 확정한다 | Accepted |
 | [0013](0013-platform-firebase-custom-token-bridge.md) | platform이 앱 Firebase custom token을 원격 서명한다 | Accepted |
 | [0014](0014-google-play-refund-review.md) | Google Play 환불 검토 결정은 외부 호출 전에 영구 확정한다 | Accepted |
+| [0015](0015-platform-ads-boundary.md) | 광고 검증을 platform-ads 경계로 분리한다 | Accepted |
+| [0016](0016-iap-app-scoped-ledger.md) | 신규 IAP 원장을 앱 범위로 격리한다 | Accepted |

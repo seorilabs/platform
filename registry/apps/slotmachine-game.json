@@ -1,0 +1,22 @@
+{
+  "app_id": "slotmachine-game",
+  "display_name": "Slot Machine",
+  "firebase_project_id": "slotmachine-game-495cc",
+  "status": "active",
+  "features": {"config": false, "events": true, "iap": false, "ads": true},
+  "require_app_check": false,
+  "ga4": {"event_prefix": ""},
+  "iap": {"ledger_environment": "production", "markets": [], "entitlement_ids": []},
+  "ads": {
+    "providers": ["admob"],
+    "placements": [
+      {"id":"ad_win","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/2032813100","ios_ad_unit_id":"ca-app-pub-2444587584524186/9581678799","reward_item":"credit","reward_amount":1}},"reward":{"key":"credit","min_amount":1,"max_amount":500000},"daily_limit":2,"cooldown_seconds":60},
+      {"id":"credit_refill","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/6784125068","ios_ad_unit_id":"ca-app-pub-2444587584524186/2419825919","reward_item":"credit","reward_amount":1}},"reward":{"key":"credit","min_amount":1,"max_amount":250000},"daily_limit":3,"cooldown_seconds":60},
+      {"id":"daily_bonus_double","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/3207842138","ios_ad_unit_id":"ca-app-pub-2444587584524186/7887775015","reward_item":"credit","reward_amount":1}},"reward":{"key":"credit","min_amount":1,"max_amount":250000},"daily_limit":1,"cooldown_seconds":60},
+      {"id":"piggy_bank","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/1426308448","ios_ad_unit_id":"ca-app-pub-2444587584524186/1106744246","reward_item":"credit","reward_amount":1}},"reward":{"key":"piggy_bank","min_amount":1,"max_amount":20000},"daily_limit":3,"cooldown_seconds":60}
+    ]
+  },
+  "platform_event_allowlist": ["seori_session_start", "seori_sdk_error", "ad_reward_click", "ad_reward_completed", "ad_reward_failed"],
+  "cors_origins": [],
+  "blocked_uids": []
+}

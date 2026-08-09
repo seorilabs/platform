@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +20,19 @@ func (f fakeSource) LoadApps(context.Context) ([]registry.App, error) { return f
 // fakeVerifier는 토큰 문자열을 그대로 uid로 쓴다.
 type fakeVerifier struct {
 	err error
+}
+
+type fakeAITLoginVerifier struct {
+	hashedUserID string
+	err          error
+	code         string
+	referrer     string
+}
+
+func (f *fakeAITLoginVerifier) Verify(_ context.Context, code, referrer string) (string, error) {
+	f.code = code
+	f.referrer = referrer
+	return f.hashedUserID, f.err
 }
 
 type fakeAppCheckVerifier struct {
@@ -88,7 +102,7 @@ func newMemRepo() *memRepo {
 	}
 }
 
-func (m *memRepo) EnsureUser(_ context.Context, appID, uid string, _ bool) (string, error) {
+func (m *memRepo) EnsureUser(_ context.Context, appID, uid string, _ bool, _ string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -317,6 +331,7 @@ func TestDeleteFirebaseAccount(t *testing.T) {
 		"lizard-tycoon",
 		"firebase-user",
 		false,
+		"firebase",
 	); err != nil {
 		t.Fatalf("test user 생성 실패: %v", err)
 	}
@@ -520,6 +535,82 @@ func TestCredentialKinds(t *testing.T) {
 			t.Errorf("code = %q, want auth_required", code)
 		}
 	})
+}
+
+func TestAITLoginRequiresAdsAppAndStoresOnlyHashedIdentity(t *testing.T) {
+	app := testApp()
+	app.AppID = "happy-farm"
+	app.Features = map[string]bool{"ads": true}
+	app.Ads = registry.AdsConfig{
+		Providers: []string{"apps_in_toss"},
+		Placements: []registry.AdsPlacementConfig{{
+			ID: "harvest_boost", Format: "rewarded", DailyLimit: 20, CooldownSeconds: 30,
+			Reward:    &registry.AdsRewardConfig{Key: "harvest_boost", MinAmount: 1, MaxAmount: 1},
+			Providers: map[string]registry.AdsProviderConfig{"apps_in_toss": {AdGroupID: "test-group"}},
+		}},
+	}
+	reg := registry.New(fakeSource{apps: []registry.App{app}})
+	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
+	repo := newMemRepo()
+	verifier := &fakeAITLoginVerifier{hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	svc := NewService(reg, fakeVerifier{}, repo, issuer).WithAITLoginVerifier(verifier)
+
+	res, err := svc.CreateSession(context.Background(), app.AppID, Credential{
+		Kind: KindAITLogin, Value: "one-time-authorization-code", Referrer: "sandbox",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsAnonymous || verifier.code != "one-time-authorization-code" || verifier.referrer != "SANDBOX" {
+		t.Fatalf("result=%+v verifier=%+v", res, verifier)
+	}
+	if _, ok := repo.users[app.AppID+"\x00ait:"+verifier.hashedUserID]; !ok {
+		t.Fatalf("해시된 AIT identity가 저장되지 않았다: %v", repo.users)
+	}
+	for key := range repo.users {
+		if strings.Contains(key, "one-time-authorization-code") {
+			t.Fatal("authorization code 원문이 저장됐다")
+		}
+	}
+
+	_, err = svc.CreateSession(context.Background(), app.AppID, Credential{
+		Kind: KindAITLogin, Value: "another-code", Referrer: "unknown",
+	})
+	if platformerr.CodeOf(err) != platformerr.CodeRequestInvalid {
+		t.Fatalf("invalid referrer code=%q", platformerr.CodeOf(err))
+	}
+}
+
+func TestAITLoginRejectsAdMobOnlyApp(t *testing.T) {
+	app := testApp()
+	app.AppID = "slotmachine-game"
+	app.Features = map[string]bool{"ads": true}
+	app.Ads = registry.AdsConfig{
+		Providers: []string{"admob"},
+		Placements: []registry.AdsPlacementConfig{{
+			ID: "ad_win", Format: "rewarded", DailyLimit: 2, CooldownSeconds: 60,
+			Reward: &registry.AdsRewardConfig{Key: "credits", MinAmount: 1, MaxAmount: 1},
+			Providers: map[string]registry.AdsProviderConfig{
+				"admob": {AndroidAdUnitID: "ca-app-pub-1234567890123456/1234567890"},
+			},
+		}},
+	}
+	reg := registry.New(fakeSource{apps: []registry.App{app}})
+	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
+	verifier := &fakeAITLoginVerifier{
+		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer).WithAITLoginVerifier(verifier)
+
+	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
+		Kind: KindAITLogin, Value: "must-not-be-exchanged", Referrer: "DEFAULT",
+	})
+	if code := platformerr.CodeOf(err); code != platformerr.CodeAuthForbidden {
+		t.Fatalf("code=%q, want auth_forbidden", code)
+	}
+	if verifier.code != "" {
+		t.Fatalf("AdMob 전용 앱의 authorization code를 교환했다: %q", verifier.code)
+	}
 }
 
 // 갱신 토큰은 한 번 쓰면 폐기되고 새로 발급된다. 회전이다.

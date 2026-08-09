@@ -6,7 +6,8 @@
   "features": {
     "config": true,
     "events": true,
-    "iap": true
+    "iap": true,
+    "ads": false
   },
   "require_app_check": false,
   "ga4": {
@@ -14,8 +15,10 @@
   },
   "iap": {
     "ledger_environment": "sandbox",
+    "legacy_unscoped_ledger": true,
     "markets": ["google_play", "app_store", "apps_in_toss"],
     "google_play_package_name": "com.seorilabs.lizardtycoon",
+    "app_store_bundle_id": "com.seorilabs.lizardtycoon",
     "entitlement_ids": ["sp_galaxy_gecko", "sp_shootingstar_tokay"]
   },
   "platform_event_allowlist": [
@@ -24,8 +27,6 @@
     "seori_iap_verify",
     "core_purchase_start",
     "core_purchase_result",
-    "core_ad_impression",
-    "core_ad_reward",
     "core_tutorial_step"
   ],
   "cors_origins": [],

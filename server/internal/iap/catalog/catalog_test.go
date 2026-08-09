@@ -163,3 +163,26 @@ func TestParseValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestAppScopedCatalogKeepsSameEntitlementSeparate(t *testing.T) {
+	c := mustParse(t, `{
+      "version": 2,
+      "apps": {
+        "lizard-tycoon": {"entitlements":{"ad_free":{"google_play":"lizard_ad_free"}}},
+        "happy-farm": {"entitlements":{"ad_free":{"google_play":"ad_free","app_store":"com.seorilabs.happyfarm.premium.ad_free"}}}
+      }
+    }`)
+
+	if got, err := c.EntitlementForApp("happy-farm", domain.PlatformGooglePlay, "ad_free"); err != nil || got != "ad_free" {
+		t.Fatalf("Happy Farm lookup = %q, %v", got, err)
+	}
+	if _, err := c.EntitlementForApp("lizard-tycoon", domain.PlatformGooglePlay, "ad_free"); platformerr.CodeOf(err) != platformerr.CodeProductNotAllowed {
+		t.Fatalf("cross-app product code = %q", platformerr.CodeOf(err))
+	}
+	if got, ok := c.SKUForApp("lizard-tycoon", "ad_free", domain.PlatformGooglePlay); !ok || got != "lizard_ad_free" {
+		t.Fatalf("lizard SKUForApp = %q, %v", got, ok)
+	}
+	if got, ok := c.SKUForApp("happy-farm", "ad_free", domain.PlatformGooglePlay); !ok || got != "ad_free" {
+		t.Fatalf("happy SKUForApp = %q, %v", got, ok)
+	}
+}

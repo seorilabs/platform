@@ -9,6 +9,7 @@
 | [identity.md](identity.md) | 세션 교환, 토큰 검증, anonymous 한계, PII 정책 |
 | [events.md](events.md) | GA4와의 역할 분담, sink 구성, 직렬화 규약 |
 | [iap.md](iap.md) | **불변식 12개**, 데이터 모델, 3마켓, 웹훅, 재시도 |
+| [ads.md](ads.md) | 보상 claim, 신뢰 수준, 광고 차단 projection, 서비스 경계 |
 | [remote-config.md](remote-config.md) | 타겟팅, kill switch, 캐시 |
 
 ## 아키텍처 규칙
@@ -32,6 +33,10 @@
 Firebase Functions에서는 **함수별 Secret 분리가 보안 경계**였다. Apple 키는 Apple 엔드포인트에만 붙었다. 단일 Go 바이너리로 옮기면 이 경계가 사라지므로 **role 분리로 복원**한다.
 
 마켓 자격증명은 `platform-iap`에만 마운트한다. 고QPS 공개 엔드포인트인 `platform-ingest`가 결제 자격증명을 들고 있으면 안 된다.
+
+### R3-1. platform-ads는 별도 서비스다
+
+공개 광고 API와 AdMob callback은 `platform-ads`만 연다. 광고 폭주와 외부 callback이 IAP 동시성·자격증명 경계를 침범하지 않는다. → ADR 0015
 
 ### R4. `/v1`은 영구히 깨지지 않는다
 

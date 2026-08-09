@@ -19,6 +19,7 @@ import {
   type EventOutbox,
 } from "./events.ts";
 import { Iap } from "./iap.ts";
+import { Ads } from "./ads.ts";
 import {
   MemorySessionStore,
   SessionManager,
@@ -41,6 +42,7 @@ export {
 export { MemorySessionStore, SessionManager } from "./session.ts";
 export { MemoryEventOutbox, Events } from "./events.ts";
 export { Iap } from "./iap.ts";
+export { Ads } from "./ads.ts";
 export { Config } from "./config.ts";
 export { SDK_VERSION } from "./version.ts";
 
@@ -62,12 +64,23 @@ export type {
 export type { RemoteConfig, ConfigTarget, SdkStatus, Maintenance } from "./config.ts";
 export type { TransportOptions, RequestOptions } from "./transport.ts";
 export type { ParamValue } from "./normalize.ts";
+export type {
+  AdsPolicy,
+  AdReward,
+  AdRewardClaim,
+  AdProvider,
+  AdClaimState,
+  AdAssurance,
+  CreateAdRewardClaim,
+} from "./ads.ts";
 
 export interface PlatformOptions extends TransportOptions {
   /** 이벤트 수집 호스트. 생략하면 baseUrl을 쓴다. */
   ingestBaseUrl?: string;
   /** IAP 호스트. 생략하면 baseUrl을 쓴다. */
   iapBaseUrl?: string;
+  /** 광고 정책·claim·AppsInToss 세션 호스트. 생략하면 baseUrl을 쓴다. */
+  adsBaseUrl?: string;
   /** 플랫폼으로 보낼 저빈도 이벤트 이름. 생략하면 모든 이벤트를 허용한다. */
   eventAllowlist?: readonly string[];
   /** 이벤트 배치에 붙일 공통 실행 환경 정보. */
@@ -86,6 +99,7 @@ export class Platform {
   readonly events: Events;
   readonly iap: Iap;
   readonly config: Config;
+  readonly ads: Ads;
 
   constructor(opts: PlatformOptions) {
     this.transport = new Transport(opts);
@@ -97,9 +111,14 @@ export class Platform {
       ...opts,
       baseUrl: opts.iapBaseUrl ?? opts.baseUrl,
     });
+    const adsTransport = new Transport({
+      ...opts,
+      baseUrl: opts.adsBaseUrl ?? opts.baseUrl,
+    });
+    const sessionTransport = opts.adsBaseUrl ? adsTransport : this.transport;
 
     this.session = new SessionManager(
-      this.transport,
+      sessionTransport,
       opts.sessionStore ?? new MemorySessionStore(),
       opts.now ?? Date.now,
     );
@@ -133,6 +152,7 @@ export class Platform {
       // 결제는 인증이 필수다. 실패하면 그대로 던진다.
       getToken: () => this.session.token(),
     });
+    this.ads = new Ads(adsTransport, () => this.session.token());
 
     this.config = new Config({
       transport: this.transport,

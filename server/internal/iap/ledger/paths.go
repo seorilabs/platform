@@ -53,6 +53,10 @@ func newPathBuilder(env domain.Environment) pathBuilder {
 	return pathBuilder{prefix: env.PathPrefix()}
 }
 
+func newAppPathBuilder(env domain.Environment, appID string) pathBuilder {
+	return pathBuilder{prefix: env.PathPrefix() + "iap_apps/" + appID + "/"}
+}
+
 func (b pathBuilder) parse(rel string) (fspath.Path, error) {
 	return fspath.Parse(b.prefix + rel)
 }

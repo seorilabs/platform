@@ -22,14 +22,16 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   "firebase_project_id": "lizard-tycoon",
   "firebase_custom_token_service_account": "platform-auth@lizard-tycoon.iam.gserviceaccount.com",
   "status": "active",                    // active | paused
-  "features": { "iap": true, "events": true, "config": true },
+  "features": { "iap": true, "ads": false, "events": true, "config": true },
   "require_app_check": false,
   "ga4": { "event_prefix": "" },
   "platform_event_allowlist": ["purchase_verified", "..."],
   "iap": {
     "ledger_environment": "sandbox",     // sandbox | production
+    "legacy_unscoped_ledger": true,       // 기존 lizard 원장만 사용
     "markets": ["google_play", "app_store", "apps_in_toss"],
     "google_play_package_name": "com.seorilabs.lizardtycoon",
+    "app_store_bundle_id": "com.seorilabs.lizardtycoon",
     "entitlement_ids": ["sp_galaxy_gecko"]
   },
   "cors_origins": []
@@ -44,9 +46,20 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
 확인하고 registry sync할 때만 true로 전환한다.
 
 `features.iap`가 `true`이면 `iap.entitlement_ids`는 비어 있을 수 없다.
-`IAP_CATALOG_JSON`은 마켓 SKU와 entitlement의 전역 매핑이고, 이 목록은
-해당 앱에 운영자 지급할 수 있는 entitlement 경계다. 두 목록의 교집합만
-Admin API에 노출하고 지급·회수에 허용한다.
+`IAP_CATALOG_JSON`은 `(appId, market, productId)`를 entitlement에 연결하는
+앱별 매핑이고, 이 목록은 해당 앱에 운영자 지급할 수 있는 entitlement 경계다.
+두 목록의 교집합만 Admin API에 노출하고 지급·회수에 허용한다. 기존 lizard
+단일 앱 배포가 쓰는 전역 JSON 형식은 마이그레이션 동안 계속 읽지만 새 앱은
+`{"version":2,"apps":{...}}` 형식을 사용한다.
+
+신규 앱의 IAP 문서는 `iap_apps/{appId}/...` 아래에 저장한다. 기존 lizard 데이터
+경로만 `iap.legacy_unscoped_ledger=true`로 유지하며 새 앱에는 이 플래그를 쓰지
+않는다. 자세한 경계는 ADR 0016을 따른다.
+
+`features.ads=true`이면 `ads.providers`와 `ads.placements`가 필수다. 광고 unit,
+AppsInToss ad group, reward 범위, 일일 한도, cooldown은 이 파일만 원장으로
+사용하고 운영툴에서는 읽기만 한다. `regsync`는 각 문서에
+`registry_synced_at`을 기록해 운영툴이 실제 런타임 반영 시각을 표시하게 한다.
 
 활성 IAP 앱의 `markets`에 `google_play`가 있으면
 `iap.google_play_package_name`이 필수이며 앱 사이에 중복될 수 없다. Google Play
@@ -67,11 +80,13 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 
 ## 등록된 앱
 
-| app_id | 원장 환경 | Events | IAP | entitlements |
-|---|---|---|---|---|
-| `babycare` | 미사용 | 핵심 퍼널·광고 | 비활성 | — |
-| `cycle-pair` | production | 비활성 | 비활성 | — |
-| `lizard-tycoon` | sandbox | 활성 | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` — App Review 기간 |
+| app_id | 원장 환경 | Events | IAP | Ads | entitlements |
+|---|---|---|---|---|---|
+| `babycare` | 미사용 | 핵심 퍼널·광고 | 비활성 | 비활성 | — |
+| `cycle-pair` | production | 비활성 | 비활성 | 비활성 | — |
+| `happy-farm` | production | 활성 | 활성 | 활성 | `ad_free` |
+| `lizard-tycoon` | sandbox | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` — App Review 기간 |
+| `slotmachine-game` | 미사용 | 비활성 | 비활성 | 활성 | — |
 
 ## ledger_environment가 서비스와 다르면
 

@@ -323,5 +323,6 @@ func (s *StoreSource) Upsert(ctx context.Context, a App) error {
 	if err != nil {
 		return fmt.Errorf("registry: 경로 파싱 실패: %w", err)
 	}
+	a.RegistrySyncedAt = time.Now().UTC()
 	return s.store.Set(ctx, p, a)
 }

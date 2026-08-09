@@ -1,11 +1,11 @@
 # 플랫폼 서버 배포.
 #
-# 배포 대상이 다섯이고 전부 같은 이미지를 쓴다. 하나라도 빠지면 오래된
+# 배포 대상이 여섯이고 전부 같은 이미지를 쓴다. 하나라도 빠지면 오래된
 # 코드가 결제 경로 옆에서 돈다 — 실제로 겪었다. 2026-08-02에 서비스
 # 넷은 p15인데 platform-worker만 p9f로 22시간 뒤처져 있었고, 그 사이
 # ledger.go와 verify/service.go가 바뀌었다.
 #
-# 그래서 이 워크플로는 이미지를 한 번만 만들고 다섯 대상에 같은 태그로
+# 그래서 이 워크플로는 이미지를 한 번만 만들고 여섯 대상에 같은 태그로
 # 올린 뒤, 실제로 같은 태그가 됐는지 다시 확인한다.
 #
 # ## 승인 게이트를 environment로 하지 않는 이유
@@ -69,6 +69,7 @@ env:
   REGISTRY: asia-northeast3-docker.pkg.dev
   IMAGE_PATH: seorilabs-platform/platform/platform
   DEPLOYER_SA: platform-deployer@seorilabs-platform.iam.gserviceaccount.com
+  ADS_RUNTIME_SA: platform-ads@seorilabs-platform.iam.gserviceaccount.com
   # push는 build-only라 production 기본값을 쓴다. 실제 배포에서는
   # workflow_dispatch의 명시적 선택이 registry와 일치하는지 다시 검사한다.
   IAP_ENVIRONMENT: ${{ inputs.iap_environment || 'production' }}
@@ -145,13 +146,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # 원장 prefix는 서비스 전체에서 하나다. 활성 IAP 앱이 서로 다른 환경을
-      # 요구하거나 dispatch 선택과 registry가 다르면 일부 앱만 다른 원장을
-      # 보게 되므로 배포 전에 닫는다.
-      - name: Assert registry IAP environment
+      # 신규 앱은 registry의 앱별 환경을 사용한다. 전역 환경은 기존 경로를
+      # 유지하는 legacy 앱에만 적용되므로 그 앱만 dispatch 선택과 대조한다.
+      - name: Assert registry IAP environments
         run: |
           fail=0
           active=0
+          legacy=0
           for file in registry/apps/*.json; do
             enabled=$(jq -r '.features.iap // false' "$file")
             [ "$enabled" = "true" ] || continue
@@ -159,13 +160,22 @@ jobs:
             active=$((active + 1))
             app_id=$(jq -r '.app_id' "$file")
             actual=$(jq -r '.iap.ledger_environment // ""' "$file")
-            printf '%-24s ledger_environment=%s\n' "$app_id" "$actual"
-            [ "$actual" = "$IAP_ENVIRONMENT" ] || fail=1
+            legacy_unscoped=$(jq -r '.iap.legacy_unscoped_ledger // false' "$file")
+            printf '%-24s ledger_environment=%s legacy_unscoped=%s\n' "$app_id" "$actual" "$legacy_unscoped"
+            case "$actual" in
+              production|sandbox) ;;
+              *) fail=1 ;;
+            esac
+            if [ "$legacy_unscoped" = "true" ]; then
+              legacy=$((legacy + 1))
+              [ "$actual" = "$IAP_ENVIRONMENT" ] || fail=1
+            fi
           done
 
           [ "$active" -gt 0 ] || { echo "활성 IAP 앱이 없다." >&2; exit 1; }
+          [ "$legacy" -gt 0 ] || { echo "기존 원장 호환 앱이 없다." >&2; exit 1; }
           [ "$fail" -eq 0 ] || {
-            echo "활성 IAP 앱의 registry 환경과 배포 선택($IAP_ENVIRONMENT)이 다르다." >&2
+            echo "registry 원장 환경이 잘못됐거나 기존 원장 앱과 배포 선택($IAP_ENVIRONMENT)이 다르다." >&2
             exit 1
           }
 
@@ -204,6 +214,17 @@ jobs:
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT}" \
             --quiet
 
+          # Ads는 별도 runtime service account와 기존 세션 secret만 받는다.
+          # AIT mTLS secret은 승인 후 별도 gate에서 붙이며, 없을 때 AIT
+          # 로그인과 광고는 fail-closed로 동작한다.
+          gcloud run deploy platform-ads \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --image="${{ needs.build.outputs.image }}" \
+            --service-account="$ADS_RUNTIME_SA" \
+            --update-env-vars="PLATFORM_ROLE=ads,GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest" \
+            --quiet
+
       - name: Deploy worker job
         run: |
           gcloud run jobs update platform-worker \
@@ -219,7 +240,7 @@ jobs:
         run: |
           expected="${{ needs.build.outputs.image }}"
           fail=0
-          for s in platform-api platform-iap platform-ingest platform-admin; do
+          for s in platform-api platform-iap platform-ingest platform-admin platform-ads; do
             actual=$(gcloud run services describe "$s" \
               --project="$PROJECT_ID" --region="$REGION" \
               --format='value(spec.template.spec.containers[0].image)')
@@ -293,7 +314,7 @@ jobs:
           printf '%-18s %s=%s\n' platform-worker "$env_name" "$actual"
           [ "$actual" = "$expected" ] || fail=1
 
-          for target in platform-api platform-ingest platform-admin; do
+          for target in platform-api platform-ingest platform-admin platform-ads; do
             actual=$(service_secret "$target" "$env_name")
             printf '%-18s %s=%s\n' "$target" "$env_name" "${actual:-<absent>}"
             [ -z "$actual" ] || fail=1
@@ -307,7 +328,7 @@ jobs:
       - name: Smoke test
         run: |
           fail=0
-          for s in api iap ingest; do
+          for s in api iap ingest ads; do
             url="https://platform-${s}-306278488979.${REGION}.run.app/health/ready"
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url" || echo 000)
             printf '%-8s %s\n' "$s" "$code"

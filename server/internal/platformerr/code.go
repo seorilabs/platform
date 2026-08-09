@@ -59,6 +59,29 @@ const (
 	CodeRateLimited Code = "rate_limited"
 )
 
+// 광고 정책과 보상 claim
+const (
+	CodeAdsNotEnabled            Code = "ads_not_enabled"
+	CodeAdsSuppressed            Code = "ads_suppressed"
+	CodeAdPlacementInvalid       Code = "ad_placement_invalid"
+	CodeAdRewardInvalid          Code = "ad_reward_invalid"
+	CodeAdUnitMismatch           Code = "ad_unit_mismatch"
+	CodeAdDailyLimit             Code = "ad_daily_limit"
+	CodeAdCooldown               Code = "ad_cooldown"
+	CodeClaimNotFound            Code = "ad_claim_not_found"
+	CodeClaimExpired             Code = "ad_claim_expired"
+	CodeClaimStateInvalid        Code = "ad_claim_state_invalid"
+	CodeClaimAssuranceInvalid    Code = "ad_claim_assurance_invalid"
+	CodeClaimOwnershipMismatch   Code = "ad_claim_ownership_mismatch"
+	CodeClaimReplayMismatch      Code = "ad_claim_replay_mismatch"
+	CodeClaimTransactionReplayed Code = "ad_claim_transaction_replayed"
+	CodeSuppressionGrantMismatch Code = "ad_suppression_grant_mismatch"
+	CodeAppUserMismatch          Code = "app_user_mismatch"
+	CodeSSVInvalid               Code = "admob_ssv_invalid"
+	CodeSSVSignatureInvalid      Code = "admob_ssv_signature_invalid"
+	CodeSSVKeyUnavailable        Code = "admob_ssv_key_unavailable"
+)
+
 // 계정 바인딩
 const (
 	CodeAccountBindingMissing  Code = "account_binding_missing"
@@ -186,6 +209,27 @@ var statusByCode = map[Code]int{
 
 	// 한도
 	CodeRateLimited: http.StatusTooManyRequests,
+
+	// 광고
+	CodeAdsNotEnabled:            http.StatusForbidden,
+	CodeAdsSuppressed:            http.StatusForbidden,
+	CodeAdPlacementInvalid:       http.StatusUnprocessableEntity,
+	CodeAdRewardInvalid:          http.StatusUnprocessableEntity,
+	CodeAdUnitMismatch:           http.StatusUnprocessableEntity,
+	CodeAdDailyLimit:             http.StatusTooManyRequests,
+	CodeAdCooldown:               http.StatusTooManyRequests,
+	CodeClaimNotFound:            http.StatusNotFound,
+	CodeClaimExpired:             http.StatusConflict,
+	CodeClaimStateInvalid:        http.StatusConflict,
+	CodeClaimAssuranceInvalid:    http.StatusUnprocessableEntity,
+	CodeClaimOwnershipMismatch:   http.StatusNotFound,
+	CodeClaimReplayMismatch:      http.StatusConflict,
+	CodeClaimTransactionReplayed: http.StatusConflict,
+	CodeSuppressionGrantMismatch: http.StatusConflict,
+	CodeAppUserMismatch:          http.StatusConflict,
+	CodeSSVInvalid:               http.StatusBadRequest,
+	CodeSSVSignatureInvalid:      http.StatusBadRequest,
+	CodeSSVKeyUnavailable:        http.StatusServiceUnavailable,
 
 	// 계정 바인딩
 	CodeAccountBindingMissing:  http.StatusUnprocessableEntity,

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/seorilabs/platform/server/internal/platformerr"
 )
@@ -59,6 +60,7 @@ type App struct {
 
 	GA4 GA4Config `json:"ga4" firestore:"ga4"`
 	IAP IAPConfig `json:"iap" firestore:"iap"`
+	Ads AdsConfig `json:"ads" firestore:"ads"`
 
 	// PlatformEventAllowlist에 없는 이벤트는 플랫폼으로 보내지 않는다.
 	// 비용과 QPS를 규모와 무관한 상수로 묶는 장치다.
@@ -69,6 +71,10 @@ type App struct {
 
 	// BlockedUIDs는 남용 계정 차단용이다. 앱 전체를 멈추지 않고 개별 차단한다.
 	BlockedUIDs []string `json:"blocked_uids" firestore:"blocked_uids"`
+
+	// RegistrySyncedAt은 regsync가 Firestore에 반영한 시각이다. JSON 원장에는
+	// 들어가지 않으며 운영툴이 파일 변경과 런타임 반영을 구분할 때만 쓴다.
+	RegistrySyncedAt time.Time `json:"-" firestore:"registry_synced_at,omitempty"`
 }
 
 type GA4Config struct {
@@ -83,19 +89,57 @@ type GA4Config struct {
 
 type IAPConfig struct {
 	LedgerEnvironment LedgerEnvironment `json:"ledger_environment" firestore:"ledger_environment"`
-	Markets           []string          `json:"markets" firestore:"markets"`
+	// LegacyUnscopedLedger는 다중 앱 이전에 생성된 원장 경로를 유지한다.
+	// 신규 앱에서는 사용하지 않는다. lizard의 기존 IAP 데이터/SDK 회귀용이다.
+	LegacyUnscopedLedger bool     `json:"legacy_unscoped_ledger,omitempty" firestore:"legacy_unscoped_ledger,omitempty"`
+	Markets              []string `json:"markets" firestore:"markets"`
 	// GooglePlayPackageName은 RTDN packageName을 appId에 묶는 원장이다.
 	// 환경변수나 알림 payload만으로 앱을 추측하지 않는다. ADR 0014.
 	GooglePlayPackageName string `json:"google_play_package_name,omitempty" firestore:"google_play_package_name,omitempty"`
+	// AppStoreBundleID는 Apple 거래를 어느 앱에 묶을지 결정한다.
+	// provider 전역 환경변수에 두면 여러 앱을 한 서비스에서 검증할 수 없다.
+	AppStoreBundleID string `json:"app_store_bundle_id,omitempty" firestore:"app_store_bundle_id,omitempty"`
 	// EntitlementIDs는 이 앱에 지급할 수 있는 entitlement allowlist다.
 	// 전역 SKU 카탈로그는 상품 매핑의 원장이고, 이 목록은 앱 경계의 원장이다.
 	EntitlementIDs []string `json:"entitlement_ids" firestore:"entitlement_ids"`
+}
+
+// AdsConfig는 보상 광고 정책의 앱별 원장이다.
+// 광고 unit과 reward 정책은 콘솔이 아니라 registry/apps/*.json에서만 바꾼다.
+type AdsConfig struct {
+	Providers  []string             `json:"providers" firestore:"providers"`
+	Placements []AdsPlacementConfig `json:"placements" firestore:"placements"`
+}
+
+type AdsPlacementConfig struct {
+	ID              string                       `json:"id" firestore:"id"`
+	Format          string                       `json:"format" firestore:"format"`
+	Providers       map[string]AdsProviderConfig `json:"providers" firestore:"providers"`
+	Reward          *AdsRewardConfig             `json:"reward,omitempty" firestore:"reward,omitempty"`
+	DailyLimit      int                          `json:"daily_limit" firestore:"daily_limit"`
+	CooldownSeconds int                          `json:"cooldown_seconds" firestore:"cooldown_seconds"`
+}
+
+type AdsProviderConfig struct {
+	AndroidAdUnitID string `json:"android_ad_unit_id,omitempty" firestore:"android_ad_unit_id,omitempty"`
+	IOSAdUnitID     string `json:"ios_ad_unit_id,omitempty" firestore:"ios_ad_unit_id,omitempty"`
+	AdGroupID       string `json:"ad_group_id,omitempty" firestore:"ad_group_id,omitempty"`
+	RewardItem      string `json:"reward_item,omitempty" firestore:"reward_item,omitempty"`
+	RewardAmount    int    `json:"reward_amount,omitempty" firestore:"reward_amount,omitempty"`
+}
+
+type AdsRewardConfig struct {
+	Key       string `json:"key" firestore:"key"`
+	MinAmount int    `json:"min_amount" firestore:"min_amount"`
+	MaxAmount int    `json:"max_amount" firestore:"max_amount"`
 }
 
 var appIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 var entitlementIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 var serviceAccountPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{5,29}@[a-z0-9][a-z0-9-]{5,29}\.iam\.gserviceaccount\.com$`)
 var androidPackagePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$`)
+var adsIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
+var admobUnitPattern = regexp.MustCompile(`^ca-app-pub-[0-9]{16}/[0-9]{10}$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
@@ -143,6 +187,13 @@ func (a App) Validate() error {
 	} else if a.IAP.GooglePlayPackageName != "" {
 		return fmt.Errorf("%s: Google Play IAP가 비활성인데 package name이 설정됐다", a.AppID)
 	}
+	if a.FeatureEnabled("iap") && a.MarketEnabled("app_store") {
+		if !androidPackagePattern.MatchString(a.IAP.AppStoreBundleID) || isPlaceholder(a.IAP.AppStoreBundleID) {
+			return fmt.Errorf("%s: App Store IAP에는 유효한 iap.app_store_bundle_id가 필요하다", a.AppID)
+		}
+	} else if a.IAP.AppStoreBundleID != "" {
+		return fmt.Errorf("%s: App Store IAP가 비활성인데 bundle id가 설정됐다", a.AppID)
+	}
 	if len(a.IAP.EntitlementIDs) > 100 {
 		return fmt.Errorf("%s: iap.entitlement_ids는 최대 100개다", a.AppID)
 	}
@@ -158,6 +209,9 @@ func (a App) Validate() error {
 		}
 		seenEntitlements[entitlementID] = struct{}{}
 	}
+	if err := a.validateAds(); err != nil {
+		return err
+	}
 	// placeholder가 남은 채 배포되면 런타임에 이상하게 동작한다.
 	// 부팅 시점에 잡는 편이 낫다.
 	for _, v := range []string{a.AppID, a.DisplayName, a.FirebaseProjectID} {
@@ -166,6 +220,83 @@ func (a App) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (a App) validateAds() error {
+	if !a.FeatureEnabled("ads") {
+		if len(a.Ads.Providers) != 0 || len(a.Ads.Placements) != 0 {
+			return fmt.Errorf("%s: 광고가 비활성인데 ads 설정이 존재한다", a.AppID)
+		}
+		return nil
+	}
+	if len(a.Ads.Providers) == 0 || len(a.Ads.Placements) == 0 {
+		return fmt.Errorf("%s: 광고 활성 앱에는 provider와 placement가 필요하다", a.AppID)
+	}
+	providers := make(map[string]bool, len(a.Ads.Providers))
+	for _, provider := range a.Ads.Providers {
+		if provider != "admob" && provider != "apps_in_toss" {
+			return fmt.Errorf("%s: 지원하지 않는 광고 provider다: %q", a.AppID, provider)
+		}
+		if providers[provider] {
+			return fmt.Errorf("%s: 광고 provider가 중복됐다: %q", a.AppID, provider)
+		}
+		providers[provider] = true
+	}
+	seen := make(map[string]bool, len(a.Ads.Placements))
+	for _, placement := range a.Ads.Placements {
+		if !adsIDPattern.MatchString(placement.ID) || seen[placement.ID] {
+			return fmt.Errorf("%s: 광고 placement id가 올바르지 않다: %q", a.AppID, placement.ID)
+		}
+		seen[placement.ID] = true
+		if placement.Format != "rewarded" && placement.Format != "interstitial" {
+			return fmt.Errorf("%s/%s: 광고 format이 올바르지 않다", a.AppID, placement.ID)
+		}
+		if placement.DailyLimit <= 0 || placement.CooldownSeconds < 0 {
+			return fmt.Errorf("%s/%s: 일일 한도와 cooldown이 올바르지 않다", a.AppID, placement.ID)
+		}
+		if len(placement.Providers) == 0 {
+			return fmt.Errorf("%s/%s: provider 설정이 필요하다", a.AppID, placement.ID)
+		}
+		for provider, cfg := range placement.Providers {
+			if !providers[provider] {
+				return fmt.Errorf("%s/%s: 앱에 허용되지 않은 provider다: %s", a.AppID, placement.ID, provider)
+			}
+			switch provider {
+			case "admob":
+				if cfg.AndroidAdUnitID != "" && !admobUnitPattern.MatchString(cfg.AndroidAdUnitID) {
+					return fmt.Errorf("%s/%s: Android AdMob unit이 올바르지 않다", a.AppID, placement.ID)
+				}
+				if cfg.IOSAdUnitID != "" && !admobUnitPattern.MatchString(cfg.IOSAdUnitID) {
+					return fmt.Errorf("%s/%s: iOS AdMob unit이 올바르지 않다", a.AppID, placement.ID)
+				}
+				if cfg.AndroidAdUnitID == "" && cfg.IOSAdUnitID == "" {
+					return fmt.Errorf("%s/%s: AdMob unit이 하나 이상 필요하다", a.AppID, placement.ID)
+				}
+			case "apps_in_toss":
+				if strings.TrimSpace(cfg.AdGroupID) == "" {
+					return fmt.Errorf("%s/%s: AppsInToss ad group id가 필요하다", a.AppID, placement.ID)
+				}
+			}
+		}
+		if placement.Format == "rewarded" {
+			if placement.Reward == nil || !adsIDPattern.MatchString(placement.Reward.Key) ||
+				placement.Reward.MinAmount <= 0 || placement.Reward.MaxAmount < placement.Reward.MinAmount {
+				return fmt.Errorf("%s/%s: reward 범위가 올바르지 않다", a.AppID, placement.ID)
+			}
+		} else if placement.Reward != nil {
+			return fmt.Errorf("%s/%s: interstitial에는 reward를 둘 수 없다", a.AppID, placement.ID)
+		}
+	}
+	return nil
+}
+
+func (a App) AdsPlacement(id string) (AdsPlacementConfig, bool) {
+	for _, placement := range a.Ads.Placements {
+		if placement.ID == id {
+			return placement, true
+		}
+	}
+	return AdsPlacementConfig{}, false
 }
 
 func isPlaceholder(s string) bool {

@@ -52,6 +52,7 @@ type AppleHandler struct {
 	parser   AppleParser
 	verifier Verifier
 	bundleID string
+	appID    string
 	proc     *processor
 }
 
@@ -63,6 +64,7 @@ type AppleConfig struct {
 	Reconciler Reconciler
 	Auditor    Auditor
 	BundleID   string
+	AppID      string
 }
 
 func NewAppleHandler(cfg AppleConfig) (*AppleHandler, error) {
@@ -79,6 +81,7 @@ func NewAppleHandler(cfg AppleConfig) (*AppleHandler, error) {
 		parser:   cfg.Parser,
 		verifier: cfg.Verifier,
 		bundleID: cfg.BundleID,
+		appID:    cfg.AppID,
 		proc: &processor{
 			events:     cfg.Events,
 			reconciler: cfg.Reconciler,
@@ -90,6 +93,12 @@ func NewAppleHandler(cfg AppleConfig) (*AppleHandler, error) {
 
 func (h *AppleHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/iap/webhooks/apple", h.serve)
+}
+
+// RegisterAt은 앱별 webhook URL에도 같은 검증 파이프라인을 연결한다.
+// 기존 경로는 그대로 두고 새 앱만 appId가 고정된 additive 경로를 쓴다.
+func (h *AppleHandler) RegisterAt(mux *http.ServeMux, path string) {
+	mux.HandleFunc("POST "+path, h.serve)
 }
 
 // appleEnvelope는 Apple이 보내는 본문이다. 필드가 하나뿐이다.
@@ -147,6 +156,7 @@ func (h *AppleHandler) parse(signedPayload string) (notification, error) {
 		Kind:       payload.NotificationType,
 		ObservedAt: appleSignedDate(payload),
 		Platform:   domain.PlatformAppStore,
+		AppID:      h.appID,
 	}
 
 	// 다른 앱의 알림이다. 우리 원장과 무관하다.
