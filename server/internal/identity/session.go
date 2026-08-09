@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -150,14 +151,14 @@ func (s *SessionIssuer) Verify(tokenStr, appID string) (Session, error) {
 	}, nil
 }
 
-// EnsureNotAnonymous는 익명 신원을 거부한다.
+// EnsureNotAnonymous는 클라이언트가 임의로 만든 사칭 가능한 신원을 거부한다.
 //
-// getAnonymousKey 해시는 bearer 자격증명이 아니라 클라이언트가 아무 값이나
-// 보낼 수 있다. 즉 타인 사칭이 가능하다. 그래서 IAP 검증과 entitlement
-// 조회에서는 익명 신원을 막는다.
+// Firebase anonymous 사용자는 이름 없는 사용자이지만 Firebase가 서명한 ID token으로
+// 소유권을 증명한다. 반면 KindAnonymous의 `anon:` appUserId는 클라이언트가 아무 값이나
+// 보낼 수 있어 타인 사칭이 가능하다. 민감 경로는 후자만 막는다.
 // docs/03-architecture/identity.md 참고.
 func (s Session) EnsureNotAnonymous() error {
-	if s.IsAnonymous {
+	if s.IsAnonymous && strings.HasPrefix(s.AppUserID, "anon:") {
 		return platformerr.New(platformerr.CodeAnonymousNotAllowed,
 			"이 기능은 로그인이 필요해요")
 	}

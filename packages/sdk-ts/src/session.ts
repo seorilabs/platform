@@ -13,12 +13,15 @@ export type CredentialKind = "firebase-id-token" | "ait-login" | "anonymous";
 export interface Credential {
   kind: CredentialKind;
   value: string;
+  /** ait-login에서 appLogin이 반환한 DEFAULT 또는 SANDBOX. */
+  referrer?: "DEFAULT" | "SANDBOX";
 }
 
 export interface Session {
   platformToken: string;
   refreshToken: string;
   platformUserId: string;
+  supportCode: string;
   appUserId: string;
   isAnonymous: boolean;
   /** 절대 만료 시각(epoch ms). */
@@ -58,6 +61,7 @@ interface SessionResponse {
   platformToken: string;
   refreshToken: string;
   platformUserId: string;
+  supportCode: string;
   appUserId: string;
   isAnonymous: boolean;
   expiresIn: number;
@@ -165,6 +169,7 @@ export class SessionManager {
       platformToken: res.platformToken,
       refreshToken: res.refreshToken,
       platformUserId: res.platformUserId,
+      supportCode: res.supportCode,
       appUserId: res.appUserId,
       isAnonymous: res.isAnonymous,
       expiresAt: this.now() + res.expiresIn * 1000,

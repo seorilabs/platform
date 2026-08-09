@@ -21,6 +21,8 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/providers/toss"
 	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/iap/verify"
+	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/store"
 )
 
@@ -40,6 +42,12 @@ type iapParts struct {
 	verifiers  map[domain.Platform]verify.Verifier
 	enabled    []domain.Platform
 	refundKeys *refundreview.Keyring
+	appLedgers map[string]*ledger.Ledger
+	// appVerifiers는 webhook과 worker까지 앱 범위를 유지한다. verify
+	// 요청에서만 앱을 나누고 여기서 전역 검증기로 돌아가면 환불과 완료
+	// 처리가 lizard 설정으로 Happy Farm 주문을 호출하게 된다.
+	appVerifiers map[string]map[domain.Platform]verify.Verifier
+	apps         map[string]registry.App
 }
 
 // newIAPService는 결제 유스케이스를 조립한다.
@@ -52,6 +60,7 @@ func newIAPService(
 	cfg config.Config,
 	st *store.Client,
 	col *events.Collector,
+	reg *registry.Registry,
 ) (*iapParts, error) {
 	ic := cfg.IAP
 
@@ -70,7 +79,7 @@ func newIAPService(
 
 	// 카탈로그는 활성화된 마켓의 SKU만 요구한다.
 	// AIT를 못 붙인 상태에서 AIT SKU를 강제하면 부팅이 막힌다.
-	cat, err := catalog.Parse(ic.CatalogJSON, enabled)
+	cat, err := catalog.Parse(ic.CatalogJSON, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +102,50 @@ func newIAPService(
 	}
 
 	led := ledger.New(st, env)
+	apps, err := reg.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("iap: 앱 레지스트리를 읽지 못했다: %w", err)
+	}
+	appLedgers := make(map[string]verify.Ledger)
+	appLedgerValues := make(map[string]*ledger.Ledger)
+	appOutboxes := make(map[string]verify.OutboxWriter)
+	appVerifiers := make(map[string][]verify.Verifier)
+	appVerifierMaps := make(map[string]map[domain.Platform]verify.Verifier)
+	appsByID := make(map[string]registry.App)
+	for _, app := range apps {
+		if !app.FeatureEnabled("iap") {
+			continue
+		}
+		appEnv := domain.EnvProduction
+		if app.IAP.LedgerEnvironment == registry.LedgerSandbox {
+			appEnv = domain.EnvSandbox
+		}
+		appLedger := ledgerForRegistryApp(st, app, appEnv)
+		appLedgers[app.AppID] = appLedger
+		appLedgerValues[app.AppID] = appLedger
+		appsByID[app.AppID] = app
+		appOutboxes[app.AppID] = appLedger
+		list, err := newVerifiersForApp(ctx, ic, app)
+		if err != nil {
+			return nil, err
+		}
+		appVerifiers[app.AppID] = list
+		appVerifierMaps[app.AppID] = make(map[domain.Platform]verify.Verifier, len(list))
+		for _, verifier := range list {
+			appVerifierMaps[app.AppID][verifier.Platform()] = verifier
+		}
+		for _, entitlementID := range app.IAP.EntitlementIDs {
+			if !cat.HasForApp(app.AppID, entitlementID) {
+				return nil, platformerr.Newf(platformerr.CodeCatalogIncomplete, "%s의 %s entitlement가 앱별 카탈로그에 없어요", app.AppID, entitlementID)
+			}
+			for _, market := range app.IAP.Markets {
+				if _, ok := cat.SKUForApp(app.AppID, entitlementID, domain.Platform(market)); !ok {
+					return nil, platformerr.Newf(platformerr.CodeCatalogIncomplete,
+						"%s의 %s entitlement에 %s SKU가 없어요", app.AppID, entitlementID, market)
+				}
+			}
+		}
+	}
 
 	byPlatform := make(map[domain.Platform]verify.Verifier, len(verifiers))
 	for _, v := range verifiers {
@@ -107,7 +160,11 @@ func newIAPService(
 		Auditor:   auditAdapter{col: col},
 		// 완료 호출이 실패해도 지급은 롤백하지 않는다. 불변식 7이다.
 		// 대신 여기 쌓아두고 워커가 다시 시도한다.
-		Outbox: led,
+		Outbox:       led,
+		AppVerifiers: appVerifiers,
+		AppLedgers:   appLedgers,
+		AppOutboxes:  appOutboxes,
+		Apps:         reg,
 	})
 	if err != nil {
 		return nil, err
@@ -119,13 +176,61 @@ func newIAPService(
 		"entitlements", len(cat.IDs()),
 	)
 	return &iapParts{
-		service:    svc,
-		ledger:     led,
-		catalog:    cat,
-		verifiers:  byPlatform,
-		enabled:    enabled,
-		refundKeys: refundKeys,
+		service:      svc,
+		ledger:       led,
+		catalog:      cat,
+		verifiers:    byPlatform,
+		enabled:      enabled,
+		refundKeys:   refundKeys,
+		appLedgers:   appLedgerValues,
+		appVerifiers: appVerifierMaps,
+		apps:         appsByID,
 	}, nil
+}
+
+func ledgerForRegistryApp(st *store.Client, app registry.App, env domain.Environment) *ledger.Ledger {
+	if app.IAP.LegacyUnscopedLedger {
+		return ledger.New(st, env)
+	}
+	return ledger.NewForApp(st, env, app.AppID)
+}
+
+func newVerifiersForApp(ctx context.Context, ic config.IAPConfig, app registry.App) ([]verify.Verifier, error) {
+	var out []verify.Verifier
+	if app.MarketEnabled(string(domain.PlatformGooglePlay)) && ic.Play.Enabled() {
+		client, err := newPlayHTTPClient(ctx, ic.Play)
+		if err != nil {
+			return nil, err
+		}
+		v, err := play.New(app.IAP.GooglePlayPackageName, client)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	if app.MarketEnabled(string(domain.PlatformAppStore)) && ic.Apple.Enabled() {
+		client, err := apple.NewClient(apple.Config{KeyContent: ic.Apple.KeyContent, KeyID: ic.Apple.KeyID, Issuer: ic.Apple.Issuer, BundleID: app.IAP.AppStoreBundleID, Sandbox: app.IAP.LedgerEnvironment == registry.LedgerSandbox, RequireOCSP: app.IAP.LedgerEnvironment != registry.LedgerSandbox})
+		if err != nil {
+			return nil, err
+		}
+		v, err := apple.New(client, app.IAP.AppStoreBundleID, app.IAP.LedgerEnvironment == registry.LedgerSandbox)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	if app.MarketEnabled(string(domain.PlatformAppsInToss)) && ic.Toss.Enabled() {
+		cert, err := tls.X509KeyPair(ic.Toss.ClientCertPEM, ic.Toss.ClientKeyPEM)
+		if err != nil {
+			return nil, fmt.Errorf("iap: AppsInToss 인증서를 읽지 못했다: %w", err)
+		}
+		v, err := toss.New(toss.Config{ClientCert: cert, BaseURL: ic.Toss.BaseURL})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 // newAdminIAP는 검증기 없이 원장만 조립한다.

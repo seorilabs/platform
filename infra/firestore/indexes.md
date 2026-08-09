@@ -72,6 +72,38 @@ done
 `state IN (...)`도 equality 필드로 인덱스의 첫 자리에 둔다. `dueAt`과
 `nextAttemptAt`은 range와 정렬에 함께 쓰므로 마지막 필드다.
 
+### `ad_reward_claims` — 오래된 pending claim health
+
+| 필드 | 순서 |
+|---|---|
+| `state` | ASC |
+| `createdAt` | ASC |
+
+`platform-ads` health가 24시간 이상 `accepted`인 claim을 집계한다.
+
+```bash
+gcloud firestore indexes composite create \
+  --project=seorilabs-platform --billing-project=seorilabs-platform \
+  --collection-group=ad_reward_claims \
+  --query-scope=COLLECTION \
+  --field-config=field-path=state,order=ascending \
+  --field-config=field-path=createdAt,order=ascending
+```
+
+claim 문서는 생성 90일 후 `ttlAt`으로 정리한다. TTL 정책도 인덱스와 마찬가지로
+배포 전에 만들고 live state를 확인한다.
+
+```bash
+gcloud firestore fields ttls update ttlAt \
+  --project=seorilabs-platform \
+  --collection-group=ad_reward_claims \
+  --enable-ttl
+
+gcloud firestore fields ttls list \
+  --project=seorilabs-platform \
+  --format="table(collectionGroup,field,state)"
+```
+
 ## 단일 필드로 충분한 쿼리
 
 Firestore가 자동으로 인덱싱하므로 따로 만들지 않는다.

@@ -121,7 +121,7 @@ func TestOperatorRevokeTargetsOnlyOperatorGrantSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := false
-	for _, rec := range records {
+	for _, rec := range records.Records {
 		if rec.RequestID == revoke.RequestID {
 			found = true
 			if rec.GrantRequestID != grant.RequestID {

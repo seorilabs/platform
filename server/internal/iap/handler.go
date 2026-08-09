@@ -29,6 +29,11 @@ type Service interface {
 	AccountReferences(puid string) (google, apple string, err error)
 }
 
+type appScopedService interface {
+	ListEntitlementsForApp(ctx context.Context, appID, puid string) ([]string, error)
+	AccountReferencesForApp(ctx context.Context, appID, puid string) (google, apple string, err error)
+}
+
 // Handler는 결제 HTTP 핸들러다.
 type Handler struct {
 	svc      Service
@@ -121,7 +126,12 @@ func (h *Handler) listEntitlements(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 
-	list, err := h.svc.ListEntitlements(r.Context(), sess.PlatformUserID)
+	var list []string
+	if scoped, ok := h.svc.(appScopedService); ok {
+		list, err = scoped.ListEntitlementsForApp(r.Context(), sess.AppID, sess.PlatformUserID)
+	} else {
+		list, err = h.svc.ListEntitlements(r.Context(), sess.PlatformUserID)
+	}
 	if err != nil {
 		return err
 	}
@@ -154,7 +164,12 @@ func (h *Handler) accountReferences(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 
-	google, apple, err := h.svc.AccountReferences(sess.PlatformUserID)
+	var google, apple string
+	if scoped, ok := h.svc.(appScopedService); ok {
+		google, apple, err = scoped.AccountReferencesForApp(r.Context(), sess.AppID, sess.PlatformUserID)
+	} else {
+		google, apple, err = h.svc.AccountReferences(sess.PlatformUserID)
+	}
 	if err != nil {
 		return err
 	}

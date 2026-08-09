@@ -35,6 +35,7 @@ type identityDoc struct {
 	AppID          string    `firestore:"appId"`
 	AppUserID      string    `firestore:"appUserId"`
 	Anonymous      bool      `firestore:"anonymous"`
+	AuthType       string    `firestore:"authType,omitempty"`
 	FirstSeenAt    time.Time `firestore:"firstSeenAt"`
 	LastSeenAt     time.Time `firestore:"lastSeenAt"`
 }
@@ -43,6 +44,7 @@ type userDoc struct {
 	AppID       string    `firestore:"appId"`
 	AppUserID   string    `firestore:"appUserId"`
 	Anonymous   bool      `firestore:"anonymous"`
+	AuthType    string    `firestore:"authType,omitempty"`
 	CreatedAt   time.Time `firestore:"createdAt"`
 	LastSeenAt  time.Time `firestore:"lastSeenAt"`
 	SupportCode string    `firestore:"supportCode"`
@@ -55,6 +57,7 @@ type SupportUser struct {
 	AppID          string    `json:"appId"`
 	SupportCode    string    `json:"supportCode"`
 	IsAnonymous    bool      `json:"isAnonymous"`
+	AuthType       string    `json:"authType"`
 	CreatedAt      time.Time `json:"createdAt"`
 	LastSeenAt     time.Time `json:"lastSeenAt"`
 }
@@ -117,6 +120,7 @@ func (r *StoreRepository) EnsureUser(
 	ctx context.Context,
 	appID, uid string,
 	anonymous bool,
+	authType string,
 ) (string, error) {
 	idPath, err := identityPath(appID, uid)
 	if err != nil {
@@ -162,7 +166,9 @@ func (r *StoreRepository) EnsureUser(
 			// identity 매핑과 PII 없는 운영 조회 문서의 lastSeenAt을 같은
 			// 트랜잭션에서 갱신한다.
 			doc.LastSeenAt = now
+			doc.AuthType = authType
 			user.LastSeenAt = now
+			user.AuthType = authType
 			if err := tx.Set(idPath, doc); err != nil {
 				return err
 			}
@@ -185,6 +191,7 @@ func (r *StoreRepository) EnsureUser(
 			AppID:          appID,
 			AppUserID:      uid,
 			Anonymous:      anonymous,
+			AuthType:       authType,
 			FirstSeenAt:    now,
 			LastSeenAt:     now,
 		}); err != nil {
@@ -195,6 +202,7 @@ func (r *StoreRepository) EnsureUser(
 			AppID:       appID,
 			AppUserID:   uid,
 			Anonymous:   anonymous,
+			AuthType:    authType,
 			CreatedAt:   now,
 			LastSeenAt:  now,
 			SupportCode: NewSupportCode(appID, puid),
@@ -320,11 +328,19 @@ func supportUserFromSnapshot(puid string, snap *firestore.DocumentSnapshot) (Sup
 		return SupportUser{}, platformerr.New(platformerr.CodeLedgerStateInvalid,
 			"사용자 문서가 올바르지 않아요")
 	}
+	authType := doc.AuthType
+	if authType == "" {
+		authType = "firebase"
+		if doc.Anonymous {
+			authType = "anonymous"
+		}
+	}
 	return SupportUser{
 		PlatformUserID: puid,
 		AppID:          doc.AppID,
 		SupportCode:    doc.SupportCode,
 		IsAnonymous:    doc.Anonymous,
+		AuthType:       authType,
 		CreatedAt:      doc.CreatedAt,
 		LastSeenAt:     doc.LastSeenAt,
 	}, nil

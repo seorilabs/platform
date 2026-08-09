@@ -144,6 +144,17 @@ func New(s *store.Client, env domain.Environment) *Ledger {
 	}
 }
 
+// NewForApp은 신규 다중 앱 원장을 appId 아래에 격리한다. 기존 단일 앱
+// 원장의 경로를 바꾸지 않기 위해 New는 그대로 둔다.
+func NewForApp(s *store.Client, env domain.Environment, appID string) *Ledger {
+	return &Ledger{
+		store: s,
+		paths: newAppPathBuilder(env, appID),
+		env:   env,
+		now:   time.Now,
+	}
+}
+
 // WithClock은 시계를 주입한다. 테스트용이다.
 func (l *Ledger) WithClock(now func() time.Time) *Ledger {
 	l.now = now

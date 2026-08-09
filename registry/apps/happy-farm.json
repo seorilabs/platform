@@ -6,7 +6,8 @@
   "features": {
     "config": false,
     "events": true,
-    "iap": false,
+    "iap": true,
+    "ads": true,
     "firebase_custom_token_bridge": false
   },
   "require_app_check": false,
@@ -15,8 +16,22 @@
   },
   "iap": {
     "ledger_environment": "production",
-    "markets": ["google_play", "app_store", "apps_in_toss"],
-    "entitlement_ids": []
+    "markets": ["google_play", "app_store"],
+    "google_play_package_name": "com.seorilabs.happyfarm",
+    "app_store_bundle_id": "com.seorilabs.happyfarm",
+    "entitlement_ids": ["ad_free"]
+  },
+  "ads": {
+    "providers": ["admob", "apps_in_toss"],
+    "placements": [
+      {"id":"shop_gold_reward","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/8369038667","ios_ad_unit_id":"ca-app-pub-2444587584524186/5623525630"},"apps_in_toss":{"ad_group_id":"ait.v2.live.6fc77adf3f034cd6"}},"reward":{"key":"shop_gold_reward","min_amount":1,"max_amount":1},"daily_limit":20,"cooldown_seconds":30},
+      {"id":"shop_plot_discount","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/8369038667","ios_ad_unit_id":"ca-app-pub-2444587584524186/5623525630"},"apps_in_toss":{"ad_group_id":"ait.v2.live.6fc77adf3f034cd6"}},"reward":{"key":"shop_plot_discount","min_amount":1,"max_amount":1},"daily_limit":20,"cooldown_seconds":30},
+      {"id":"growth_ad_sheet","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/8369038667","ios_ad_unit_id":"ca-app-pub-2444587584524186/5623525630"},"apps_in_toss":{"ad_group_id":"ait.v2.live.6fc77adf3f034cd6"}},"reward":{"key":"growth_ad_sheet","min_amount":1,"max_amount":1},"daily_limit":20,"cooldown_seconds":30},
+      {"id":"harvest_bonus_sheet","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/8369038667","ios_ad_unit_id":"ca-app-pub-2444587584524186/5623525630"},"apps_in_toss":{"ad_group_id":"ait.v2.live.6fc77adf3f034cd6"}},"reward":{"key":"harvest_bonus_sheet","min_amount":1,"max_amount":1},"daily_limit":20,"cooldown_seconds":30},
+      {"id":"return_offline_bonus","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/8369038667","ios_ad_unit_id":"ca-app-pub-2444587584524186/5623525630"},"apps_in_toss":{"ad_group_id":"ait.v2.live.6fc77adf3f034cd6"}},"reward":{"key":"return_offline_bonus","min_amount":1,"max_amount":1},"daily_limit":20,"cooldown_seconds":30},
+      {"id":"wheel_bonus_spin","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/8369038667","ios_ad_unit_id":"ca-app-pub-2444587584524186/5623525630"},"apps_in_toss":{"ad_group_id":"ait.v2.live.6fc77adf3f034cd6"}},"reward":{"key":"wheel_bonus_spin","min_amount":1,"max_amount":1},"daily_limit":20,"cooldown_seconds":30},
+      {"id":"cooking_speed_up","format":"rewarded","providers":{"admob":{"android_ad_unit_id":"ca-app-pub-2444587584524186/8369038667","ios_ad_unit_id":"ca-app-pub-2444587584524186/5623525630"},"apps_in_toss":{"ad_group_id":"ait.v2.live.6fc77adf3f034cd6"}},"reward":{"key":"cooking_speed_up","min_amount":1,"max_amount":1},"daily_limit":20,"cooldown_seconds":30}
+    ]
   },
   "platform_event_allowlist": [
     "seori_session_start",

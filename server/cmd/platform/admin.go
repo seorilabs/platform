@@ -57,6 +57,12 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		return err
 	}
 	handler.Register(mux)
+	if d.ads == nil {
+		return errors.New("admin role에 광고 서비스가 필요하다")
+	}
+	if err := admin.RegisterAds(mux, auth, d.ads.service); err != nil {
+		return err
+	}
 
 	slog.Info("Admin API 준비 완료",
 		"read_allowed_accounts", len(readAllowed),

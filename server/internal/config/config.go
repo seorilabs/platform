@@ -22,6 +22,7 @@ const (
 	RoleIngest Role = "ingest"
 	RoleAdmin  Role = "admin"
 	RoleWorker Role = "worker"
+	RoleAds    Role = "ads"
 )
 
 // Config는 런타임 설정이다.
@@ -46,6 +47,7 @@ type Config struct {
 	//
 	// 마켓 자격증명은 platform-iap 서비스에만 마운트된다. R3다.
 	IAP IAPConfig
+	Ads AdsConfig
 }
 
 // Load는 환경변수에서 설정을 읽는다.
@@ -73,7 +75,7 @@ func Load() (Config, error) {
 
 	// worker는 HTTP를 열지 않으므로 세션 비밀키가 필요 없다.
 	// ingest도 세션 없이 익명 수집을 허용한다.
-	if role == RoleAPI || role == RoleIAP {
+	if role == RoleAPI || role == RoleIAP || role == RoleAds {
 		secret, err := loadSessionSecret()
 		if err != nil {
 			return Config{}, err
@@ -102,6 +104,13 @@ func Load() (Config, error) {
 		}
 		c.IAP = iap
 	}
+	if role == RoleAds {
+		ads, err := loadAds()
+		if err != nil {
+			return Config{}, err
+		}
+		c.Ads = ads
+	}
 
 	return c, nil
 }
@@ -111,7 +120,7 @@ func (c Config) IsStaging() bool { return c.FirestorePrefix != "" }
 
 func parseRole(s string) (Role, error) {
 	switch Role(s) {
-	case RoleAPI, RoleIAP, RoleIngest, RoleAdmin, RoleWorker:
+	case RoleAPI, RoleIAP, RoleIngest, RoleAdmin, RoleWorker, RoleAds:
 		return Role(s), nil
 	case "":
 		return "", errors.New("config: PLATFORM_ROLE이 필요하다")

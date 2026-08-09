@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	platformads "github.com/seorilabs/platform/server/internal/ads"
 	"github.com/seorilabs/platform/server/internal/config"
 	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/httpx"
@@ -89,6 +91,7 @@ type deps struct {
 	events     *events.Collector
 	config     *remoteconfig.Service
 	iap        *iapParts
+	ads        *adsParts
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
@@ -112,7 +115,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 
 	// 최종 사용자 세션을 발급하는 role만 identity issuer를 조립한다.
 	// Admin은 Config에 비밀이 잘못 들어와도 issuer를 만들지 않는다.
-	if cfg.Role == config.RoleAPI || cfg.Role == config.RoleIAP {
+	if cfg.Role == config.RoleAPI || cfg.Role == config.RoleIAP || cfg.Role == config.RoleAds {
 		if len(cfg.SessionSecret) == 0 {
 			closeStore()
 			return nil, errors.New("identity role에 세션 비밀키가 필요하다")
@@ -140,6 +143,19 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			svc.WithCustomTokenIssuer(customTokens)
 			svc.WithAppCheckVerifier(identity.NewFirebaseAppCheckVerifier())
 		}
+		if cfg.Role == config.RoleAds && cfg.Ads.AITLoginEnabled() {
+			cert, err := tls.X509KeyPair(cfg.Ads.AITClientCertPEM, cfg.Ads.AITClientKeyPEM)
+			if err != nil {
+				closeStore()
+				return nil, fmt.Errorf("ads: AppsInToss 로그인 인증서를 읽지 못했다: %w", err)
+			}
+			client, err := identity.NewAITLoginClient(cert, cfg.Ads.AITBaseURL)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			svc.WithAITLoginVerifier(client)
+		}
 		d.identity = identity.NewHandler(svc)
 		d.adminUsers = users
 		d.keys = keys
@@ -166,7 +182,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	// 워커도 완료 재시도 때 마켓을 호출하므로 검증기가 필요하다.
 	switch cfg.Role {
 	case config.RoleIAP, config.RoleWorker:
-		svc, err := newIAPService(ctx, cfg, st, d.events)
+		svc, err := newIAPService(ctx, cfg, st, d.events, reg)
 		if err != nil {
 			closeStore()
 			return nil, err
@@ -182,6 +198,17 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			closeStore()
 			return nil, err
 		}
+	}
+
+	if cfg.Role == config.RoleAds || cfg.Role == config.RoleAdmin {
+		repo := platformads.NewStoreRepository(st)
+		entitlements := newAdsEntitlements(st)
+		service, err := platformads.NewService(repo, reg, entitlements, d.adminUsers)
+		if err != nil {
+			closeStore()
+			return nil, err
+		}
+		d.ads = &adsParts{service: service, repo: repo}
 	}
 
 	return d, nil
@@ -265,6 +292,14 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		if err := registerWebhooks(mux, cfg, d); err != nil {
 			return nil, err
 		}
+
+	case config.RoleAds:
+		if d.identity == nil || d.ads == nil {
+			return nil, errors.New("ads role에 identity와 광고 서비스가 필요하다")
+		}
+		d.identity.RegisterSession(mux)
+		platformads.NewHandler(d.ads.service, d.identity,
+			platformads.NewAdMobVerifier(nil, cfg.Ads.AdMobVerifierKeysURL)).Register(mux)
 
 	case config.RoleIngest:
 		if d.events == nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 // Verifier는 마켓에 구매를 확인한다.
@@ -64,23 +65,35 @@ type Action struct {
 
 // Service는 검증 유스케이스다.
 type Service struct {
-	verifiers map[domain.Platform]Verifier
-	ledger    Ledger
-	catalog   *catalog.Catalog
-	keyring   *binding.Keyring
-	outbox    OutboxWriter
-	auditor   Auditor
-	now       func() time.Time
+	verifiers    map[domain.Platform]Verifier
+	appVerifiers map[string]map[domain.Platform]Verifier
+	ledger       Ledger
+	appLedgers   map[string]Ledger
+	catalog      *catalog.Catalog
+	keyring      *binding.Keyring
+	outbox       OutboxWriter
+	appOutboxes  map[string]OutboxWriter
+	auditor      Auditor
+	apps         interface {
+		GetUsable(context.Context, string) (registry.App, error)
+	}
+	now func() time.Time
 }
 
 // Config는 서비스 조립 설정이다.
 type Config struct {
-	Verifiers []Verifier
-	Ledger    Ledger
-	Catalog   *catalog.Catalog
-	Keyring   *binding.Keyring
-	Outbox    OutboxWriter
-	Auditor   Auditor
+	Verifiers    []Verifier
+	AppVerifiers map[string][]Verifier
+	Ledger       Ledger
+	AppLedgers   map[string]Ledger
+	Catalog      *catalog.Catalog
+	Keyring      *binding.Keyring
+	Outbox       OutboxWriter
+	AppOutboxes  map[string]OutboxWriter
+	Auditor      Auditor
+	Apps         interface {
+		GetUsable(context.Context, string) (registry.App, error)
+	}
 }
 
 // New는 서비스를 만든다.
@@ -97,15 +110,29 @@ func New(cfg Config) (*Service, error) {
 		}
 		m[v.Platform()] = v
 	}
+	appVerifiers := make(map[string]map[domain.Platform]Verifier, len(cfg.AppVerifiers))
+	for appID, list := range cfg.AppVerifiers {
+		byPlatform := map[domain.Platform]Verifier{}
+		for _, v := range list {
+			if v != nil {
+				byPlatform[v.Platform()] = v
+			}
+		}
+		appVerifiers[appID] = byPlatform
+	}
 
 	return &Service{
-		verifiers: m,
-		ledger:    cfg.Ledger,
-		catalog:   cfg.Catalog,
-		keyring:   cfg.Keyring,
-		outbox:    cfg.Outbox,
-		auditor:   cfg.Auditor,
-		now:       time.Now,
+		verifiers:    m,
+		appVerifiers: appVerifiers,
+		ledger:       cfg.Ledger,
+		appLedgers:   cfg.AppLedgers,
+		catalog:      cfg.Catalog,
+		keyring:      cfg.Keyring,
+		outbox:       cfg.Outbox,
+		appOutboxes:  cfg.AppOutboxes,
+		auditor:      cfg.Auditor,
+		apps:         cfg.Apps,
+		now:          time.Now,
 	}, nil
 }
 
@@ -116,6 +143,28 @@ func New(cfg Config) (*Service, error) {
 func (s *Service) Supports(p domain.Platform) bool {
 	_, ok := s.verifiers[p]
 	return ok
+}
+
+func (s *Service) verifierFor(appID string, p domain.Platform) (Verifier, bool) {
+	if byPlatform := s.appVerifiers[appID]; byPlatform != nil {
+		if v, ok := byPlatform[p]; ok {
+			return v, true
+		}
+	}
+	v, ok := s.verifiers[p]
+	return v, ok
+}
+func (s *Service) ledgerFor(appID string) Ledger {
+	if l := s.appLedgers[appID]; l != nil {
+		return l
+	}
+	return s.ledger
+}
+func (s *Service) outboxFor(appID string) OutboxWriter {
+	if o := s.appOutboxes[appID]; o != nil {
+		return o
+	}
+	return s.outbox
 }
 
 // VerifyPurchase는 구매를 검증하고 지급한다.
@@ -132,16 +181,31 @@ func (s *Service) VerifyPurchase(
 	appID, puid string,
 	proof domain.Proof,
 ) (Outcome, error) {
-	v, ok := s.verifiers[proof.Platform]
+	var app registry.App
+	if s.apps != nil {
+		var err error
+		app, err = s.apps.GetUsable(ctx, appID)
+		if err != nil {
+			return Outcome{}, err
+		}
+		if !app.FeatureEnabled("iap") || !app.MarketEnabled(string(proof.Platform)) {
+			return Outcome{}, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱에서 허용하지 않는 결제 마켓이에요")
+		}
+	}
+	v, ok := s.verifierFor(appID, proof.Platform)
 	if !ok {
 		return Outcome{}, platformerr.Newf(platformerr.CodePlatformUnavailable,
 			"%s 결제는 아직 준비 중이에요", proof.Platform)
 	}
 
-	entID, err := s.catalog.EntitlementFor(proof.Platform, proof.ProductID)
+	entID, err := s.catalog.EntitlementForApp(appID, proof.Platform, proof.ProductID)
 	if err != nil {
 		return Outcome{}, err
 	}
+	if s.apps != nil && (!app.EntitlementAllowed(entID) || !s.catalog.HasForApp(appID, entID)) {
+		return Outcome{}, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱에 허용되지 않은 상품이에요")
+	}
+	led := s.ledgerFor(appID)
 
 	purchase, err := v.Verify(ctx, proof)
 	if err != nil {
@@ -185,10 +249,10 @@ func (s *Service) VerifyPurchase(
 
 	switch purchase.State {
 	case domain.StatePending:
-		if err := s.ledger.RecordPending(ctx, in); err != nil {
+		if err := led.RecordPending(ctx, in); err != nil {
 			return Outcome{}, err
 		}
-		list, _ := s.ledger.ListActive(ctx, puid)
+		list, _ := led.ListActive(ctx, puid)
 		return Outcome{
 			Status:        "pending",
 			EntitlementID: entID,
@@ -198,12 +262,12 @@ func (s *Service) VerifyPurchase(
 	case domain.StateRevoked:
 		// 알림이 아니라 클라이언트 검증에서 revoked가 온 경우다.
 		// 이미 환불된 구매를 다시 제시한 것이므로 원장에 반영만 한다.
-		res, err := s.ledger.Grant(ctx, in)
+		res, err := led.Grant(ctx, in)
 		if err != nil {
 			return Outcome{}, err
 		}
 		s.auditTransfer(ctx, appID, puid, in, res)
-		list, _ := s.ledger.ListActive(ctx, puid)
+		list, _ := led.ListActive(ctx, puid)
 		return Outcome{
 			Status:        "revoked",
 			EntitlementID: entID,
@@ -211,7 +275,7 @@ func (s *Service) VerifyPurchase(
 		}, nil
 
 	case domain.StateActive:
-		return s.grantAndComplete(ctx, appID, puid, v, in)
+		return s.grantAndComplete(ctx, appID, puid, v, led, in)
 
 	default:
 		return Outcome{}, platformerr.New(platformerr.CodePurchaseInvalid,
@@ -223,9 +287,10 @@ func (s *Service) grantAndComplete(
 	ctx context.Context,
 	appID, puid string,
 	v Verifier,
+	led Ledger,
 	in ledger.GrantInput,
 ) (Outcome, error) {
-	res, err := s.ledger.Grant(ctx, in)
+	res, err := led.Grant(ctx, in)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -349,10 +414,10 @@ func (s *Service) completeGrant(
 		s.audit(ctx, "iap.completed", appID, puid, string(platformerr.CodeOf(err)), map[string]any{
 			"platform": string(p.Platform),
 		})
-		if s.outbox != nil {
+		if outbox := s.outboxFor(appID); outbox != nil {
 			// outbox 적재도 실패하면 워커가 못 집는다.
 			// 그래도 지급은 유지한다. 운영자가 원장에서 찾아 처리한다.
-			_ = s.outbox.Enqueue(ctx, p.Key(), p)
+			_ = outbox.Enqueue(ctx, p.Key(), p)
 		}
 		return Action{Action: domain.ActionRetryServerCompletion}
 	}
@@ -392,6 +457,38 @@ func (s *Service) ListEntitlements(ctx context.Context, puid string) ([]string, 
 		return nil, err
 	}
 	return orEmpty(list), nil
+}
+
+func (s *Service) ListEntitlementsForApp(ctx context.Context, appID, puid string) ([]string, error) {
+	if s.apps == nil {
+		return s.ListEntitlements(ctx, puid)
+	}
+	app, err := s.apps.GetUsable(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if !app.FeatureEnabled("iap") {
+		return nil, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱은 IAP를 사용하지 않아요")
+	}
+	list, err := s.ledgerFor(appID).ListActive(ctx, puid)
+	if err != nil {
+		return nil, err
+	}
+	return orEmpty(list), nil
+}
+
+func (s *Service) AccountReferencesForApp(ctx context.Context, appID, puid string) (string, string, error) {
+	if s.apps == nil {
+		return s.AccountReferences(puid)
+	}
+	app, err := s.apps.GetUsable(ctx, appID)
+	if err != nil {
+		return "", "", err
+	}
+	if !app.FeatureEnabled("iap") {
+		return "", "", platformerr.New(platformerr.CodeProductNotAllowed, "이 앱은 IAP를 사용하지 않아요")
+	}
+	return s.AccountReferences(puid)
 }
 
 func (s *Service) audit(ctx context.Context, action, appID, puid, outcome string, detail map[string]any) {

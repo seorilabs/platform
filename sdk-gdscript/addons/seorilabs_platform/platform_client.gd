@@ -40,6 +40,8 @@ var _transport: HttpTransport
 var _session: Dictionary = {}
 var _iap_base_url := ""
 var _ingest_base_url := ""
+var _ads_base_url := ""
+var _auth_base_url := ""
 var _credential: Dictionary = {}
 var _config: Dictionary = _fallback_config()
 
@@ -62,6 +64,7 @@ func _ready() -> void:
 ##   base_url        : String (필수) — 세션·설정
 ##   iap_base_url    : String (선택) — 결제. 없으면 base_url
 ##   ingest_base_url : String (선택) — 이벤트. 없으면 base_url
+##   ads_base_url    : String (선택) — 광고 정책·claim. 있으면 세션도 이 역할에서 발급
 ##   app_id          : String (필수)
 ##   max_retries     : int (선택, 기본 3)
 ##
@@ -79,6 +82,10 @@ func configure(options: Dictionary) -> void:
 	_ingest_base_url = String(options.get("ingest_base_url", "")).strip_edges()
 	if _ingest_base_url.is_empty():
 		_ingest_base_url = base
+	_ads_base_url = String(options.get("ads_base_url", "")).strip_edges()
+	if _ads_base_url.is_empty():
+		_ads_base_url = base
+	_auth_base_url = _ads_base_url if options.has("ads_base_url") else base
 
 	_transport.configure(
 		base,
@@ -101,6 +108,7 @@ func sign_in(credential: Dictionary, callback: Callable = Callable()) -> void:
 		{
 			"method": "POST",
 			"path": "/v1/auth/session",
+			"base_url": _auth_base_url,
 			"body": {"credential": credential},
 		},
 		func(response: Dictionary) -> void:
@@ -176,6 +184,7 @@ func _refresh() -> void:
 		{
 			"method": "POST",
 			"path": "/v1/auth/refresh",
+			"base_url": _auth_base_url,
 			"body": {"refreshToken": String(_session.get("refreshToken", ""))},
 		},
 		func(response: Dictionary) -> void:
@@ -471,6 +480,58 @@ func account_references(callback: Callable) -> void:
 			},
 			callback,
 		)
+	)
+
+
+# ---------------------------------------------------------------- 광고
+
+## 광고 정책을 읽는다. 실패 응답은 광고 허용이 아니다.
+## 앱 adapter는 load 직전과 show 직전에 이 메서드를 호출하고 ok가 아니면 중단한다.
+func get_ads_policy(callback: Callable) -> void:
+	_ads_request("GET", "/v1/ads/policy", {}, callback)
+
+
+func create_reward_claim(claim: Dictionary, callback: Callable) -> void:
+	_ads_request("POST", "/v1/ads/reward-claims", claim, callback, true)
+
+
+func get_reward_claim(claim_id: String, callback: Callable) -> void:
+	_ads_request("GET", "/v1/ads/reward-claims/%s" % claim_id.uri_encode(), {}, callback)
+
+
+## AppsInToss claim만 client_confirmed로 전이한다.
+func confirm_reward_claim(claim_id: String, transaction_id: String, callback: Callable) -> void:
+	_ads_request(
+		"POST",
+		"/v1/ads/reward-claims/%s/confirm" % claim_id.uri_encode(),
+		{"transactionId": transaction_id},
+		callback,
+		true,
+	)
+
+
+## 로컬 exactly-once 보상 정산 뒤에만 호출한다.
+func ack_reward_claim(claim_id: String, callback: Callable) -> void:
+	_ads_request(
+		"POST",
+		"/v1/ads/reward-claims/%s/ack" % claim_id.uri_encode(),
+		{},
+		callback,
+		true,
+	)
+
+
+func _ads_request(method: String, path: String, body: Dictionary, callback: Callable, no_retry := false) -> void:
+	with_token(func(session_token: String, error: Dictionary) -> void:
+		if session_token.is_empty():
+			callback.call(_client_error(String(error.get("code", "auth_required")), String(error.get("message", "로그인이 필요해요"))))
+			return
+		var request := {"method": method, "path": path, "base_url": _ads_base_url, "token": session_token}
+		if method == "POST" and not body.is_empty():
+			request["body"] = body
+		if no_retry:
+			request["no_retry"] = true
+		_transport.request(request, callback)
 	)
 
 

@@ -29,8 +29,18 @@ func TestHappyFarmRegistryContract(t *testing.T) {
 		t.Fatalf("Firebase/App Check 계약이 다르다: %#v", happyFarm)
 	}
 	if !happyFarm.FeatureEnabled("events") || happyFarm.FeatureEnabled("config") ||
-		happyFarm.FeatureEnabled("iap") || happyFarm.FeatureEnabled("firebase_custom_token_bridge") {
-		t.Fatalf("events 이외 기능이 활성화됐다: %#v", happyFarm.Features)
+		!happyFarm.FeatureEnabled("iap") || !happyFarm.FeatureEnabled("ads") ||
+		happyFarm.FeatureEnabled("firebase_custom_token_bridge") {
+		t.Fatalf("Happy Farm 기능 계약이 다르다: %#v", happyFarm.Features)
+	}
+	if happyFarm.IAP.LedgerEnvironment != LedgerProduction ||
+		happyFarm.IAP.GooglePlayPackageName != "com.seorilabs.happyfarm" ||
+		happyFarm.IAP.AppStoreBundleID != "com.seorilabs.happyfarm" ||
+		!happyFarm.EntitlementAllowed("ad_free") {
+		t.Fatalf("Happy Farm IAP 계약이 다르다: %#v", happyFarm.IAP)
+	}
+	if len(happyFarm.Ads.Placements) == 0 {
+		t.Fatal("Happy Farm 광고 지면이 없다")
 	}
 
 	wantAllowlist := []string{

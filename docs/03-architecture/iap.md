@@ -246,11 +246,35 @@ Apple 환경 설정과 불일치하면 **부팅을 실패시킨다**(503). 자�
 
 canonical JSON을 런타임에 주입한다. `entitlementId`는 `^[A-Za-z0-9._-]{1,128}$`, 최대 100개.
 
-전역 `IAP_CATALOG_JSON`은 마켓 SKU→entitlement 매핑의 원장이다. 앱별 운영
-경계는 `registry/apps/*.json`의 `iap.entitlement_ids`가 담당한다.
+`IAP_CATALOG_JSON`은 `(appId, market, productId)`→entitlement 매핑의 원장이다.
+앱별 운영 경계는 `registry/apps/*.json`의 `iap.entitlement_ids`가 담당한다.
 `features.iap=true`이면 앱 목록은 비어 있을 수 없고, Admin 조회와 조작은 두
 목록의 교집합만 허용한다. 앱 목록에는 있지만 전역 카탈로그에 없는 값은 설정
 불일치이므로 503으로 fail-closed한다.
+
+새 카탈로그 형식은 앱별 SKU를 분리한다. 기존 `/v1/iap/*`와 lizard SDK의 응답
+계약을 유지하기 위해 단일 앱 전역 형식도 읽지만, 앱별 형식과 한 JSON에서
+섞는 것은 거부한다.
+
+```json
+{
+  "version": 2,
+  "apps": {
+    "happy-farm": {
+      "entitlements": {
+        "ad_free": {
+          "google_play": "ad_free",
+          "app_store": "com.seorilabs.happyfarm.premium.ad_free"
+        }
+      }
+    }
+  }
+}
+```
+
+신규 앱 원장은 환경 prefix 아래 `iap_apps/{appId}/...`에 둔다. lizard는
+registry의 `legacy_unscoped_ledger`로 기존 경로를 유지한다. 이 appId 경계는
+verify뿐 아니라 entitlement, webhook event, completion outbox, worker에도 같다.
 
 `확정 필요` / `TBD` / `TODO` / 빈값 placeholder가 있으면 **503으로 부팅을 막는다.** 중복 SKU는 500.
 

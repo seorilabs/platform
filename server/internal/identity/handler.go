@@ -118,8 +118,9 @@ func (h *Handler) createFirebaseCustomToken(w http.ResponseWriter, r *http.Reque
 type createSessionRequest struct {
 	AppID      string `json:"appId"`
 	Credential struct {
-		Kind  string `json:"kind"`
-		Value string `json:"value"`
+		Kind     string `json:"kind"`
+		Value    string `json:"value"`
+		Referrer string `json:"referrer,omitempty"`
 	} `json:"credential"`
 }
 
@@ -150,8 +151,9 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	res, err := h.svc.CreateSession(r.Context(), appID, Credential{
-		Kind:  CredentialKind(req.Credential.Kind),
-		Value: req.Credential.Value,
+		Kind:     CredentialKind(req.Credential.Kind),
+		Value:    req.Credential.Value,
+		Referrer: req.Credential.Referrer,
 	})
 	if err != nil {
 		return err
@@ -168,6 +170,14 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
 		ServerTimeUnix: h.svc.now().Unix(),
 	})
 	return nil
+}
+
+// RegisterSession은 별도 역할이 세션 교환과 갱신만 열 때 쓴다.
+// platform-ads는 AppsInToss mTLS 자격증명을 갖지만 Firebase custom token
+// 서명 권한은 갖지 않으므로 전체 Register를 사용하지 않는다.
+func (h *Handler) RegisterSession(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/auth/session", httpx.Wrap(h.createSession))
+	mux.HandleFunc("POST /v1/auth/refresh", httpx.Wrap(h.refresh))
 }
 
 type refreshRequest struct {

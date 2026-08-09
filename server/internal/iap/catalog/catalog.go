@@ -58,14 +58,21 @@ func (e Entry) SKU(p domain.Platform) string {
 type file struct {
 	Version      int              `json:"version"`
 	Entitlements map[string]Entry `json:"entitlements"`
+	Apps         map[string]struct {
+		Entitlements map[string]Entry `json:"entitlements"`
+	} `json:"apps"`
 }
 
 // Catalog는 검증을 통과한 카탈로그다.
 type Catalog struct {
 	entitlements map[string]Entry
+	// entriesByApp는 같은 entitlement ID를 여러 앱이 서로 다른 SKU로
+	// 사용할 수 있게 앱 경계를 보존한다.
+	entriesByApp map[string]map[string]Entry
 	// bySKU는 (platform, sku) → entitlementID 역인덱스다.
 	// 검증 요청이 마켓 SKU로 오므로 이 방향 조회가 주경로다.
-	bySKU map[string]string
+	bySKU           map[string]string
+	appEntitlements map[string]map[string]bool
 }
 
 // Parse는 카탈로그 JSON을 검증해 만든다.
@@ -82,7 +89,7 @@ func Parse(raw []byte, requiredPlatforms []domain.Platform) (*Catalog, error) {
 			"카탈로그를 해석할 수 없어요")
 	}
 
-	if len(f.Entitlements) == 0 {
+	if len(f.Entitlements) == 0 && len(f.Apps) == 0 {
 		return nil, platformerr.New(platformerr.CodeCatalogIncomplete, "카탈로그가 비어 있어요")
 	}
 	if len(f.Entitlements) > MaxEntitlements {
@@ -91,28 +98,63 @@ func Parse(raw []byte, requiredPlatforms []domain.Platform) (*Catalog, error) {
 	}
 
 	c := &Catalog{
-		entitlements: make(map[string]Entry, len(f.Entitlements)),
-		bySKU:        make(map[string]string, len(f.Entitlements)*3),
+		entitlements:    make(map[string]Entry, len(f.Entitlements)),
+		entriesByApp:    make(map[string]map[string]Entry),
+		bySKU:           make(map[string]string, len(f.Entitlements)*3),
+		appEntitlements: make(map[string]map[string]bool),
+	}
+	if len(f.Entitlements) > 0 && len(f.Apps) > 0 {
+		return nil, platformerr.New(platformerr.CodeCatalogInvalid, "전역 카탈로그와 앱별 카탈로그를 함께 둘 수 없어요")
+	}
+	if len(f.Apps) > 0 {
+		appIDs := make([]string, 0, len(f.Apps))
+		for appID := range f.Apps {
+			appIDs = append(appIDs, appID)
+		}
+		sort.Strings(appIDs)
+		for _, appID := range appIDs {
+			entries := f.Apps[appID].Entitlements
+			if strings.TrimSpace(appID) == "" || len(entries) == 0 || len(entries) > MaxEntitlements {
+				return nil, platformerr.Newf(platformerr.CodeCatalogInvalid, "%s 앱 카탈로그가 올바르지 않아요", appID)
+			}
+			if err := c.addEntries(appID, entries, requiredPlatforms); err != nil {
+				return nil, err
+			}
+		}
+		return c, nil
+	}
+	if err := c.addEntries("", f.Entitlements, requiredPlatforms); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (c *Catalog) addEntries(appID string, entries map[string]Entry, requiredPlatforms []domain.Platform) error {
+	if c.appEntitlements[appID] == nil {
+		c.appEntitlements[appID] = map[string]bool{}
+	}
+	if c.entriesByApp[appID] == nil {
+		c.entriesByApp[appID] = map[string]Entry{}
 	}
 
 	// 순서를 고정해 에러 메시지가 실행마다 바뀌지 않게 한다.
-	ids := make([]string, 0, len(f.Entitlements))
-	for id := range f.Entitlements {
+	ids := make([]string, 0, len(entries))
+	for id := range entries {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 
 	for _, id := range ids {
 		if !entitlementIDPattern.MatchString(id) {
-			return nil, platformerr.Newf(platformerr.CodeCatalogInvalid,
+			return platformerr.Newf(platformerr.CodeCatalogInvalid,
 				"entitlement 이름이 올바르지 않아요: %s", id)
 		}
-		entry := f.Entitlements[id]
+		entry := entries[id]
 
 		for _, p := range requiredPlatforms {
 			sku := entry.SKU(p)
 			if placeholders[strings.TrimSpace(sku)] {
-				return nil, platformerr.Newf(platformerr.CodeCatalogIncomplete,
+				return platformerr.Newf(platformerr.CodeCatalogIncomplete,
 					"%s의 %s SKU가 아직 정해지지 않았어요", id, p)
 			}
 		}
@@ -122,24 +164,35 @@ func Parse(raw []byte, requiredPlatforms []domain.Platform) (*Catalog, error) {
 			if sku == "" || placeholders[sku] {
 				continue
 			}
-			key := skuKey(p, sku)
+			key := appSKUKey(appID, p, sku)
 			if prev, dup := c.bySKU[key]; dup {
 				// 같은 SKU가 두 entitlement에 붙으면 어느 쪽을 줄지 알 수 없다.
-				return nil, platformerr.Newf(platformerr.CodeCatalogDuplicate,
+				return platformerr.Newf(platformerr.CodeCatalogDuplicate,
 					"%s의 SKU %s가 %s와 %s에 중복돼요", p, sku, prev, id)
 			}
 			c.bySKU[key] = id
 		}
 
 		c.entitlements[id] = entry
+		c.entriesByApp[appID][id] = entry
+		c.appEntitlements[appID][id] = true
 	}
-
-	return c, nil
+	return nil
 }
 
 // EntitlementFor는 마켓 SKU에 해당하는 entitlement를 찾는다.
 func (c *Catalog) EntitlementFor(p domain.Platform, sku string) (string, error) {
-	id, ok := c.bySKU[skuKey(p, strings.TrimSpace(sku))]
+	return c.EntitlementForApp("", p, sku)
+}
+
+// EntitlementForApp은 (appId, market, productId) 고정 키로 상품을 찾는다.
+// 앱별 항목이 없을 때만 기존 단일 앱 카탈로그를 읽어 lizard SDK와 배포
+// 환경변수의 마이그레이션을 끊지 않는다.
+func (c *Catalog) EntitlementForApp(appID string, p domain.Platform, sku string) (string, error) {
+	id, ok := c.bySKU[appSKUKey(appID, p, strings.TrimSpace(sku))]
+	if !ok {
+		id, ok = c.bySKU[appSKUKey("", p, strings.TrimSpace(sku))]
+	}
 	if !ok {
 		// 어떤 SKU가 존재하는지 알려주지 않는다.
 		return "", platformerr.New(platformerr.CodeProductNotAllowed,
@@ -148,9 +201,34 @@ func (c *Catalog) EntitlementFor(p domain.Platform, sku string) (string, error) 
 	return id, nil
 }
 
+func (c *Catalog) HasForApp(appID, entitlementID string) bool {
+	if c.appEntitlements[appID][entitlementID] {
+		return true
+	}
+	return c.appEntitlements[""][entitlementID]
+}
+
 // SKUFor는 entitlement의 마켓별 SKU를 돌려준다.
 func (c *Catalog) SKUFor(entitlementID string, p domain.Platform) (string, bool) {
 	e, ok := c.entitlements[entitlementID]
+	if !ok {
+		return "", false
+	}
+	sku := strings.TrimSpace(e.SKU(p))
+	if sku == "" || placeholders[sku] {
+		return "", false
+	}
+	return sku, true
+}
+
+// SKUForApp은 앱별 entitlement의 마켓 SKU를 돌려준다. 앱별 항목이
+// 없을 때만 기존 단일 앱 카탈로그로 폴백해 lizard 계약을 유지한다.
+func (c *Catalog) SKUForApp(appID, entitlementID string, p domain.Platform) (string, bool) {
+	entries := c.entriesByApp[appID]
+	e, ok := entries[entitlementID]
+	if !ok {
+		e, ok = c.entriesByApp[""][entitlementID]
+	}
 	if !ok {
 		return "", false
 	}
@@ -178,5 +256,9 @@ func (c *Catalog) IDs() []string {
 }
 
 func skuKey(p domain.Platform, sku string) string {
-	return string(p) + "\x00" + sku
+	return appSKUKey("", p, sku)
+}
+
+func appSKUKey(appID string, p domain.Platform, sku string) string {
+	return appID + "\x00" + string(p) + "\x00" + sku
 }

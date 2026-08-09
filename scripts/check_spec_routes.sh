@@ -20,6 +20,7 @@ python3 - "$repo_root" <<'PY'
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 root = sys.argv[1]
 
@@ -46,6 +47,17 @@ for line in out.splitlines():
 # 주석 속 예시는 라우트가 아니다. httpx/envelope.go가 net/http 패턴
 # 라우팅을 설명하며 이 경로를 인용한다.
 real.discard("/inbox/{id}/claim")
+
+# 앱별 webhook은 registry의 각 appId에 서로 다른 verifier와 원장을 고정해
+# 등록한다. 따라서 ServeMux에는 literal appId가 들어가지만 공개 계약에는
+# {appId}로 표현된다. 이 조립 형태도 실제 라우트로 정규화해 비교한다.
+for source in (Path(root) / "server").rglob("*.go"):
+    text = source.read_text(encoding="utf-8")
+    for match in re.finditer(
+        r'RegisterAt\(\s*mux,\s*"(/v1/[A-Za-z0-9/._-]+/)"\s*\+\s*appID\s*\)',
+        text,
+    ):
+        real.add(match.group(1)[len("/v1"):] + "{appId}")
 
 missing = sorted(spec - real)
 undocumented = sorted(real - spec)

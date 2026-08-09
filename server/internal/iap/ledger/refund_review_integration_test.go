@@ -4,9 +4,11 @@ package ledger
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/platformerr"
@@ -23,7 +25,7 @@ func TestRefundReviewLifecycle(t *testing.T) {
 	l.WithClock(func() time.Time { return now })
 	reviewID := refundreview.ReviewID(uniqueID("pending-token"))
 	input := PendingRefundReviewInput{
-		ReviewID: reviewID, AppID: "lizard-tycoon",
+		ReviewID: reviewID, AppID: "integration-" + strconv.FormatInt(nextIntegrationID(), 36),
 		PackageName: "com.seorilabs.lizardtycoon",
 		OrderIDHash: refundreview.OrderIDHash(uniqueID("order")),
 		Environment: lEnvSandbox, RefundReason: 1, ReceivedAt: now,
@@ -50,7 +52,7 @@ func TestRefundReviewLifecycle(t *testing.T) {
 	}
 
 	decision := RefundReviewDecisionInput{
-		RequestID: fmt.Sprintf("00000000-0000-4000-8000-%012x", nextIntegrationID()), ReviewID: reviewID,
+		RequestID: uuid.NewString(), ReviewID: reviewID,
 		AppID: input.AppID, ExpectedEnvironment: input.Environment,
 		RefundPreference: RefundPreferenceDecline, SampleContentProvided: false,
 		Reason: RefundReasonVerifiedFulfillment, ActorLogin: "integration-test",

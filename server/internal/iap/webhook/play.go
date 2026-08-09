@@ -166,6 +166,12 @@ func (h *PlayHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/iap/webhooks/play", h.serve)
 }
 
+// RegisterAt은 Pub/Sub subscription을 앱별 package/verifier/ledger에
+// 고정할 때 쓴다. 기존 단일 앱 경로는 하위 호환으로 유지한다.
+func (h *PlayHandler) RegisterAt(mux *http.ServeMux, path string) {
+	mux.HandleFunc("POST "+path, h.serve)
+}
+
 func (h *PlayHandler) serve(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

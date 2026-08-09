@@ -10,6 +10,7 @@ import { SessionManager, MemorySessionStore } from "../src/session.ts";
 import { Events, MemoryEventOutbox } from "../src/events.ts";
 import { Iap } from "../src/iap.ts";
 import { Config } from "../src/config.ts";
+import { Ads } from "../src/ads.ts";
 import { Platform, SDK_VERSION } from "../src/index.ts";
 
 interface FakeCall {
@@ -466,6 +467,32 @@ describe("Platform routing", () => {
     assert.equal(f.calls[1]!.url, "https://iap.platform.test/v1/iap/account-references");
   });
 
+  it("AIT 로그인과 광고는 Ads 호스트를 사용한다", async () => {
+    const f = fakeFetch([
+      ok({
+        platformToken: "pt-1", refreshToken: "rt-1", platformUserId: "pu_1",
+        supportCode: "SUPPORT", appUserId: "", isAnonymous: false, expiresIn: 3600,
+      }),
+      ok({ appUsesAds: true, adsEnabled: true, disabledBy: [], checkedAt: "2026-08-09T00:00:00Z" }),
+    ]);
+    const platform = new Platform({
+      baseUrl: "https://api.platform.test",
+      adsBaseUrl: "https://ads.platform.test",
+      appId: "happy-farm",
+      fetchImpl: f.impl,
+      maxRetries: 0,
+    });
+
+    await platform.signIn({ kind: "ait-login", value: "authorization-code", referrer: "SANDBOX" });
+    await platform.ads.policy();
+
+    assert.equal(f.calls[0]!.url, "https://ads.platform.test/v1/auth/session");
+    assert.equal(f.calls[1]!.url, "https://ads.platform.test/v1/ads/policy");
+    assert.deepEqual(f.calls[0]!.body, {
+      credential: { kind: "ait-login", value: "authorization-code", referrer: "SANDBOX" },
+    });
+  });
+
   it("별도 호스트가 없으면 baseUrl로 하위 호환된다", async () => {
     const f = fakeFetch([ok({ accepted: 1, dropped: 0 })]);
     const platform = new Platform({
@@ -480,6 +507,46 @@ describe("Platform routing", () => {
     await platform.events.flush();
 
     assert.equal(f.calls[0]!.url, "https://platform.test/v1/events");
+  });
+});
+
+describe("Ads", () => {
+  function newAds(fetchImpl: typeof fetch) {
+    return new Ads(newTransport(fetchImpl), async () => "tok-1");
+  }
+
+  it("정책 오류를 허용 상태로 바꾸지 않는다", async () => {
+    const f = fakeFetch([fail(503, "platform_unavailable")]);
+    await assert.rejects(() => newAds(f.impl).policy());
+    assert.equal(f.count, 4);
+  });
+
+  it("claim 생성은 자동 재시도하지 않는다", async () => {
+    const f = fakeFetch([fail(503, "platform_unavailable")]);
+    await assert.rejects(() => newAds(f.impl).createClaim({
+      requestId: "req-1",
+      placement: "harvest_boost",
+      provider: "admob",
+      clientPlatform: "android",
+      reward: { key: "harvest_boost", amount: 1 },
+    }));
+    assert.equal(f.count, 1);
+  });
+
+  it("confirm과 ack를 서로 다른 상태 전이로 보낸다", async () => {
+    const claim = {
+      claimId: "cl_1", appId: "happy-farm", placement: "harvest_boost",
+      provider: "apps_in_toss", clientPlatform: "apps_in_toss",
+      reward: { key: "harvest_boost", amount: 1 }, state: "confirmed",
+      assurance: "client_confirmed", createdAt: "now", expiresAt: "later",
+    };
+    const f = fakeFetch([ok(claim), ok({ ...claim, state: "delivered" })]);
+    const ads = newAds(f.impl);
+    await ads.confirm("cl_1", "tx-1");
+    await ads.ack("cl_1");
+    assert.equal(f.calls[0]!.url, "https://platform.test/v1/ads/reward-claims/cl_1/confirm");
+    assert.deepEqual(f.calls[0]!.body, { transactionId: "tx-1" });
+    assert.equal(f.calls[1]!.url, "https://platform.test/v1/ads/reward-claims/cl_1/ack");
   });
 });
 
