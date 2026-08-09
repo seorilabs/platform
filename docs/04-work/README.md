@@ -4,7 +4,8 @@
 
 ## 현재 상태
 
-**P0~P9 완료. 공개된 lizard-tycoon은 production IAP 원장을 사용한다.**
+**P0~P9 완료. 공개된 lizard-tycoon은 production IAP 원장을 사용하고 공통 Ads
+서비스도 production에서 운영한다.**
 
 Apple·Play 두 마켓 실기기 검증과 레거시 Firebase Functions 셧다운까지 끝났다.
 백오피스 운영자 지급(선물)도 개통했다. AIT만 자격증명을 기다린다.
@@ -15,23 +16,55 @@ Apple·Play 두 마켓 실기기 검증과 레거시 Firebase Functions 셧다�
 | `platform-iap` | 결제 검증 + 마켓 웹훅. **마켓 자격증명은 여기에만** (R3) |
 | `platform-ingest` | 이벤트 수집 |
 | `platform-admin` | 운영 조회·조작. DRS로 비공개 |
+| `platform-ads` | 광고 정책·보상 claim·AdMob SSV callback |
 | `platform-worker` (Job) | 완료 outbox 재시도. Scheduler 5분 |
 
 전부 같은 이미지에 `PLATFORM_ROLE`로 갈린다. 배포는 `.github/workflows/deploy.yml`이
-다섯 대상에 같은 태그로 올리고 실제로 같은 태그가 됐는지 다시 확인한다.
+다섯 Cloud Run 서비스와 worker Job에 같은 태그를 올리고 실제로 같은 태그가 됐는지
+다시 확인한다.
 
 테스트 함수 325개, 패키지 24개(22개에 테스트). `go test -race ./...` 통과.
 
 ### 등록된 앱
 
-| app_id | config | events | iap | 비고 |
-|---|---|---|---|---|
-| `lizard-tycoon` | ✅ | ✅ | ✅ | **production 원장**, entitlement 2종 |
-| `cycle-pair` | — | — | — | Firebase 게스트 인증 |
-| `babycare` | ✖ | ✔ | ✖ | Firebase custom token bridge + 핵심 퍼널·광고 이벤트 |
+| app_id | config | events | iap | ads | 비고 |
+|---|---|---|---|---|---|
+| `lizard-tycoon` | ✅ | ✅ | ✅ | ✖ | **production 원장**, entitlement 2종 |
+| `happy-farm` | ✖ | ✅ | ✅ | ✅ | `ad_free` + AdMob·AppsInToss 보상 claim |
+| `slotmachine-game` | ✖ | ✅ | ✖ | ✅ | AdMob SSV 보상 claim |
+| `cycle-pair` | ✖ | ✖ | ✖ | ✖ | Firebase 게스트 인증 |
+| `babycare` | ✖ | ✅ | ✖ | ✖ | Firebase custom token bridge + 핵심 퍼널·광고 이벤트 |
 
 **레지스트리는 파일을 고치는 것만으로 반영되지 않는다.** `cmd/regsync`를 사람이
 돌린다 — [registry/apps/README.md](../../registry/apps/README.md).
+
+#### 2026-08-09 공통 Ads와 앱 범위 IAP production 배포
+
+[Deploy run 31314586835](https://github.com/seorilabs/platform/actions/runs/31314586835)에서
+merge SHA `9454c13a541768d18ab2439a5b25edc9eb8581d0` 이미지를 다섯 서비스와
+worker Job에 배포했다.
+
+- `platform-api-00027-9xm`, `platform-iap-00031-bbw`,
+  `platform-ingest-00025-g74`, `platform-admin-00035-9sl`,
+  `platform-ads-00001-kw8`: ready, 트래픽 100%
+- `platform-ads`는 전용 runtime SA와 `platform-session-secret`만 사용한다. 공개 callback은
+  Cloud Run invoker IAM 검사를 끄되 애플리케이션 서명·세션 검증은 유지한다.
+- `ad_reward_claims`의 `state + createdAt` composite index는 `READY`, `ttlAt` TTL은
+  `ACTIVE`다.
+- IAP catalog version 2는 `lizard-tycoon`의 기존 Play·App Store entitlement 2종과
+  `happy-farm`의 Play `ad_free`, App Store
+  `com.seorilabs.happyfarm.premium.ad_free`를 앱 범위로 분리한다.
+- 전체 registry를 실제 sync했다. `happy-farm`은 Ads·IAP, `slotmachine-game`은 Ads를
+  활성화했고 `lizard-tycoon`은 `ads=false`, production IAP를 유지한다.
+- 공개 API·IAP·Ingest·Ads와 비공개 Admin `/health/ready`가 모두 200이다.
+  Ads policy와 SSV 경로는 누락·서명 없는 요청을 각각 400으로 거부했다.
+- 새 이미지의 첫 worker 정기 실행 `platform-worker-fr6gp`가 성공했고 새 service
+  revision의 ERROR 로그는 없었다.
+
+이 배포는 Platform backend 개통이다. AdMob console callback 연결, AppsInToss mTLS
+자격증명, 스토어 상품 생성·심사, 앱 candidate 배포와 실기기 보상·구매·복원·환불
+검증은 별도 출시 gate로 남는다. AppsInToss 자격증명이 없으면 관련 로그인과 광고는
+fail-closed로 비활성화된다.
 
 #### 원장 환경이 어긋나면 admin만 죽는다
 
