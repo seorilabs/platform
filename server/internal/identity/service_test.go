@@ -581,6 +581,38 @@ func TestAITLoginRequiresAdsAppAndStoresOnlyHashedIdentity(t *testing.T) {
 	}
 }
 
+func TestAITLoginRejectsAdMobOnlyApp(t *testing.T) {
+	app := testApp()
+	app.AppID = "slotmachine-game"
+	app.Features = map[string]bool{"ads": true}
+	app.Ads = registry.AdsConfig{
+		Providers: []string{"admob"},
+		Placements: []registry.AdsPlacementConfig{{
+			ID: "ad_win", Format: "rewarded", DailyLimit: 2, CooldownSeconds: 60,
+			Reward: &registry.AdsRewardConfig{Key: "credits", MinAmount: 1, MaxAmount: 1},
+			Providers: map[string]registry.AdsProviderConfig{
+				"admob": {AndroidAdUnitID: "ca-app-pub-1234567890123456/1234567890"},
+			},
+		}},
+	}
+	reg := registry.New(fakeSource{apps: []registry.App{app}})
+	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
+	verifier := &fakeAITLoginVerifier{
+		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer).WithAITLoginVerifier(verifier)
+
+	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
+		Kind: KindAITLogin, Value: "must-not-be-exchanged", Referrer: "DEFAULT",
+	})
+	if code := platformerr.CodeOf(err); code != platformerr.CodeAuthForbidden {
+		t.Fatalf("code=%q, want auth_forbidden", code)
+	}
+	if verifier.code != "" {
+		t.Fatalf("AdMob 전용 앱의 authorization code를 교환했다: %q", verifier.code)
+	}
+}
+
 // 갱신 토큰은 한 번 쓰면 폐기되고 새로 발급된다. 회전이다.
 func TestRefreshRotatesToken(t *testing.T) {
 	repo := newMemRepo()

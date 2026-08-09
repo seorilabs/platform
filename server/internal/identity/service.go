@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,10 +18,7 @@ type CredentialKind string
 const (
 	// KindFirebaseIDToken은 앱별 Firebase Auth의 ID 토큰이다. 기본 경로다.
 	KindFirebaseIDToken CredentialKind = "firebase-id-token"
-	// KindAITLogin은 AppsInToss appLogin 토큰이다.
-	//
-	// 토스 서버 검증 API 존재 여부가 아직 확인되지 않았다.
-	// lizard-tycoon에서도 aitUserKey claim 발급 경로가 미구현이다.
+	// KindAITLogin은 AppsInToss appLogin의 일회용 authorization code다.
 	KindAITLogin CredentialKind = "ait-login"
 	// KindAnonymous는 getAnonymousKey 해시다.
 	//
@@ -388,7 +386,9 @@ func (s *Service) resolveIdentity(
 		return "anon:" + value, true, "anonymous", nil
 
 	case KindAITLogin:
-		if !app.FeatureEnabled("ads") {
+		// ads 기능만으로 열면 AdMob 전용 앱도 AppsInToss 신원을 만들 수 있다.
+		// mTLS 교환과 앱 범위 userKey는 provider 원장까지 허용한 앱에만 묶는다.
+		if !app.FeatureEnabled("ads") || !slices.Contains(app.Ads.Providers, "apps_in_toss") {
 			return "", false, "", platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 AppsInToss 광고 로그인을 사용하지 않아요")
 		}
 		referrer := strings.ToUpper(strings.TrimSpace(cred.Referrer))

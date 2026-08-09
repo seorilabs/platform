@@ -1261,7 +1261,9 @@ paths:
         - { name: claimId, in: path, required: true, schema: { type: string, pattern: '^cl_[0-9a-f-]{36}$' } }
       responses:
         '200': { description: 조회 성공, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /ads/reward-claims/{claimId}/confirm:
     post:
@@ -1274,9 +1276,11 @@ paths:
         - { name: claimId, in: path, required: true, schema: { type: string } }
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [transactionId], additionalProperties: false, properties: { transactionId: { type: string, maxLength: 256 } } } } } }
       responses:
-        '200': { description: 확인 성공 }
+        '200': { description: 확인 성공, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /ads/reward-claims/{claimId}/ack:
     post:
@@ -1287,8 +1291,10 @@ paths:
         - { $ref: '#/components/parameters/SeoriApp' }
         - { name: claimId, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: delivered 전이 또는 멱등 성공 }
+        '200': { description: delivered 전이 또는 멱등 성공, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /ads/admob/ssv/{appId}:
     get:
