@@ -26,16 +26,20 @@ on:
       - "server/**"
       - "spec/**"
       - "registry/**"
+      - "scripts/check_deploy_workflow.sh"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
+      - ".github/workflows/deploy.yml"
   push:
     branches: [main]
     paths:
       - "server/**"
       - "spec/**"
       - "registry/**"
+      - "scripts/check_deploy_workflow.sh"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
+      - ".github/workflows/deploy.yml"
 
 permissions:
   contents: read
@@ -68,6 +72,10 @@ jobs:
       - name: 스펙과 라우트 대조
         working-directory: .
         run: bash scripts/check_spec_routes.sh
+
+      - name: production 배포 경계 검증
+        working-directory: .
+        run: bash scripts/check_deploy_workflow.sh
 
       # 레지스트리 파일이 부팅 전에 통과해야 하는 검증과 같은 규칙이다.
       # 자격증명이 없어도 도는 검사라 여기 둔다.

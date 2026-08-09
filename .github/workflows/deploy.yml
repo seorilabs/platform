@@ -205,13 +205,14 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
-            --update-secrets="IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest" \
             --quiet
 
           gcloud run deploy platform-admin \
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT}" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest" \
             --quiet
 
           # Ads는 별도 runtime service account와 기존 세션 secret만 받는다.
@@ -221,6 +222,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --service-account="$ADS_RUNTIME_SA" \
+            --no-invoker-iam-check \
             --update-env-vars="PLATFORM_ROLE=ads,GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" \
             --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest" \
             --quiet
@@ -231,7 +233,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
-            --update-secrets="IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest" \
             --quiet
 
       # 배포가 전부 성공했다고 같은 태그가 됐다는 보장은 없다.
@@ -253,6 +255,19 @@ jobs:
           printf '%-18s %s\n' "platform-worker" "$actual"
           [ "$actual" = "$expected" ] || { echo "  기대: $expected" >&2; fail=1; }
           [ "$fail" -eq 0 ] || { echo "배포 대상이 서로 다른 이미지로 돈다." >&2; exit 1; }
+
+      # 조직 DRS는 allUsers IAM binding을 막는다. 공개 callback 서비스는
+      # Cloud Run invoker IAM 검사 자체를 끄고 애플리케이션 검증을 사용한다.
+      - name: Assert Ads public invocation boundary
+        run: |
+          actual=$(gcloud run services describe platform-ads \
+            --project="$PROJECT_ID" --region="$REGION" --format=json \
+            | jq -r '.metadata.annotations["run.googleapis.com/invoker-iam-disabled"] // ""')
+          printf 'platform-ads invoker-iam-disabled=%s\n' "$actual"
+          [ "$actual" = "true" ] || {
+            echo "platform-ads 공개 callback 경계가 열리지 않았다." >&2
+            exit 1
+          }
 
       - name: Assert selected IAP environment
         run: |
@@ -285,6 +300,51 @@ jobs:
           done
 
           [ "$fail" -eq 0 ] || { echo "선택한 IAP 환경($IAP_ENVIRONMENT)이 일치하지 않는다." >&2; exit 1; }
+
+      # 구버전 리비전은 v1 catalog에 고정해 둔 뒤 v2 version을 만든다.
+      # 새 이미지 배포에서만 latest를 명시적으로 마운트해야 cold start
+      # 중 서로 다른 schema를 읽는 구간이 생기지 않는다.
+      - name: Assert IAP catalog secret migration
+        run: |
+          service_catalog() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r '[.spec.template.spec.containers[0].env[]?
+                | select(.name == "IAP_CATALOG_JSON")
+                | [.valueFrom.secretKeyRef.name, .valueFrom.secretKeyRef.key]]
+                | first // ["", ""] | @tsv'
+          }
+          job_catalog() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r '[.spec.template.spec.template.spec.containers[0].env[]?
+                | select(.name == "IAP_CATALOG_JSON")
+                | [.valueFrom.secretKeyRef.name, .valueFrom.secretKeyRef.key]]
+                | first // ["", ""] | @tsv'
+          }
+
+          fail=0
+          for target in platform-iap platform-admin; do
+            actual=$(service_catalog "$target")
+            printf '%-18s IAP_CATALOG_JSON=%s\n' "$target" "$actual"
+            [ "$actual" = $'iap-catalog\tlatest' ] || fail=1
+          done
+          actual=$(job_catalog platform-worker)
+          printf '%-18s IAP_CATALOG_JSON=%s\n' platform-worker "$actual"
+          [ "$actual" = $'iap-catalog\tlatest' ] || fail=1
+
+          for target in platform-api platform-ingest platform-ads; do
+            actual=$(service_catalog "$target")
+            if [ "$actual" = $'\t' ]; then
+              display='<absent>'
+            else
+              display="$actual"
+              fail=1
+            fi
+            printf '%-18s IAP_CATALOG_JSON=%s\n' "$target" "$display"
+          done
+
+          [ "$fail" -eq 0 ] || { echo "IAP catalog secret migration 경계가 올바르지 않다." >&2; exit 1; }
 
       # pending token 봉투를 여는 keyring은 수신 role과 worker에만 있어야 한다.
       # secret 값은 읽지 않고 참조 이름만 readback한다.
