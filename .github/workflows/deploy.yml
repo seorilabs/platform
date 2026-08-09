@@ -335,8 +335,13 @@ jobs:
 
           for target in platform-api platform-ingest platform-ads; do
             actual=$(service_catalog "$target")
-            printf '%-18s IAP_CATALOG_JSON=%s\n' "$target" "${actual:-<absent>}"
-            [ "$actual" = $'\t' ] || fail=1
+            if [ "$actual" = $'\t' ]; then
+              display='<absent>'
+            else
+              display="$actual"
+              fail=1
+            fi
+            printf '%-18s IAP_CATALOG_JSON=%s\n' "$target" "$display"
           done
 
           [ "$fail" -eq 0 ] || { echo "IAP catalog secret migration 경계가 올바르지 않다." >&2; exit 1; }

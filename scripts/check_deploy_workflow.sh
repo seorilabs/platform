@@ -44,6 +44,7 @@ require(
     "IAP catalog latest는 IAP, Admin, worker 세 대상에만 명시적으로 마운트해야 한다.",
 )
 require("Assert IAP catalog secret migration" in text, "IAP catalog secret readback gate가 없다.")
+require("display='<absent>'" in text, "IAP catalog 미마운트 상태를 <absent>로 표시해야 한다.")
 
 print("production 배포 공개 IAM과 IAP catalog 경계가 일치한다.")
 PY
