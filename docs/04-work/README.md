@@ -172,8 +172,9 @@ production 배포까지 완료했다.
 - live smoke: UID 주입 거부, 신규 Firebase custom token 교환, 합성 legacy UID 보존,
   `Cache-Control: no-store`, 생성한 Firebase 사용자와 platform mapping cleanup
 - 후속 구현: App Check 검증기와 `DELETE /v1/auth/firebase-account` 멱등 삭제 경계
-- 남은 운영 gate: 신규 RN 후보의 App Check 실기기 검증과 registry 강제 전환, 실제 기존
-  사용자·실기기 migration
+- 2026-08-09 운영 gate: Google Play 설치 v1.1.2의 App Check token과 Firebase Functions
+  강제 호출을 확인한 뒤 registry `require_app_check=true`로 전환
+- 남은 운영 gate: 실제 기존 사용자·실기기 migration
 
 registry의 `events`와 `firebase_custom_token_bridge`를 켠다. `config`/`iap`은
 계속 끄고, 이벤트는 `bc_` 핵심 퍼널과 `core_screen_view`·`core_ad_*`만

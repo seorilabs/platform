@@ -10,7 +10,7 @@
     "iap": false,
     "firebase_custom_token_bridge": true
   },
-  "require_app_check": false,
+  "require_app_check": true,
   "ga4": {
     "event_prefix": "bc_"
   },
