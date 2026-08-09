@@ -66,6 +66,20 @@ worker Job에 배포했다.
 검증은 별도 출시 gate로 남는다. AppsInToss 자격증명이 없으면 관련 로그인과 광고는
 fail-closed로 비활성화된다.
 
+운영툴은 [Backoffice PR #88](https://github.com/seorilabs/seorilabs-backoffice/pull/88)을
+merge하고 [Deploy run 31314836796](https://github.com/seorilabs/seorilabs-backoffice/actions/runs/31314836796)으로
+별도 배포했다.
+
+- Backoffice web과 AppOps worker는 이미지
+  `4de5bf12fde6e70e9d7ab11676d756a9b93dc177`로 각각 1/1 ready다.
+- `/platform/ads`의 비로그인 요청은 로그인 화면으로 307 전환되고 production route
+  artifact가 존재한다.
+- web Pod의 read 전용 identity로 Ads health와 Happy Farm Ads 설정을 실제 조회해
+  각각 200을 확인했다. health는 `ok`이며 invalid signature, stale pending claim,
+  policy failure가 모두 0이다.
+- Happy Farm 설정 readback은 provider 2개, placement 7개이며 registry sync 시각은
+  `2026-08-09T12:57:33.589822Z`다. 새 web·worker Pod의 오류 로그는 없었다.
+
 #### 원장 환경이 어긋나면 admin만 죽는다
 
 레지스트리의 `iap.ledger_environment`와 서비스의 `IAP_LEDGER_ENVIRONMENT`가
