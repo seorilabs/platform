@@ -134,16 +134,12 @@ func newIAPService(
 		for _, verifier := range list {
 			appVerifierMaps[app.AppID][verifier.Platform()] = verifier
 		}
-		for _, entitlementID := range app.IAP.EntitlementIDs {
-			if !cat.HasForApp(app.AppID, entitlementID) {
-				return nil, platformerr.Newf(platformerr.CodeCatalogIncomplete, "%s의 %s entitlement가 앱별 카탈로그에 없어요", app.AppID, entitlementID)
-			}
-			for _, market := range app.IAP.Markets {
-				if _, ok := cat.SKUForApp(app.AppID, entitlementID, domain.Platform(market)); !ok {
-					return nil, platformerr.Newf(platformerr.CodeCatalogIncomplete,
-						"%s의 %s entitlement에 %s SKU가 없어요", app.AppID, entitlementID, market)
-				}
-			}
+		requiredMarkets := make([]domain.Platform, 0, len(list))
+		for _, verifier := range list {
+			requiredMarkets = append(requiredMarkets, verifier.Platform())
+		}
+		if err := validateAppCatalog(cat, app, requiredMarkets); err != nil {
+			return nil, err
 		}
 	}
 
@@ -186,6 +182,27 @@ func newIAPService(
 		appVerifiers: appVerifierMaps,
 		apps:         appsByID,
 	}, nil
+}
+
+// validateAppCatalog는 실제 조립된 verifier의 SKU만 부팅 조건으로 삼는다.
+//
+// registry market은 계약 범위이고 verifier는 현재 자격증명으로 실제 호출 가능한
+// 범위다. 아직 mTLS 인증서가 없는 AppsInToss까지 SKU를 강제하면 그 provider를
+// fail-closed로 건너뛰는 대신 IAP role 전체가 부팅하지 못한다.
+func validateAppCatalog(cat *catalog.Catalog, app registry.App, requiredMarkets []domain.Platform) error {
+	for _, entitlementID := range app.IAP.EntitlementIDs {
+		if !cat.HasForApp(app.AppID, entitlementID) {
+			return platformerr.Newf(platformerr.CodeCatalogIncomplete,
+				"%s의 %s entitlement가 앱별 카탈로그에 없어요", app.AppID, entitlementID)
+		}
+		for _, market := range requiredMarkets {
+			if _, ok := cat.SKUForApp(app.AppID, entitlementID, market); !ok {
+				return platformerr.Newf(platformerr.CodeCatalogIncomplete,
+					"%s의 %s entitlement에 %s SKU가 없어요", app.AppID, entitlementID, market)
+			}
+		}
+	}
+	return nil
 }
 
 func ledgerForRegistryApp(st *store.Client, app registry.App, env domain.Environment) *ledger.Ledger {
