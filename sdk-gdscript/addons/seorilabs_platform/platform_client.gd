@@ -19,6 +19,9 @@ extends Node
 const HttpTransport := preload("core/http_transport.gd")
 const Normalizer := preload("core/param_normalizer.gd")
 
+## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
+const SDK_VERSION := "0.5.0"
+
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
 
@@ -36,6 +39,11 @@ const MAX_EVENT_BATCH := 20
 ## 이벤트 outbox 상한. 넘으면 오래된 것부터 버린다.
 const MAX_EVENT_OUTBOX := 500
 
+const EVENT_CONTEXT_PLATFORMS := ["android", "ios", "web", "ait"]
+const MAX_APP_VERSION_LENGTH := 32
+const MAX_LOCALE_LENGTH := 16
+const MAX_GA4_CLIENT_ID_LENGTH := 64
+
 var _transport: HttpTransport
 var _session: Dictionary = {}
 var _iap_base_url := ""
@@ -44,6 +52,7 @@ var _ads_base_url := ""
 var _auth_base_url := ""
 var _credential: Dictionary = {}
 var _config: Dictionary = _fallback_config()
+var _event_context_source: Variant = {}
 
 var _event_buffer: Array = []
 var _event_outbox: Array = []
@@ -66,6 +75,7 @@ func _ready() -> void:
 ##   ingest_base_url : String (선택) — 이벤트. 없으면 base_url
 ##   ads_base_url    : String (선택) — 광고 정책·claim. 있으면 세션도 이 역할에서 발급
 ##   app_id          : String (필수)
+##   event_context   : Dictionary | Callable (선택) — platform/appVersion/locale/ga4ClientId
 ##   max_retries     : int (선택, 기본 3)
 ##
 ## 역할마다 Cloud Run 서비스가 다르다. 마켓 자격증명을 결제 서비스
@@ -86,6 +96,9 @@ func configure(options: Dictionary) -> void:
 	if _ads_base_url.is_empty():
 		_ads_base_url = base
 	_auth_base_url = _ads_base_url if options.has("ads_base_url") else base
+	_event_context_source = options.get("event_context", {})
+	if typeof(_event_context_source) == TYPE_DICTIONARY:
+		_event_context_source = (_event_context_source as Dictionary).duplicate(true)
 
 	_transport.configure(
 		base,
@@ -285,13 +298,17 @@ func flush_events(callback: Callable = Callable()) -> void:
 
 	# 세션이 없어도 익명 수집이 동작해야 한다.
 	var send := func(token: String) -> void:
+		var body := {"events": batch}
+		var context := _resolved_event_context()
+		if not context.is_empty():
+			body["context"] = context
 		_transport.request(
 			{
 				"method": "POST",
 				"path": "/v1/events",
 				"base_url": _ingest_base_url,
 				"token": token,
-				"body": {"events": batch},
+				"body": body,
 			},
 			func(response: Dictionary) -> void:
 				_flushing = false
@@ -309,7 +326,7 @@ func flush_events(callback: Callable = Callable()) -> void:
 		)
 
 
-## 이벤트 식별자를 만든다. 서버가 중복 제거에 쓴다.
+## 이벤트 식별자를 만든다. 적재 행 추적과 소비자 중복 판정에 쓴다.
 func _new_event_id() -> String:
 	# Godot에는 UUID가 없다. 무작위 16바이트를 hex로 쓴다.
 	var bytes := PackedByteArray()
@@ -329,6 +346,46 @@ func _push_outbox(events: Array) -> void:
 
 func pending_event_count() -> int:
 	return _event_buffer.size() + _event_outbox.size()
+
+
+## OpenAPI EventContext에 선언된 비식별 실행 정보만 반환한다.
+## Callable을 flush 시점에 평가해 런타임 언어 변경이 다음 배치부터 반영된다.
+func _resolved_event_context() -> Dictionary:
+	var raw: Variant = _event_context_source
+	if typeof(raw) == TYPE_CALLABLE:
+		var provider: Callable = raw
+		if provider.is_valid():
+			raw = provider.call()
+
+	var source: Dictionary = {}
+	if typeof(raw) == TYPE_DICTIONARY:
+		source = raw
+	var context := {"sdkVersion": SDK_VERSION}
+
+	var platform := String(source.get("platform", "")).strip_edges().to_lower()
+	if platform in EVENT_CONTEXT_PLATFORMS:
+		context["platform"] = platform
+
+	var app_version := _bounded_context_value(source.get("appVersion", ""), MAX_APP_VERSION_LENGTH)
+	if not app_version.is_empty():
+		context["appVersion"] = app_version
+
+	var locale := _bounded_context_value(source.get("locale", ""), MAX_LOCALE_LENGTH)
+	if not locale.is_empty():
+		context["locale"] = locale
+
+	var ga4_client_id := _bounded_context_value(source.get("ga4ClientId", ""), MAX_GA4_CLIENT_ID_LENGTH)
+	if not ga4_client_id.is_empty():
+		context["ga4ClientId"] = ga4_client_id
+
+	return context
+
+
+func _bounded_context_value(value: Variant, max_length: int) -> String:
+	var clean := String(value).strip_edges()
+	if clean.length() > max_length:
+		return clean.substr(0, max_length)
+	return clean
 
 
 # ---------------------------------------------------------------- 설정

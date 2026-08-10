@@ -11,11 +11,24 @@ const HttpTransport := preload("res://addons/seorilabs_platform/core/http_transp
 const Normalizer := preload("res://addons/seorilabs_platform/core/param_normalizer.gd")
 
 var _failures: Array[String] = []
+var _probe_locale := "ko-KR"
+
+
+class CaptureTransport:
+	extends HttpTransport
+
+	var last_request: Dictionary = {}
+
+	func request(request_data: Dictionary, callback: Callable) -> void:
+		last_request = request_data.duplicate(true)
+		callback.call({"ok": true, "result": {}})
 
 
 func _initialize() -> void:
 	_check_loads()
 	_check_client_defaults()
+	_check_event_context()
+	_check_event_context_request()
 	_check_guards()
 
 	if _failures.is_empty():
@@ -76,6 +89,78 @@ func _check_client_defaults() -> void:
 		_fail("이름 없는 이벤트가 큐에 들어갔다")
 
 	client.queue_free()
+
+
+func _check_event_context() -> void:
+	_probe_locale = "ko-KR"
+	var client := PlatformClient.new()
+	client.configure({
+		"base_url": "https://platform.invalid",
+		"app_id": "probe",
+		"event_context": Callable(self, "_probe_event_context"),
+	})
+	root.add_child(client)
+
+	var first := client._resolved_event_context()
+	var want_first := {
+		"platform": "android",
+		"appVersion": "1.2.3",
+		"locale": "ko-KR",
+		"sdkVersion": PlatformClient.SDK_VERSION,
+	}
+	if first != want_first:
+		_fail("이벤트 context 정규화 결과가 다르다: %s" % first)
+
+	_probe_locale = "en-US"
+	var second := client._resolved_event_context()
+	if String(second.get("locale", "")) != "en-US":
+		_fail("동적 locale이 flush 시점에 갱신되지 않았다: %s" % second)
+
+	client.configure({
+		"base_url": "https://platform.invalid",
+		"app_id": "probe",
+		"event_context": {"platform": "desktop"},
+	})
+	var invalid := client._resolved_event_context()
+	if invalid.has("platform") or invalid != {"sdkVersion": PlatformClient.SDK_VERSION}:
+		_fail("허용되지 않은 이벤트 context가 남았다: %s" % invalid)
+
+	client.queue_free()
+
+
+func _probe_event_context() -> Dictionary:
+	return {
+		"platform": "Android",
+		"appVersion": " 1.2.3 ",
+		"locale": _probe_locale,
+		"unknown": "drop",
+	}
+
+
+func _check_event_context_request() -> void:
+	var transport := CaptureTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client.configure({
+		"base_url": "https://platform.invalid",
+		"app_id": "probe",
+		"event_context": {"platform": "web", "locale": "en-US"},
+	})
+	root.add_child(client)
+	client.track("smoke_event", {})
+	client.flush_events()
+
+	var body: Dictionary = transport.last_request.get("body", {})
+	var context: Dictionary = body.get("context", {})
+	if context != {
+		"platform": "web",
+		"locale": "en-US",
+		"sdkVersion": PlatformClient.SDK_VERSION,
+	}:
+		_fail("flush 요청에 이벤트 context가 붙지 않았다: %s" % transport.last_request)
+
+	client.free()
 
 
 ## 잘못된 입력이 네트워크를 타지 않고 즉시 거부되는지 본다.

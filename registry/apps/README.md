@@ -86,6 +86,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `cycle-pair` | production | 비활성 | 비활성 | 비활성 | — |
 | `happy-farm` | production | 활성 | 활성 | 활성 | `ad_free` |
 | `lizard-tycoon` | production | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
+| `lucid-chess` | 미사용 | 핵심 퍼널·전면 광고 | 비활성 | 비활성 | — |
 | `slotmachine-game` | 미사용 | 비활성 | 비활성 | 활성 | — |
 
 ## ledger_environment가 서비스와 다르면

@@ -1,0 +1,28 @@
+{
+  "app_id": "lucid-chess",
+  "display_name": "루시드 체스",
+  "firebase_project_id": "lucid-chess-dbb9d",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": true,
+    "iap": false,
+    "ads": false,
+    "firebase_custom_token_bridge": false
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "platform_event_allowlist": [
+    "app_open",
+    "game_start",
+    "game_end",
+    "game_abandon",
+    "daily_puzzle_complete",
+    "ad_interstitial_shown",
+    "ad_interstitial_skip"
+  ],
+  "cors_origins": [],
+  "blocked_uids": []
+}
