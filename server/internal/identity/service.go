@@ -386,10 +386,12 @@ func (s *Service) resolveIdentity(
 		return "anon:" + value, true, "anonymous", nil
 
 	case KindAITLogin:
-		// ads 기능만으로 열면 AdMob 전용 앱도 AppsInToss 신원을 만들 수 있다.
-		// mTLS 교환과 앱 범위 userKey는 provider 원장까지 허용한 앱에만 묶는다.
-		if !app.FeatureEnabled("ads") || !slices.Contains(app.Ads.Providers, "apps_in_toss") {
-			return "", false, "", platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 AppsInToss 광고 로그인을 사용하지 않아요")
+		// AppsInToss userKey는 광고와 IAP가 함께 쓰는 앱 범위 신원이다.
+		// 어느 기능도 provider를 허용하지 않은 앱에서 임의로 열리면 안 된다.
+		adsEnabled := app.FeatureEnabled("ads") && slices.Contains(app.Ads.Providers, "apps_in_toss")
+		iapEnabled := app.FeatureEnabled("iap") && app.MarketEnabled("apps_in_toss")
+		if !adsEnabled && !iapEnabled {
+			return "", false, "", platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 AppsInToss 로그인을 사용하지 않아요")
 		}
 		referrer := strings.ToUpper(strings.TrimSpace(cred.Referrer))
 		if referrer != "DEFAULT" && referrer != "SANDBOX" {

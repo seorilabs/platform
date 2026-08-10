@@ -537,7 +537,7 @@ func TestCredentialKinds(t *testing.T) {
 	})
 }
 
-func TestAITLoginRequiresAdsAppAndStoresOnlyHashedIdentity(t *testing.T) {
+func TestAITLoginAllowsAppsInTossAdsAndStoresOnlyHashedIdentity(t *testing.T) {
 	app := testApp()
 	app.AppID = "happy-farm"
 	app.Features = map[string]bool{"ads": true}
@@ -578,6 +578,32 @@ func TestAITLoginRequiresAdsAppAndStoresOnlyHashedIdentity(t *testing.T) {
 	})
 	if platformerr.CodeOf(err) != platformerr.CodeRequestInvalid {
 		t.Fatalf("invalid referrer code=%q", platformerr.CodeOf(err))
+	}
+}
+
+func TestAITLoginAllowsAppsInTossIAPWithoutAds(t *testing.T) {
+	app := testApp()
+	app.Features = map[string]bool{"iap": true, "ads": false}
+	app.IAP = registry.IAPConfig{
+		LedgerEnvironment: "production",
+		Markets:           []string{"apps_in_toss"},
+		EntitlementIDs:    []string{"premium_species"},
+	}
+	reg := registry.New(fakeSource{apps: []registry.App{app}})
+	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
+	verifier := &fakeAITLoginVerifier{
+		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer).WithAITLoginVerifier(verifier)
+
+	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
+		Kind: KindAITLogin, Value: "iap-authorization-code", Referrer: "SANDBOX",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.code != "iap-authorization-code" || verifier.referrer != "SANDBOX" {
+		t.Fatalf("verifier=%+v", verifier)
 	}
 }
 
