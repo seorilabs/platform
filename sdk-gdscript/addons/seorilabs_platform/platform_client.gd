@@ -20,7 +20,7 @@ const HttpTransport := preload("core/http_transport.gd")
 const Normalizer := preload("core/param_normalizer.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.5.0"
+const SDK_VERSION := "0.5.1"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -46,6 +46,8 @@ const MAX_GA4_CLIENT_ID_LENGTH := 64
 
 var _transport: HttpTransport
 var _session: Dictionary = {}
+var _api_base_url := ""
+var _app_id := ""
 var _iap_base_url := ""
 var _ingest_base_url := ""
 var _ads_base_url := ""
@@ -86,6 +88,8 @@ func configure(options: Dictionary) -> void:
 		add_child(_transport)
 
 	var base := String(options.get("base_url", ""))
+	_api_base_url = base.strip_edges()
+	_app_id = String(options.get("app_id", "")).strip_edges()
 	_iap_base_url = String(options.get("iap_base_url", "")).strip_edges()
 	if _iap_base_url.is_empty():
 		_iap_base_url = base
@@ -102,12 +106,61 @@ func configure(options: Dictionary) -> void:
 
 	_transport.configure(
 		base,
-		String(options.get("app_id", "")),
+		_app_id,
 		int(options.get("max_retries", 3)),
 	)
 
 
 # ---------------------------------------------------------------- 인증
+
+## 앱 Firebase 프로젝트용 custom token을 발급받는다.
+##
+## 신규 사용자 요청은 응답 유실 뒤 재시도하면 서로 다른 uid가 생길 수 있어
+## 자동 재시도를 금지한다. 반환 token은 Firebase signInWithCustomToken에 한 번
+## 사용하고 저장하지 않는다.
+func create_firebase_custom_token(
+	existing_firebase_id_token: String,
+	app_check_token: String,
+	callback: Callable,
+) -> void:
+	var body := {"appId": _app_id}
+	if not existing_firebase_id_token.is_empty():
+		body["existingFirebaseIdToken"] = existing_firebase_id_token
+
+	_transport.request(
+		{
+			"method": "POST",
+			"path": "/v1/auth/firebase-custom-token",
+			"base_url": _api_base_url,
+			"body": body,
+			"app_check_token": app_check_token,
+			"no_retry": true,
+		},
+		callback,
+	)
+
+
+## Firebase uid에 연결된 Platform identity mapping을 지운다.
+## 앱은 이 요청이 성공한 뒤 자기 Firebase Auth 사용자와 데이터를 지운다.
+func delete_firebase_account(
+	firebase_id_token: String,
+	app_check_token: String,
+	callback: Callable,
+) -> void:
+	if firebase_id_token.is_empty():
+		callback.call(_client_error("auth_required", "로그인이 필요해요"))
+		return
+
+	_transport.request(
+		{
+			"method": "DELETE",
+			"path": "/v1/auth/firebase-account",
+			"base_url": _api_base_url,
+			"body": {"appId": _app_id, "firebaseIdToken": firebase_id_token},
+			"app_check_token": app_check_token,
+		},
+		callback,
+	)
 
 ## 자격증명으로 세션을 연다.
 ##

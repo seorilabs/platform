@@ -58,6 +58,7 @@ func configure(p_base_url: String, p_app_id: String, p_max_retries: int = 3) -> 
 ##   query    : Dictionary (선택)
 ##   no_retry : bool (선택) — 결제처럼 중복이 위험한 요청
 ##   base_url : String (선택) — 이 요청만 다른 호스트로 보낸다
+##   app_check_token : String (선택) — Firebase bootstrap 경계의 App Check 토큰
 func request(request_data: Dictionary, callback: Callable) -> void:
 	if base_url.is_empty() or app_id.is_empty():
 		callback.call(_local_error(0, "transport_not_configured", "전송 설정이 없어요"))
@@ -161,6 +162,12 @@ func _build_headers(data: Dictionary) -> PackedStringArray:
 	var token := String(data.get("token", ""))
 	if not token.is_empty():
 		headers.append("Authorization: Bearer " + token)
+
+	# custom-token bootstrap에서만 쓴다. 전송 계층이 값을 보관하거나
+	# 로그에 남기지 않고 해당 요청 헤더로만 전달한다.
+	var app_check_token := String(data.get("app_check_token", ""))
+	if not app_check_token.is_empty():
+		headers.append("X-Firebase-AppCheck: " + app_check_token)
 
 	return headers
 
