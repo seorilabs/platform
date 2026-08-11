@@ -46,6 +46,12 @@ platform.configure({
 add_child(platform)
 
 # 로그인
+platform.create_firebase_custom_token("", "", func(bridge):
+    if not bridge["ok"]:
+        return
+    # bridge.result.firebaseCustomToken은 Firebase에 한 번 사용하고 저장하지 않는다
+)
+
 platform.sign_in({"kind": "firebase-id-token", "value": id_token},
     func(res):
         if not res["ok"]:

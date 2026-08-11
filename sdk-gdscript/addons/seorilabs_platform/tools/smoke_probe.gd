@@ -27,6 +27,7 @@ class CaptureTransport:
 func _initialize() -> void:
 	_check_loads()
 	_check_client_defaults()
+	_check_firebase_custom_token_bridge()
 	_check_event_context()
 	_check_event_context_request()
 	_check_guards()
@@ -89,6 +90,42 @@ func _check_client_defaults() -> void:
 		_fail("이름 없는 이벤트가 큐에 들어갔다")
 
 	client.queue_free()
+
+
+func _check_firebase_custom_token_bridge() -> void:
+	var transport := CaptureTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client.configure({
+		"base_url": "https://api.platform.invalid",
+		"ads_base_url": "https://ads.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+
+	client.create_firebase_custom_token("existing-id-token", "app-check-token", func(_res: Dictionary) -> void: pass)
+
+	var request := transport.last_request
+	if String(request.get("base_url", "")) != "https://api.platform.invalid":
+		_fail("custom token 요청이 platform-api 경계를 사용하지 않는다: %s" % request)
+	if String(request.get("path", "")) != "/v1/auth/firebase-custom-token":
+		_fail("custom token 요청 경로가 다르다: %s" % request)
+	if request.get("body", {}) != {"appId": "probe", "existingFirebaseIdToken": "existing-id-token"}:
+		_fail("custom token 요청 본문이 다르다: %s" % request)
+	if String(request.get("app_check_token", "")) != "app-check-token":
+		_fail("App Check token이 전송 계층에 전달되지 않았다")
+	if not bool(request.get("no_retry", false)):
+		_fail("신규 uid bootstrap 요청의 자동 재시도가 열려 있다")
+
+	client.delete_firebase_account("firebase-id-token", "app-check-token", func(_res: Dictionary) -> void: pass)
+	request = transport.last_request
+	if String(request.get("method", "")) != "DELETE" or String(request.get("path", "")) != "/v1/auth/firebase-account":
+		_fail("Firebase account 삭제 요청이 다르다: %s" % request)
+	if request.get("body", {}) != {"appId": "probe", "firebaseIdToken": "firebase-id-token"}:
+		_fail("Firebase account 삭제 본문이 다르다: %s" % request)
+
+	client.free()
 
 
 func _check_event_context() -> void:
