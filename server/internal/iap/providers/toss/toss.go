@@ -139,16 +139,16 @@ func (v *Verifier) Verify(ctx context.Context, proof domain.Proof) (domain.Verif
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodePlatformMismatch,
 			"AppsInToss 검증기에 다른 마켓 증명이 왔어요")
 	}
-	// AITUserKey는 body가 아니라 검증된 claim에서만 온다.
-	// 이것이 계정 바인딩을 대신하므로 없으면 검증할 수 없다.
-	if proof.Token == "" || proof.ProductID == "" || proof.AITUserKey == "" {
+	// 계정 해시는 body가 아니라 검증된 appLogin 세션에서만 온다.
+	// 원본 Toss userKey는 PII 최소화 원칙상 저장하거나 세션에 싣지 않는다.
+	if proof.Token == "" || proof.ProductID == "" || proof.AITAccountHash == "" {
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProofInvalid,
 			"구매 정보가 비어 있어요")
 	}
 
 	observedAt := v.now().UTC()
 
-	resp, err := v.fetchOrderStatus(ctx, proof.Token, proof.AITUserKey)
+	resp, err := v.fetchOrderStatus(ctx, proof.Token)
 	if err != nil {
 		return domain.VerifiedPurchase{}, err
 	}
@@ -209,7 +209,7 @@ func (v *Verifier) Verify(ctx context.Context, proof domain.Proof) (domain.Verif
 		CanonicalID: order.OrderID, // 불변식 1. AIT는 orderId다
 		// AIT는 별도 주문 번호가 없다. orderId가 둘 다 겸한다.
 		ProviderOrderID:   order.OrderID,
-		PlatformAccountID: proof.AITUserKey,
+		PlatformAccountID: proof.AITAccountHash,
 		PurchasedAt:       purchasedAt,
 		// 원본은 observedAt에 마켓 시각을 넣었지만 서버 관측 시각을 쓴다.
 		// Play·Apple과 같은 기준이어야 원장의 stale 비교가 성립하고,
@@ -235,7 +235,7 @@ func (v *Verifier) CompleteGrant(_ context.Context, p domain.VerifiedPurchase) e
 }
 
 // fetchOrderStatus는 주문 상태를 조회한다.
-func (v *Verifier) fetchOrderStatus(ctx context.Context, orderID, userKey string) (*orderStatusResponse, error) {
+func (v *Verifier) fetchOrderStatus(ctx context.Context, orderID string) (*orderStatusResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
@@ -252,8 +252,9 @@ func (v *Verifier) fetchOrderStatus(ctx context.Context, orderID, userKey string
 			"AppsInToss 요청을 만들지 못했어요")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// 사용자 신원은 헤더로 전달한다. body에 넣지 않는다.
-	req.Header.Set("x-toss-user-key", userKey)
+	// 공식 IAP API에서 x-toss-user-key는 선택값이다. 원본 userKey를
+	// 저장하지 않는 대신 UUID v7 orderId를 조회하고, 공통 원장이 최초
+	// 지급 사용자와 canonical order를 멱등하게 고정한다. 불변식 1·5다.
 
 	resp, err := v.client.Do(req)
 	if err != nil {

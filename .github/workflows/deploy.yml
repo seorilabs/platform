@@ -205,7 +205,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
-            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest" \
             --quiet
 
           gcloud run deploy platform-admin \
@@ -233,7 +233,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
-            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest" \
             --quiet
 
       # 배포가 전부 성공했다고 같은 태그가 됐다는 보장은 없다.
@@ -381,6 +381,43 @@ jobs:
           done
 
           [ "$fail" -eq 0 ] || { echo "환불 검토 secret role 경계가 올바르지 않다." >&2; exit 1; }
+
+      # AIT mTLS 인증서는 주문 검증과 완료 재시도를 수행하는 두 role에만 둔다.
+      - name: Assert AppsInToss mTLS secret boundary
+        run: |
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+          job_secret() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          fail=0
+          for pair in IAP_TOSS_CLIENT_CERT:ait-client-cert IAP_TOSS_CLIENT_KEY:ait-client-key; do
+            env_name=${pair%%:*}
+            expected=${pair#*:}
+            actual=$(service_secret platform-iap "$env_name")
+            printf '%-18s %s=%s\n' platform-iap "$env_name" "$actual"
+            [ "$actual" = "$expected" ] || fail=1
+
+            actual=$(job_secret platform-worker "$env_name")
+            printf '%-18s %s=%s\n' platform-worker "$env_name" "$actual"
+            [ "$actual" = "$expected" ] || fail=1
+
+            for target in platform-api platform-ingest platform-admin platform-ads; do
+              actual=$(service_secret "$target" "$env_name")
+              printf '%-18s %s=%s\n' "$target" "$env_name" "${actual:-<absent>}"
+              [ -z "$actual" ] || fail=1
+            done
+          done
+
+          [ "$fail" -eq 0 ] || { echo "AIT mTLS secret role 경계가 올바르지 않다." >&2; exit 1; }
 
       # admin은 DRS로 비공개라 인증 없이는 403이 정상이다. 여기서
       # 확인하는 것은 공개 서비스 셋이 새 리비전으로 뜬 뒤 실제로

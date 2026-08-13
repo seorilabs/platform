@@ -34,6 +34,7 @@ SDK를 고쳤으면 `--write`로 갱신하고 **같은 커밋에** 넣는다.
 var platform := SeoriPlatformClient.new()
 platform.configure({
     "base_url": "https://platform-api-xxxx.run.app",
+    "auth_base_url": "https://platform-iap-xxxx.run.app",
     "ingest_base_url": "https://platform-ingest-xxxx.run.app",
     "app_id": "lizard-tycoon",
     "event_context": func():
@@ -75,6 +76,9 @@ platform.verify_purchase(
 보내는 시점에 평가하므로 앱 안에서 언어가 바뀌어도 다음 flush부터 최신 locale이
 들어간다. SDK는 OpenAPI에 선언된 `platform`, `appVersion`, `locale`,
 `ga4ClientId`만 보내고 `sdkVersion`은 배포본 버전으로 고정한다.
+
+`auth_base_url`은 Toss Login mTLS 자격증명이 격리된 `platform-iap`처럼
+세션 발급 role이 기본 API와 다를 때만 지정한다. 생략하면 `base_url`을 쓴다.
 
 콜백은 항상 `Dictionary` 하나를 받는다.
 

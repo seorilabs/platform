@@ -93,10 +93,10 @@ func successBody(status, determinedAt string) string {
 
 func tossProof() domain.Proof {
 	return domain.Proof{
-		Platform:   domain.PlatformAppsInToss,
-		ProductID:  testSKU,
-		Token:      testOrderID,
-		AITUserKey: "toss-user-key-abc",
+		Platform:       domain.PlatformAppsInToss,
+		ProductID:      testSKU,
+		Token:          testOrderID,
+		AITAccountHash: "toss-user-key-abc",
 	}
 }
 
@@ -133,9 +133,9 @@ func TestVerifyPaymentCompleted(t *testing.T) {
 		t.Errorf("observedAt = %v, want 서버 관측 시각", got.ObservedAt)
 	}
 
-	// 사용자 신원은 헤더로 간다. body가 아니다.
-	if gotUserKey != "toss-user-key-abc" {
-		t.Errorf("x-toss-user-key = %q", gotUserKey)
+	// 원본 Toss userKey는 서버 저장소와 요청 헤더 어디에도 남기지 않는다.
+	if gotUserKey != "" {
+		t.Errorf("x-toss-user-key가 전송됐다: %q", gotUserKey)
 	}
 	if gotPath != orderStatusPath {
 		t.Errorf("path = %q, want %q", gotPath, orderStatusPath)
@@ -387,9 +387,9 @@ func TestVerifyRejectsBadInput(t *testing.T) {
 		{"빈 상품",
 			func(p *domain.Proof) { p.ProductID = "" },
 			platformerr.CodeProofInvalid},
-		// AITUserKey는 계정 바인딩을 대신한다. 없으면 검증할 수 없다.
-		{"사용자 키 없음",
-			func(p *domain.Proof) { p.AITUserKey = "" },
+		// 검증된 appLogin 계정 해시가 없으면 지급 사용자를 고정할 수 없다.
+		{"계정 해시 없음",
+			func(p *domain.Proof) { p.AITAccountHash = "" },
 			platformerr.CodeProofInvalid},
 	}
 

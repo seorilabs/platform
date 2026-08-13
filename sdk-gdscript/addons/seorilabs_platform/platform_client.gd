@@ -20,7 +20,7 @@ const HttpTransport := preload("core/http_transport.gd")
 const Normalizer := preload("core/param_normalizer.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.5.1"
+const SDK_VERSION := "0.5.2"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -76,6 +76,7 @@ func _ready() -> void:
 ##   iap_base_url    : String (선택) — 결제. 없으면 base_url
 ##   ingest_base_url : String (선택) — 이벤트. 없으면 base_url
 ##   ads_base_url    : String (선택) — 광고 정책·claim. 있으면 세션도 이 역할에서 발급
+##   auth_base_url   : String (선택) — 세션 발급·갱신. 없으면 ads_base_url 또는 base_url
 ##   app_id          : String (필수)
 ##   event_context   : Dictionary | Callable (선택) — platform/appVersion/locale/ga4ClientId
 ##   max_retries     : int (선택, 기본 3)
@@ -99,7 +100,9 @@ func configure(options: Dictionary) -> void:
 	_ads_base_url = String(options.get("ads_base_url", "")).strip_edges()
 	if _ads_base_url.is_empty():
 		_ads_base_url = base
-	_auth_base_url = _ads_base_url if options.has("ads_base_url") else base
+	_auth_base_url = String(options.get("auth_base_url", "")).strip_edges()
+	if _auth_base_url.is_empty():
+		_auth_base_url = _ads_base_url if options.has("ads_base_url") else base
 	_event_context_source = options.get("event_context", {})
 	if typeof(_event_context_source) == TYPE_DICTIONARY:
 		_event_context_source = (_event_context_source as Dictionary).duplicate(true)
