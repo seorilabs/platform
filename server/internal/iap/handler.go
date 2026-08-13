@@ -7,6 +7,7 @@ package iap
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
@@ -94,7 +95,14 @@ func (h *Handler) verifyPurchase(w http.ResponseWriter, r *http.Request) error {
 	// 이것이 AIT의 계정 바인딩을 대신하므로 클라이언트가 넣게 두면
 	// 다른 사람의 주문을 자기 것으로 만들 수 있다.
 	if platform == domain.PlatformAppsInToss {
-		proof.AITUserKey = sess.AppUserID
+		// AppsInToss 주문은 Toss Login으로 연 세션에만 지급한다. lizard의
+		// Firebase 세션이 같은 appId를 쓰더라도 AIT 주문을 가져갈 수 없다.
+		const prefix = "ait:"
+		if !strings.HasPrefix(sess.AppUserID, prefix) {
+			return platformerr.New(platformerr.CodeAuthForbidden,
+				"AppsInToss 구매에는 토스 로그인이 필요해요")
+		}
+		proof.AITAccountHash = strings.TrimPrefix(sess.AppUserID, prefix)
 	}
 
 	out, err := h.svc.VerifyPurchase(r.Context(), sess.AppID, sess.PlatformUserID, proof)

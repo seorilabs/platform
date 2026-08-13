@@ -104,8 +104,9 @@ type Proof struct {
 	//   App Store: transactionId
 	//   AIT:       orderId
 	Token string
-	// AITUserKey는 AIT 전용이다. body가 아니라 검증된 claim에서만 온다.
-	AITUserKey string
+	// AITAccountHash는 AIT 전용 계정 해시다. body가 아니라 검증된
+	// appLogin 세션에서만 온다. 원본 userKey는 저장하거나 세션에 싣지 않는다.
+	AITAccountHash string
 }
 
 // VerifiedPurchase는 마켓 검증을 통과한 구매다.

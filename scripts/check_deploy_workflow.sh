@@ -45,6 +45,15 @@ require(
 )
 require("Assert IAP catalog secret migration" in text, "IAP catalog secret readback gate가 없다.")
 require("display='<absent>'" in text, "IAP catalog 미마운트 상태를 <absent>로 표시해야 한다.")
+require("Assert AppsInToss mTLS secret boundary" in text, "AIT mTLS secret readback gate가 없다.")
+require(
+    text.count("IAP_TOSS_CLIENT_CERT=ait-client-cert:latest") == 2,
+    "AIT 인증서 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
+)
+require(
+    text.count("IAP_TOSS_CLIENT_KEY=ait-client-key:latest") == 2,
+    "AIT 개인키 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
+)
 
 print("production 배포 공개 IAM과 IAP catalog 경계가 일치한다.")
 PY

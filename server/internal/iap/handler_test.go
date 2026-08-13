@@ -200,10 +200,10 @@ func TestRejectsInjectedAuthorityFields(t *testing.T) {
 	}
 }
 
-// AIT 사용자 키는 검증된 세션에서만 온다.
-func TestAITUserKeyComesFromSession(t *testing.T) {
+// AIT 계정 해시는 검증된 Toss Login 세션에서만 온다.
+func TestAITAccountHashComesFromSession(t *testing.T) {
 	sess := paidSession()
-	sess.AppUserID = "toss-user-key-real"
+	sess.AppUserID = "ait:toss-user-key-hash"
 
 	svc := &fakeService{}
 	h := NewHandler(svc, &fakeSessions{sess: sess})
@@ -213,21 +213,33 @@ func TestAITUserKeyComesFromSession(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 
-	if svc.gotProof.AITUserKey != "toss-user-key-real" {
-		t.Errorf("aitUserKey = %q, want 세션 값", svc.gotProof.AITUserKey)
+	if svc.gotProof.AITAccountHash != "toss-user-key-hash" {
+		t.Errorf("aitAccountHash = %q, want 세션 해시", svc.gotProof.AITAccountHash)
+	}
+}
+
+func TestAITPurchaseRejectsNonTossLoginSession(t *testing.T) {
+	h := NewHandler(&fakeService{}, &fakeSessions{sess: paidSession()})
+	body := `{"platform":"apps_in_toss","productId":"ait_gecko","token":"order-1"}`
+	w := serve(t, h, http.MethodPost, "/v1/iap/verify", body)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
+	}
+	if code := errorCode(t, w); code != string(platformerr.CodeAuthForbidden) {
+		t.Errorf("code = %q, want %q", code, platformerr.CodeAuthForbidden)
 	}
 }
 
 // 다른 마켓에는 AIT 키를 넘기지 않는다.
-func TestAITUserKeyNotLeakedToOtherMarkets(t *testing.T) {
+func TestAITAccountHashNotLeakedToOtherMarkets(t *testing.T) {
 	svc := &fakeService{}
 	h := NewHandler(svc, &fakeSessions{sess: paidSession()})
 
 	if w := serve(t, h, http.MethodPost, "/v1/iap/verify", validBody); w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
-	if svc.gotProof.AITUserKey != "" {
-		t.Errorf("Play 요청에 aitUserKey가 실렸다: %q", svc.gotProof.AITUserKey)
+	if svc.gotProof.AITAccountHash != "" {
+		t.Errorf("Play 요청에 AIT 계정 해시가 실렸다: %q", svc.gotProof.AITAccountHash)
 	}
 }
 

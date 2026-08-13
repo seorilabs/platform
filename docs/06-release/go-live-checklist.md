@@ -9,11 +9,12 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 기존 구매·환불 IAP 경로는 구현과 실연동을 마쳤다. ADR 0014의 Google Play
 환불 검토는 코드 반영 뒤 Secret·인덱스 배포와 license tester 실응답 확인이 남는다.
 
-**Apple·Play 두 마켓으로 먼저 전환한다.** AIT는 인증서를 받은 뒤 붙인다.
+**Apple·Play 두 마켓은 전환 완료다.** AIT 인증서는 2026-08-13 발급해
+Secret Manager에 등록했고, 이 변경의 배포와 sandbox 실기기 구매 검증이 남았다.
 
 | 항목 | Apple | Play | AIT |
 |---|---|---|---|
-| 마켓 인증 | ✅ | ✅ | 보류 |
+| 마켓 인증 | ✅ | ✅ | Secret 준비·배포 전 |
 | 실제 구매 검증 | ✅ | ✅ | — |
 | shadow 대조 (orderKey 일치) | ✅ | ✅ | — |
 | 웹훅 (실데이터) | ✅ | ✅ | 해당 없음 |
@@ -25,7 +26,7 @@ lizard-tycoon을 Firebase Functions IAP에서 플랫폼으로 옮기는 절차.
 | API 계약 문서 대조 | — | — | ✅ |
 
 **기존 Apple·Play 구매 경로는 전 항목을 통과했다.** 신규 환불 검토 실연동과
-AIT 인증서는 별도 미완료 gate다.
+AIT 배포·sandbox 실구매는 별도 미완료 gate다.
 
 Play 완료 반영은 실제 활성 구매로 확인했다.
 
@@ -418,40 +419,23 @@ cert와 key 중 **한쪽만 있으면 이 모드에서도 실패로 잡는다.**
 
 ## 3-1. 인증서를 받은 뒤 — 파트너 콘솔 필요
 
-**왜 필요한가.** AIT는 mTLS로 인증한다. 인증서가 없으면 검증기가
-조립되지 않고 AIT 결제만 `platform_unavailable`로 거부된다.
+**왜 필요한가.** AIT는 mTLS로 인증한다. 인증서가 서비스에 마운트되지 않으면
+검증기가 조립되지 않고 AIT 로그인·결제만 `platform_unavailable`로 거부된다.
 
 **배선은 이미 검증했다.** 자체 서명 CA로 실제 TLS 핸드셰이크를
 통과시켰고, 인증서 없는 연결·다른 CA·서버 미검증이 전부 거부되는
 것까지 확인했다. **인증서를 받는 즉시 동작한다.**
 
-### 절차
+### 2026-08-13 실행 상태
 
-1. AppsInToss 파트너 콘솔에서 클라이언트 인증서를 발급받는다
-2. Secret Manager에 올린다
+1. AppsInToss 파트너 콘솔에서 `lizardtycoon20260813` 인증서를 발급했다.
+2. 로컬 0600 원장과 백업·복원 검증 뒤 Secret Manager의
+   `ait-client-cert`·`ait-client-key` version 1에 등록했다.
+3. accessor IAM은 `platform-iap`과 `platform-worker` 서비스 계정에만 부여했다.
+4. 배포 workflow가 두 대상에만 마운트하고 나머지 서비스의 부재를 readback한다.
 
-```bash
-gcloud secrets create ait-client-cert --project=seorilabs-platform \
-  --data-file=client.crt
-gcloud secrets create ait-client-key --project=seorilabs-platform \
-  --data-file=client.key
-
-for s in ait-client-cert ait-client-key; do
-  gcloud secrets add-iam-policy-binding $s --project=seorilabs-platform \
-    --member="serviceAccount:platform-iap@seorilabs-platform.iam.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor"
-done
-```
-
-3. `platform-iap`에 붙인다
-
-```bash
-gcloud run services update platform-iap \
-  --project=seorilabs-platform --region=asia-northeast3 \
-  --update-secrets="IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest"
-```
-
-부팅 로그에 `결제 준비 완료 markets=[... apps_in_toss]`가 나오면 된다.
+배포 뒤 `platform-iap` 부팅 로그의 `markets`에 `apps_in_toss`가 포함되고,
+두 Secret의 role 경계와 실제 mTLS 호출을 확인해야 완료다.
 
 ---
 

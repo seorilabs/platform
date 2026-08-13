@@ -28,6 +28,7 @@ func _initialize() -> void:
 	_check_loads()
 	_check_client_defaults()
 	_check_firebase_custom_token_bridge()
+	_check_auth_role_routing()
 	_check_event_context()
 	_check_event_context_request()
 	_check_guards()
@@ -124,6 +125,25 @@ func _check_firebase_custom_token_bridge() -> void:
 		_fail("Firebase account 삭제 요청이 다르다: %s" % request)
 	if request.get("body", {}) != {"appId": "probe", "firebaseIdToken": "firebase-id-token"}:
 		_fail("Firebase account 삭제 본문이 다르다: %s" % request)
+
+	client.free()
+
+
+func _check_auth_role_routing() -> void:
+	var transport := CaptureTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client.configure({
+		"base_url": "https://api.platform.invalid",
+		"auth_base_url": "https://iap.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+
+	client.sign_in({"kind": "ait-login", "value": "code", "referrer": "SANDBOX"}, func(_res: Dictionary) -> void: pass)
+	if String(transport.last_request.get("base_url", "")) != "https://iap.platform.invalid":
+		_fail("세션 요청이 auth role 경계를 사용하지 않는다: %s" % transport.last_request)
 
 	client.free()
 

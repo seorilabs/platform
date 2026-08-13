@@ -8,7 +8,23 @@
 서비스도 production에서 운영한다.**
 
 Apple·Play 두 마켓 실기기 검증과 레거시 Firebase Functions 셧다운까지 끝났다.
-백오피스 운영자 지급(선물)도 개통했다. AIT만 자격증명을 기다린다.
+백오피스 운영자 지급(선물)도 개통했다. AIT mTLS 인증서는 2026-08-13 발급해
+Secret Manager version 1과 IAP/worker 전용 IAM까지 준비했고, 이 변경의 배포와
+AIT sandbox 실구매 검증이 남았다.
+
+#### 2026-08-13 AppsInToss 로그인·IAP 배포 준비
+
+- Toss Login `appLogin` authorization code 교환과 주문 상태 조회는 같은 mTLS
+  자격증명을 쓰므로 `platform-iap`에서 세션 발급과 구매 검증을 함께 처리한다.
+- `platform-iap`과 `platform-worker`에만 `ait-client-cert`·`ait-client-key`를
+  마운트하고 API·Ingest·Admin·Ads에는 두지 않는 배포 readback gate를 추가했다.
+- 운영 `iap-catalog` version 3에 lizard-tycoon의 실제 AIT 비소모품 SKU 2종을
+  추가하고 원본 version의 0600 백업·새 version byte readback을 통과했다.
+- 원본 Toss `userKey`는 로그인 응답을 확인한 즉시 SHA-256 처리하고 저장하거나
+  세션에 싣지 않는다. AIT 주문은 이 로그인으로 발급한 Platform 세션에만 지급한다.
+- 앱은 세션 발급 호스트를 `auth_base_url`로 분리해 `platform-iap`을 사용한다.
+- 남은 gate는 변경 배포, AIT candidate 업로드, sandbox 로그인·구매·지급 완료·복원
+  실기기 확인이다. production 실거래와 공개 배포는 포함하지 않는다.
 
 | 서비스 | 역할 |
 |---|---|
@@ -136,30 +152,20 @@ production으로 복구했다. sandbox 심사·테스트 원장은 production으
 
 ## 남은 것
 
-### 1. AIT (AppsInToss) — 유일한 기능 공백
+### 1. AIT AppsInToss — 배포와 실기기 QA 잔여
 
-**코드는 완성돼 있다.** `internal/iap/providers/toss`가 mTLS 검증기까지 구현돼
-있고 테스트도 있다. 인증서가 없어 부팅 시 건너뛴다.
+Toss Login·IAP 서버 경로, 실제 상품 ID 2종, mTLS 인증서와 Secret Manager
+등록까지 완료했다. 이 변경은 다음을 fail-closed로 고정한다.
 
-```
-cmd/platform/iap.go        "AppsInToss 인증서가 없어 건너뛴다"
-internal/identity/service.go  KindAITLogin → "아직 지원하지 않는 로그인 방식이에요"
-```
+- `appLogin` authorization code를 `platform-iap`의 mTLS로 교환한다.
+- 원본 `userKey`를 즉시 SHA-256 처리하고 AIT 로그인 세션에만 구매를 허용한다.
+- UUID v7 `orderId`를 공식 주문 상태 API로 조회하고 canonical order의 최초
+  Platform 사용자를 원장 트랜잭션으로 고정한다.
+- mTLS Secret은 `platform-iap`과 `platform-worker`에만 마운트한다.
 
-막는 것은 전부 외부 자격증명·실측이라 코드로 풀 수 없다.
-
-| # | 항목 |
-|---|---|
-| 1 | mTLS 클라이언트 인증서 (파트너 콘솔 발급) |
-| 2 | AIT 상품 ID — 카탈로그 `apps_in_toss` 필드가 비어 있다 |
-| 3 | `aitUserKey` claim 발급 경로 — **lizard-tycoon에서도 미해결** |
-| 4 | `@apps-in-toss/web-framework`의 `Storage`/`getAnonymousKey`/`appLogin` 웹 노출 여부 |
-| 5 | Godot HTML shell에 `<script>` 추가한 `.ait`의 심사 통과 여부 |
-
-3번 때문에 `KindAITLogin`은 **fail-closed로 거부**한다. 검증 없이 받으면
-클라이언트가 보낸 값을 그대로 신뢰하게 된다. 이 판단은 유지한다.
-
-4·5가 실패하면 Godot Web은 신원 없는 이벤트 전용으로 축소한다.
+남은 것은 merge SHA production 배포와 AIT sandbox 실기기에서 로그인 동의,
+신규 구매, 서버 지급, `completeProductGrant`, 앱 재실행 복원, 취소·환불 상태
+재조정을 확인하는 것이다. production 실거래와 공개 AIT 배포는 별도 승인 gate다.
 
 ### 2. App Check — 검증기 구현, 앱별 강제 전환 대기
 

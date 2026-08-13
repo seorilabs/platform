@@ -143,13 +143,30 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			svc.WithCustomTokenIssuer(customTokens)
 			svc.WithAppCheckVerifier(identity.NewFirebaseAppCheckVerifier())
 		}
-		if cfg.Role == config.RoleAds && cfg.Ads.AITLoginEnabled() {
-			cert, err := tls.X509KeyPair(cfg.Ads.AITClientCertPEM, cfg.Ads.AITClientKeyPEM)
+		// Toss Login의 authorization code 교환도 AppsInToss mTLS를 쓴다.
+		// 결제 앱은 자격증명이 이미 격리된 iap role에서 세션을 열고,
+		// 광고 전용 앱은 ads role에서 같은 경계를 사용한다.
+		var aitCertPEM, aitKeyPEM []byte
+		var aitBaseURL, aitRoleName string
+		switch {
+		case cfg.Role == config.RoleIAP && cfg.IAP.Toss.Enabled():
+			aitCertPEM = cfg.IAP.Toss.ClientCertPEM
+			aitKeyPEM = cfg.IAP.Toss.ClientKeyPEM
+			aitBaseURL = cfg.IAP.Toss.BaseURL
+			aitRoleName = "iap"
+		case cfg.Role == config.RoleAds && cfg.Ads.AITLoginEnabled():
+			aitCertPEM = cfg.Ads.AITClientCertPEM
+			aitKeyPEM = cfg.Ads.AITClientKeyPEM
+			aitBaseURL = cfg.Ads.AITBaseURL
+			aitRoleName = "ads"
+		}
+		if len(aitCertPEM) > 0 {
+			cert, err := tls.X509KeyPair(aitCertPEM, aitKeyPEM)
 			if err != nil {
 				closeStore()
-				return nil, fmt.Errorf("ads: AppsInToss 로그인 인증서를 읽지 못했다: %w", err)
+				return nil, fmt.Errorf("%s: AppsInToss 로그인 인증서를 읽지 못했다: %w", aitRoleName, err)
 			}
-			client, err := identity.NewAITLoginClient(cert, cfg.Ads.AITBaseURL)
+			client, err := identity.NewAITLoginClient(cert, aitBaseURL)
 			if err != nil {
 				closeStore()
 				return nil, err
@@ -285,6 +302,9 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		if d.iap == nil {
 			return nil, errors.New("iap role에 결제 서비스가 필요하다")
 		}
+		// AIT 앱은 appLogin authorization code를 이 role의 mTLS
+		// 자격증명으로 교환한 뒤 같은 호스트에서 구매를 검증한다.
+		d.identity.RegisterSession(mux)
 		iap.NewHandler(d.iap.service, d.identity).Register(mux)
 
 		// 웹훅은 마켓별로 자격증명이 있을 때만 연다.
