@@ -29,6 +29,9 @@
     "core_purchase_result",
     "core_tutorial_step"
   ],
-  "cors_origins": [],
+  "cors_origins": [
+    "https://lizard-tycoon.apps.tossmini.com",
+    "https://lizard-tycoon.private-apps.tossmini.com"
+  ],
   "blocked_uids": []
 }

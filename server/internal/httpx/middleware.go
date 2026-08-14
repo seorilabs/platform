@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -27,6 +28,109 @@ func Chain(h http.Handler, mws ...Middleware) http.Handler {
 		h = mws[i](h)
 	}
 	return h
+}
+
+// CORSOriginAuthorizer는 브라우저 origin의 명시적 허용 여부를 판정한다.
+type CORSOriginAuthorizer interface {
+	AllowsCORSOrigin(ctx context.Context, origin string) (bool, error)
+}
+
+var corsAllowedMethods = map[string]struct{}{
+	http.MethodDelete: {},
+	http.MethodGet:    {},
+	http.MethodPost:   {},
+}
+
+var corsAllowedHeaders = map[string]struct{}{
+	"authorization":       {},
+	"content-type":        {},
+	"if-none-match":       {},
+	"x-firebase-appcheck": {},
+	"x-seori-app":         {},
+	"x-seori-appver":      {},
+}
+
+const (
+	corsAllowMethods = "DELETE, GET, POST"
+	corsAllowHeaders = "Authorization, Content-Type, If-None-Match, X-Firebase-AppCheck, X-Seori-App, X-Seori-AppVer"
+)
+
+// CORS는 앱 레지스트리에 명시된 웹 origin만 허용하고 preflight를 종결한다.
+//
+// AIT WebView는 application/json과 X-Seori-App을 보내므로 POST 전에 OPTIONS
+// 요청을 보낸다. 표준 ServeMux의 method pattern에 도달하기 전에 처리해야 한다.
+// 쿠키 인증은 사용하지 않으므로 Access-Control-Allow-Credentials는 열지 않는다.
+func CORS(origins CORSOriginAuthorizer) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			addVary(w.Header(), "Origin")
+			allowed, err := origins.AllowsCORSOrigin(r.Context(), origin)
+			if err != nil {
+				WriteError(w, r, err)
+				return
+			}
+			if !allowed {
+				http.Error(w, "origin is not allowed", http.StatusForbidden)
+				return
+			}
+
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Expose-Headers", "ETag")
+			if !isCORSPreflight(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			addVary(w.Header(), "Access-Control-Request-Method")
+			addVary(w.Header(), "Access-Control-Request-Headers")
+			if _, ok := corsAllowedMethods[strings.ToUpper(strings.TrimSpace(
+				r.Header.Get("Access-Control-Request-Method")))]; !ok {
+				http.Error(w, "method is not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if !corsRequestHeadersAllowed(r.Header.Get("Access-Control-Request-Headers")) {
+				http.Error(w, "headers are not allowed", http.StatusBadRequest)
+				return
+			}
+
+			w.Header().Set("Access-Control-Allow-Methods", corsAllowMethods)
+			w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
+			w.Header().Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
+}
+
+func isCORSPreflight(r *http.Request) bool {
+	return r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != ""
+}
+
+func corsRequestHeadersAllowed(value string) bool {
+	for header := range strings.SplitSeq(value, ",") {
+		header = strings.ToLower(strings.TrimSpace(header))
+		if header == "" {
+			continue
+		}
+		if _, ok := corsAllowedHeaders[header]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func addVary(header http.Header, value string) {
+	for existing := range strings.SplitSeq(header.Get("Vary"), ",") {
+		if strings.EqualFold(strings.TrimSpace(existing), value) {
+			return
+		}
+	}
+	header.Add("Vary", value)
 }
 
 // Recover는 패닉을 500으로 바꾼다.

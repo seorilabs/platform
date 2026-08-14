@@ -121,6 +121,26 @@ func (r *Registry) List(ctx context.Context) ([]App, error) {
 	return out, nil
 }
 
+// AllowsCORSOrigin은 등록된 앱 중 하나가 origin을 명시적으로 허용하는지 확인한다.
+//
+// 브라우저의 preflight에는 X-Seori-App 값이 없으므로 앱 하나를 먼저 고를 수 없다.
+// 따라서 전체 앱의 명시 allowlist 합집합만 허용한다. 실제 API 인증은 이후의
+// Firebase aud와 플랫폼 세션 검증이 담당한다.
+func (r *Registry) AllowsCORSOrigin(ctx context.Context, origin string) (bool, error) {
+	apps, err := r.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, app := range apps {
+		for _, allowed := range app.CORSOrigins {
+			if origin == allowed {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // ResolveGooglePlayPackage는 RTDN packageName을 레지스트리 appId에 묶는다.
 // 등록되지 않은 package를 임의 앱으로 보내면 다른 앱의 환불 검토 원장을
 // 오염시키므로 일시적 설정 오류로 fail-closed한다. ADR 0014.
