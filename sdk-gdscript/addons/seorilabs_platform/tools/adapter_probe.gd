@@ -82,6 +82,7 @@ func _initialize() -> void:
 	await _check_firebase_identity()
 	await _check_rewarded_claim_flow()
 	await _check_policy_fail_closed()
+	await _check_invalid_adapter_contract()
 	_cleanup()
 
 	if _failures.is_empty():
@@ -182,6 +183,50 @@ func _check_policy_fail_closed() -> void:
 	_expect(not bool(policy.get("allowed", true)) and not bool(policy.get("success", true)), "정책 실패가 광고 허용으로 바뀌었다")
 	adapter.free()
 	identity.free()
+	platform.free()
+
+
+func _check_invalid_adapter_contract() -> void:
+	var incomplete_platform := Node.new()
+	root.add_child(incomplete_platform)
+	var identity := IdentitySpy.new()
+	root.add_child(identity)
+	var adapter := RewardedClaimAdapter.new()
+	root.add_child(adapter)
+	adapter.configure({
+		"platform_client": incomplete_platform,
+		"identity_adapter": identity,
+		"client_platform": "android",
+	})
+	var result: Dictionary = await adapter.ensure_session()
+	_expect(
+		not bool(result.get("success", true))
+			and String(result.get("reason", "")) == "platform_adapter_unavailable",
+		"불완전한 Platform client 계약이 fail-closed되지 않았다",
+	)
+	adapter.free()
+	identity.free()
+	incomplete_platform.free()
+
+	var platform := PlatformSpy.new()
+	root.add_child(platform)
+	var incomplete_identity := Node.new()
+	root.add_child(incomplete_identity)
+	var identity_adapter := RewardedClaimAdapter.new()
+	root.add_child(identity_adapter)
+	identity_adapter.configure({
+		"platform_client": platform,
+		"identity_adapter": incomplete_identity,
+		"client_platform": "android",
+	})
+	var identity_result: Dictionary = await identity_adapter.ensure_session()
+	_expect(
+		not bool(identity_result.get("success", true))
+			and String(identity_result.get("reason", "")) == "platform_adapter_unavailable",
+		"불완전한 identity adapter 계약이 fail-closed되지 않았다",
+	)
+	identity_adapter.free()
+	incomplete_identity.free()
 	platform.free()
 
 
