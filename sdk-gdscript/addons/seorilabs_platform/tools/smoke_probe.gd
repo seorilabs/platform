@@ -9,6 +9,9 @@ extends SceneTree
 const PlatformClient := preload("res://addons/seorilabs_platform/platform_client.gd")
 const HttpTransport := preload("res://addons/seorilabs_platform/core/http_transport.gd")
 const Normalizer := preload("res://addons/seorilabs_platform/core/param_normalizer.gd")
+const AtomicJsonStore := preload("res://addons/seorilabs_platform/core/atomic_json_store.gd")
+const FirebaseIdentityAdapter := preload("res://addons/seorilabs_platform/adapters/firebase_identity_adapter.gd")
+const RewardedClaimAdapter := preload("res://addons/seorilabs_platform/adapters/rewarded_claim_adapter.gd")
 
 var _failures: Array[String] = []
 var _probe_locale := "ko-KR"
@@ -31,6 +34,7 @@ func _initialize() -> void:
 	_check_auth_role_routing()
 	_check_event_context()
 	_check_event_context_request()
+	_check_standard_adapters()
 	_check_guards()
 
 	if _failures.is_empty():
@@ -51,6 +55,9 @@ func _check_loads() -> void:
 		"res://addons/seorilabs_platform/core/param_normalizer.gd",
 		"res://addons/seorilabs_platform/core/backoff.gd",
 		"res://addons/seorilabs_platform/core/envelope.gd",
+		"res://addons/seorilabs_platform/core/atomic_json_store.gd",
+		"res://addons/seorilabs_platform/adapters/firebase_identity_adapter.gd",
+		"res://addons/seorilabs_platform/adapters/rewarded_claim_adapter.gd",
 	]
 
 	for path in scripts:
@@ -127,6 +134,30 @@ func _check_firebase_custom_token_bridge() -> void:
 		_fail("Firebase account 삭제 본문이 다르다: %s" % request)
 
 	client.free()
+
+
+func _check_standard_adapters() -> void:
+	var identity := FirebaseIdentityAdapter.new()
+	root.add_child(identity)
+	identity.configure({"firebase_api_key": "", "platform_client": null})
+	if not identity.has_method("ensure_identity") or not identity.has_method("set_app_check_token"):
+		_fail("Firebase identity 표준 adapter 계약이 없다")
+
+	var rewards := RewardedClaimAdapter.new()
+	root.add_child(rewards)
+	rewards.configure({
+		"platform_client": null,
+		"identity_adapter": identity,
+		"client_platform": "android",
+		"claim_map_path": "user://sdk_smoke_claims.json",
+		"ack_queue_path": "user://sdk_smoke_acks.json",
+	})
+	for method in ["policy", "create_admob_claim", "ssv_options", "recover_admob_claim", "acknowledge"]:
+		if not rewards.has_method(method):
+			_fail("Rewarded claim 표준 adapter 메서드가 없다: %s" % method)
+
+	rewards.free()
+	identity.free()
 
 
 func _check_auth_role_routing() -> void:
