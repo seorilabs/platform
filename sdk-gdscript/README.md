@@ -1,17 +1,23 @@
 # Seorilabs 플랫폼 GDScript SDK
 
-Godot 앱이 플랫폼을 쓰기 위한 애드온. 인증·이벤트·설정·결제가 한 노드에 있다.
+Godot 앱이 플랫폼을 쓰기 위한 애드온. 인증·이벤트·설정·결제와 보상 광고
+SSV adapter가 한 배포본에 있다. 원본 저장소는
+`https://github.com/seorilabs/platform/tree/main/sdk-gdscript`이고 vendored addon의
+`SOURCE`, `VERSION`, `CHECKSUM`으로 출처와 내용을 고정한다.
 
 ## 가져가기
 
 GDScript에는 패키지 매니저가 없다. **파일을 복사해 간다.**
 
 ```bash
-# 소비자 저장소에서
-cp -r <platform>/sdk-gdscript/addons/seorilabs_platform game/addons/
-cp <platform>/sdk-gdscript/VERSION game/addons/seorilabs_platform/VERSION
-cp <platform>/sdk-gdscript/CHECKSUM game/addons/seorilabs_platform/CHECKSUM
+# 소비자 저장소에서. <platform>은 이 저장소의 checkout 경로다.
+<platform>/scripts/vendor_sdk_gdscript.sh \
+  --target "$PWD/game/addons/seorilabs_platform"
 ```
+
+SDK는 symlink나 런타임 네트워크 의존성으로 연결하지 않는다. 모바일 export와
+격리된 CI checkout에서도 같은 코드가 들어가도록 파일을 vendoring하고,
+`SOURCE`, `VERSION`, `CHECKSUM`으로 원본을 링크한다.
 
 `tools/`는 가져가지 않아도 된다. 검증 전용이다.
 
@@ -71,6 +77,56 @@ platform.verify_purchase(
             _apply_entitlements(res["result"]["entitlements"])
 )
 ```
+
+### Firebase 인증과 AdMob SSV
+
+게임은 Custom Token 교환과 reward claim 상태 전이를 다시 구현하지 않는다.
+공통 adapter를 만들고, 네이티브 AdMob 표시 코드에는 `custom_data`와 `user_id`만
+전달한다.
+
+```gdscript
+const FirebaseIdentity := preload(
+    "res://addons/seorilabs_platform/adapters/firebase_identity_adapter.gd")
+const RewardedClaims := preload(
+    "res://addons/seorilabs_platform/adapters/rewarded_claim_adapter.gd")
+
+var identity := FirebaseIdentity.new()
+add_child(identity)
+identity.configure({
+    "firebase_api_key": firebase_api_key,
+    "platform_client": platform,
+    "state_path": "user://firebase_auth.json",
+})
+
+var rewards := RewardedClaims.new()
+add_child(rewards)
+rewards.configure({
+    "platform_client": platform,
+    "identity_adapter": identity,
+    "client_platform": "android",
+})
+
+var policy: Dictionary = await rewards.policy()
+if not policy.get("allowed", false):
+    return
+var created: Dictionary = await rewards.create_admob_claim({
+    "request_id": local_claim_id,
+    "placement": "hint_reward",
+    "reward_key": "hint",
+    "reward_amount": 3,
+})
+var ssv := rewards.ssv_options(local_claim_id)
+# 네이티브 SDK의 ServerSideVerificationOptions에 ssv 값을 설정한다.
+
+# recover_admob_claim이 server_verified일 때 로컬 exactly-once 보상을 정산한다.
+# 로컬 정산이 끝난 뒤에만 acknowledge를 호출한다.
+await rewards.acknowledge(local_claim_id)
+```
+
+`firebase_identity_adapter.gd`는 직접 Firebase 익명 가입으로 우회하지 않는다.
+기존 UID 이전이 실패하면 fail-closed한다. `rewarded_claim_adapter.gd`는 정책 조회
+실패를 광고 허용으로 바꾸지 않고, pending claim 참조와 ack 재시도를 로컬에
+보존한다. 광고 unit, placement, reward 범위는 계속 앱 registry가 원장이다.
 
 `event_context`는 `Dictionary` 또는 `Callable`을 받는다. Callable은 배치를
 보내는 시점에 평가하므로 앱 안에서 언어가 바뀌어도 다음 flush부터 최신 locale이

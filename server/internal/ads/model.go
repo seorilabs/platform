@@ -87,6 +87,28 @@ type Health struct {
 	CheckedAt             time.Time  `json:"checkedAt"`
 }
 
+type SSVEvent string
+
+const (
+	SSVCallbackSuccess  SSVEvent = "callback_success"
+	SSVProbeSuccess     SSVEvent = "probe_success"
+	SSVSignatureInvalid SSVEvent = "signature_invalid"
+)
+
+// AppHealth는 공통 Ads 서비스에서 한 앱의 callback 상태만 분리해 보여준다.
+// Google Console probe와 실제 보상 callback을 구분해야 probe 성공을
+// 실사용 보상 성공으로 오해하지 않는다.
+type AppHealth struct {
+	AppID                 string     `json:"appId"`
+	Status                string     `json:"status"`
+	LastCallbackSuccessAt *time.Time `json:"lastCallbackSuccessAt,omitempty"`
+	LastProbeSuccessAt    *time.Time `json:"lastProbeSuccessAt,omitempty"`
+	InvalidSignatureCount int64      `json:"invalidSignatureCount"`
+	StalePendingCount     int64      `json:"stalePendingClaimCount"`
+	PolicyFailureCount    int64      `json:"policyFailureCount"`
+	CheckedAt             time.Time  `json:"checkedAt"`
+}
+
 type ClaimFilter struct {
 	AppID, Provider, State, Assurance, Placement, Reference string
 	Limit                                                   int

@@ -53,4 +53,8 @@ echo "== smoke =="
 run_probe addons/seorilabs_platform/tools/smoke_probe.gd
 
 echo
+echo "== adapters =="
+run_probe addons/seorilabs_platform/tools/adapter_probe.gd
+
+echo
 echo "GDScript SDK 검증 통과"

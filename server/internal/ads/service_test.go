@@ -17,6 +17,12 @@ type fakeRepo struct {
 	policyErr     error
 	policyFailure int
 	createErr     error
+	ssvEvents     []recordedSSVEvent
+}
+
+type recordedSSVEvent struct {
+	appID string
+	event SSVEvent
 }
 
 func (f *fakeRepo) CreateClaim(_ context.Context, c Claim, _, _ int) (Claim, error) {
@@ -72,10 +78,16 @@ func (f *fakeRepo) SuppressionHistory(context.Context, string, string, int) ([]S
 }
 func (f *fakeRepo) ListClaims(context.Context, ClaimFilter) ([]Claim, error) { return nil, nil }
 func (f *fakeRepo) Health(context.Context, time.Time) (Health, error)        { return Health{}, nil }
-func (f *fakeRepo) RecordSSVResult(context.Context, bool, time.Time) error   { return nil }
-func (f *fakeRepo) RecordPolicyFailure(context.Context) error {
+func (f *fakeRepo) RecordSSVResult(_ context.Context, appID string, event SSVEvent, _ time.Time) error {
+	f.ssvEvents = append(f.ssvEvents, recordedSSVEvent{appID: appID, event: event})
+	return nil
+}
+func (f *fakeRepo) RecordPolicyFailure(_ context.Context, _ string) error {
 	f.policyFailure++
 	return nil
+}
+func (f *fakeRepo) AppHealth(_ context.Context, appID string, now time.Time) (AppHealth, error) {
+	return AppHealth{AppID: appID, Status: "ok", CheckedAt: now}, nil
 }
 
 type fakeApps map[string]registry.App

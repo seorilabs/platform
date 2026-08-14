@@ -299,6 +299,51 @@ func (a App) AdsPlacement(id string) (AdsPlacementConfig, bool) {
 	return AdsPlacementConfig{}, false
 }
 
+// AdMobUnits는 앱이 사용하는 AdMob unit을 중복 없이 돌려준다.
+//
+// 한 앱이 여러 placement에서 같은 unit을 공유하는 것은 허용하지만,
+// 서로 다른 앱이 같은 unit을 공유하면 AdMob Console의 단일 SSV callback이
+// 어느 appId로 가야 하는지 모호해진다.
+func (a App) AdMobUnits() []string {
+	seen := map[string]struct{}{}
+	units := make([]string, 0)
+	for _, placement := range a.Ads.Placements {
+		provider, ok := placement.Providers["admob"]
+		if !ok {
+			continue
+		}
+		for _, unit := range []string{provider.AndroidAdUnitID, provider.IOSAdUnitID} {
+			if unit == "" {
+				continue
+			}
+			if _, exists := seen[unit]; exists {
+				continue
+			}
+			seen[unit] = struct{}{}
+			units = append(units, unit)
+		}
+	}
+	return units
+}
+
+// ValidateAppSet은 개별 앱 검증과 앱 사이의 전역 식별자 경계를 함께 확인한다.
+// regsync는 부분 반영 전에 이 함수를 호출해 잘못된 callback 귀속을 막는다.
+func ValidateAppSet(apps []App) error {
+	owners := map[string]string{}
+	for _, app := range apps {
+		if err := app.Validate(); err != nil {
+			return err
+		}
+		for _, unit := range app.AdMobUnits() {
+			if owner, exists := owners[unit]; exists && owner != app.AppID {
+				return fmt.Errorf("AdMob unit이 앱 사이에 중복됐다: %s, %s", owner, app.AppID)
+			}
+			owners[unit] = app.AppID
+		}
+	}
+	return nil
+}
+
 func isPlaceholder(s string) bool {
 	t := strings.TrimSpace(s)
 	switch t {

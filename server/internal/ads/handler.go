@@ -142,22 +142,26 @@ func (h *Handler) admobSSV(w http.ResponseWriter, r *http.Request) error {
 	if h.verifier == nil {
 		return platformerr.New(platformerr.CodeRuntimeConfigInvalid, "AdMob SSV 검증기가 준비되지 않았어요")
 	}
+	appID := r.PathValue("appId")
+	if _, err := h.service.AppConfig(r.Context(), appID); err != nil {
+		return err
+	}
 	result, err := h.verifier.Verify(r.Context(), r.URL.RawQuery)
 	if err != nil {
 		if platformerr.CodeOf(err) == platformerr.CodeSSVSignatureInvalid {
-			_ = h.service.repo.RecordSSVResult(r.Context(), false, h.service.now().UTC())
+			_ = h.service.repo.RecordSSVResult(r.Context(), appID, SSVSignatureInvalid, h.service.now().UTC())
 		}
 		return err
 	}
 	if isVerificationProbe(result) {
-		_ = h.service.repo.RecordSSVResult(r.Context(), true, h.service.now().UTC())
+		_ = h.service.repo.RecordSSVResult(r.Context(), appID, SSVProbeSuccess, h.service.now().UTC())
 		httpx.WriteOK(w, http.StatusOK, map[string]bool{"verified": true})
 		return nil
 	}
-	if _, err := h.service.ConfirmAdMob(r.Context(), r.PathValue("appId"), result); err != nil {
+	if _, err := h.service.ConfirmAdMob(r.Context(), appID, result); err != nil {
 		return err
 	}
-	_ = h.service.repo.RecordSSVResult(r.Context(), true, h.service.now().UTC())
+	_ = h.service.repo.RecordSSVResult(r.Context(), appID, SSVCallbackSuccess, h.service.now().UTC())
 	httpx.WriteOK(w, http.StatusOK, map[string]bool{"confirmed": true})
 	return nil
 }

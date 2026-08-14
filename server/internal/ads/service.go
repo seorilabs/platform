@@ -29,8 +29,9 @@ type Repository interface {
 	SuppressionHistory(context.Context, string, string, int) ([]SuppressionRecord, error)
 	ListClaims(context.Context, ClaimFilter) ([]Claim, error)
 	Health(context.Context, time.Time) (Health, error)
-	RecordSSVResult(context.Context, bool, time.Time) error
-	RecordPolicyFailure(context.Context) error
+	AppHealth(context.Context, string, time.Time) (AppHealth, error)
+	RecordSSVResult(context.Context, string, SSVEvent, time.Time) error
+	RecordPolicyFailure(context.Context, string) error
 }
 
 type Apps interface {
@@ -72,7 +73,7 @@ type CreateClaimInput struct {
 func (s *Service) Policy(ctx context.Context, appID, puid string) (Policy, error) {
 	app, err := s.apps.GetUsable(ctx, appID)
 	if err != nil {
-		return Policy{}, s.policyError(ctx, err)
+		return Policy{}, s.policyError(ctx, appID, err)
 	}
 	now := s.now().UTC()
 	if !app.FeatureEnabled("ads") {
@@ -80,11 +81,11 @@ func (s *Service) Policy(ctx context.Context, appID, puid string) (Policy, error
 	}
 	operator, err := s.repo.OperatorSuppressed(ctx, appID, puid)
 	if err != nil {
-		return Policy{}, s.policyError(ctx, err)
+		return Policy{}, s.policyError(ctx, appID, err)
 	}
 	active, err := s.entitlements.ListActiveForApp(ctx, app, puid)
 	if err != nil {
-		return Policy{}, s.policyError(ctx, err)
+		return Policy{}, s.policyError(ctx, appID, err)
 	}
 	disabled := make([]string, 0, 2)
 	if operator {
@@ -99,8 +100,8 @@ func (s *Service) Policy(ctx context.Context, appID, puid string) (Policy, error
 	return Policy{AppUsesAds: true, AdsEnabled: len(disabled) == 0, DisabledBy: disabled, CheckedAt: now}, nil
 }
 
-func (s *Service) policyError(ctx context.Context, err error) error {
-	_ = s.repo.RecordPolicyFailure(ctx)
+func (s *Service) policyError(ctx context.Context, appID string, err error) error {
+	_ = s.repo.RecordPolicyFailure(ctx, appID)
 	return platformerr.Wrap(err, platformerr.CodePlatformUnavailable, "광고 정책을 확인하지 못했어요")
 }
 
@@ -291,6 +292,12 @@ func (s *Service) LookupUserAds(ctx context.Context, puid string) (UserAds, erro
 
 func (s *Service) Health(ctx context.Context) (Health, error) {
 	return s.repo.Health(ctx, s.now().UTC())
+}
+func (s *Service) AppHealth(ctx context.Context, appID string) (AppHealth, error) {
+	if _, err := s.AppConfig(ctx, appID); err != nil {
+		return AppHealth{}, err
+	}
+	return s.repo.AppHealth(ctx, appID, s.now().UTC())
 }
 func (s *Service) ListClaims(ctx context.Context, filter ClaimFilter) ([]Claim, error) {
 	return s.repo.ListClaims(ctx, filter)

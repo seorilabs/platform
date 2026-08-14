@@ -74,6 +74,8 @@ done
 
 ### `ad_reward_claims` — 오래된 pending claim health
 
+전역 health는 아래 인덱스를 사용한다.
+
 | 필드 | 순서 |
 |---|---|
 | `state` | ASC |
@@ -86,6 +88,25 @@ gcloud firestore indexes composite create \
   --project=seorilabs-platform --billing-project=seorilabs-platform \
   --collection-group=ad_reward_claims \
   --query-scope=COLLECTION \
+  --field-config=field-path=state,order=ascending \
+  --field-config=field-path=createdAt,order=ascending
+```
+
+앱별 health는 다른 앱의 claim을 읽거나 전체 문서를 순회하지 않도록 아래 인덱스를
+추가로 사용한다.
+
+| 필드 | 순서 |
+|---|---|
+| `appId` | ASC |
+| `state` | ASC |
+| `createdAt` | ASC |
+
+```bash
+gcloud firestore indexes composite create \
+  --project=seorilabs-platform --billing-project=seorilabs-platform \
+  --collection-group=ad_reward_claims \
+  --query-scope=COLLECTION \
+  --field-config=field-path=appId,order=ascending \
   --field-config=field-path=state,order=ascending \
   --field-config=field-path=createdAt,order=ascending
 ```
