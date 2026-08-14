@@ -82,6 +82,7 @@ func _initialize() -> void:
 	await _check_firebase_identity()
 	await _check_rewarded_claim_flow()
 	await _check_policy_fail_closed()
+	await _check_invalid_adapter_contract()
 	_cleanup()
 
 	if _failures.is_empty():
@@ -183,6 +184,29 @@ func _check_policy_fail_closed() -> void:
 	adapter.free()
 	identity.free()
 	platform.free()
+
+
+func _check_invalid_adapter_contract() -> void:
+	var incomplete_platform := Node.new()
+	root.add_child(incomplete_platform)
+	var identity := IdentitySpy.new()
+	root.add_child(identity)
+	var adapter := RewardedClaimAdapter.new()
+	root.add_child(adapter)
+	adapter.configure({
+		"platform_client": incomplete_platform,
+		"identity_adapter": identity,
+		"client_platform": "android",
+	})
+	var result: Dictionary = await adapter.ensure_session()
+	_expect(
+		not bool(result.get("success", true))
+			and String(result.get("reason", "")) == "platform_adapter_unavailable",
+		"불완전한 Platform client 계약이 fail-closed되지 않았다",
+	)
+	adapter.free()
+	identity.free()
+	incomplete_platform.free()
 
 
 func _id_token(uid: String) -> String:

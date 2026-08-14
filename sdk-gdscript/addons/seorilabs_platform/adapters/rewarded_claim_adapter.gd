@@ -10,6 +10,14 @@ const DEFAULT_CLAIM_MAP_PATH := "user://seori_rewarded_claims.json"
 const DEFAULT_ACK_QUEUE_PATH := "user://seori_rewarded_ack_queue.json"
 const CALLBACK_TIMEOUT_MS := 15 * 1000
 const STORAGE_LIMIT := 64
+const REQUIRED_PLATFORM_METHODS := [
+	"is_signed_in",
+	"sign_in",
+	"get_ads_policy",
+	"create_reward_claim",
+	"get_reward_claim",
+	"ack_reward_claim",
+]
 
 var _platform_client: Node
 var _identity_adapter: Node
@@ -57,7 +65,7 @@ func policy() -> Dictionary:
 
 
 func ensure_session(identity: Dictionary = {}) -> Dictionary:
-	if _platform_client == null or _identity_adapter == null:
+	if not _has_required_contract():
 		return _failure("platform_adapter_unavailable")
 	if _client_platform not in ["android", "ios"]:
 		return _failure("platform_invalid")
@@ -85,6 +93,16 @@ func ensure_session(identity: Dictionary = {}) -> Dictionary:
 	if not bool(response.get("ok", false)) or not _platform_client.is_signed_in():
 		return _failure(String(response.get("code", "platform_auth_unavailable")))
 	return {"success": true}
+
+
+func _has_required_contract() -> bool:
+	if _platform_client == null or _identity_adapter == null \
+			or not _identity_adapter.has_method("ensure_identity"):
+		return false
+	for method in REQUIRED_PLATFORM_METHODS:
+		if not _platform_client.has_method(method):
+			return false
+	return true
 
 
 ## request 키: request_id, placement, reward_key, reward_amount
