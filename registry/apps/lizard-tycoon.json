@@ -30,6 +30,7 @@
     "core_tutorial_step"
   ],
   "cors_origins": [
+    "http://localhost:5173",
     "https://lizard-tycoon.apps.tossmini.com",
     "https://lizard-tycoon.private-apps.tossmini.com"
   ],
