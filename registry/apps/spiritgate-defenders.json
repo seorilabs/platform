@@ -1,0 +1,30 @@
+{
+  "app_id": "spiritgate-defenders",
+  "display_name": "스피릿게이트 디펜더스",
+  "firebase_project_id": "spiritgate-defenders",
+  "firebase_custom_token_service_account": "platform-auth@spiritgate-defenders.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": true,
+    "iap": false,
+    "ads": false,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "platform_event_allowlist": [
+    "seori_session_start",
+    "seori_sdk_error",
+    "ad_reward_click",
+    "ad_reward_completed",
+    "ad_reward_failed",
+    "iap_purchase_verified"
+  ],
+  "cors_origins": [
+    "https://seorilabs.github.io"
+  ],
+  "blocked_uids": []
+}
