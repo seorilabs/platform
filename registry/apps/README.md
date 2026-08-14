@@ -34,9 +34,16 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
     "app_store_bundle_id": "com.seorilabs.lizardtycoon",
     "entitlement_ids": ["sp_galaxy_gecko"]
   },
-  "cors_origins": []
+  "cors_origins": [
+    "https://lizard-tycoon.apps.tossmini.com",
+    "https://lizard-tycoon.private-apps.tossmini.com"
+  ]
 }
 ```
+
+`cors_origins`는 경로가 없는 정확한 `http` 또는 `https` origin만 허용한다.
+AppsInToss WebView 앱은 실제 서비스와 콘솔 QR 테스트 origin을 각각 등록한다.
+레지스트리에 없는 origin의 요청과 preflight는 서버가 거부한다.
 
 `features.firebase_custom_token_bridge`가 `true`이면 같은 Firebase 프로젝트의
 `firebase_custom_token_service_account`가 필수다. 이 값은 비밀이 아니며, private key는

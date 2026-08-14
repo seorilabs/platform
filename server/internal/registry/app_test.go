@@ -120,6 +120,42 @@ func TestEntitlementAllowedIsAppScoped(t *testing.T) {
 	}
 }
 
+func TestCORSOriginValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		origins []string
+		wantErr string
+	}{
+		{
+			name: "정확한 HTTPS origin 허용",
+			origins: []string{
+				"https://test-app.apps.tossmini.com",
+				"https://test-app.private-apps.tossmini.com",
+			},
+		},
+		{name: "경로가 있는 URL 거부", origins: []string{"https://example.com/path"}, wantErr: "올바른 origin"},
+		{name: "비 HTTP scheme 거부", origins: []string{"file://local"}, wantErr: "올바른 origin"},
+		{name: "중복 거부", origins: []string{"https://example.com", "https://example.com"}, wantErr: "중복"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := validAppForTest()
+			app.CORSOrigins = tt.origins
+			err := app.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestFirebaseCustomTokenBridgeConfigValidation(t *testing.T) {
 	tests := []struct {
 		name    string

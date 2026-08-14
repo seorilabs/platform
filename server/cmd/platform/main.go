@@ -350,6 +350,7 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		httpx.Recover(),
 		httpx.RequestID(),
 		httpx.AccessLog(),
+		httpx.CORS(d.registry),
 		httpx.Timeout(30*time.Second),
 	), nil
 }

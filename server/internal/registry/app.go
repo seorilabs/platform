@@ -8,6 +8,7 @@ package registry
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -212,12 +213,31 @@ func (a App) Validate() error {
 	if err := a.validateAds(); err != nil {
 		return err
 	}
+	if err := a.validateCORSOrigins(); err != nil {
+		return err
+	}
 	// placeholder가 남은 채 배포되면 런타임에 이상하게 동작한다.
 	// 부팅 시점에 잡는 편이 낫다.
 	for _, v := range []string{a.AppID, a.DisplayName, a.FirebaseProjectID} {
 		if isPlaceholder(v) {
 			return fmt.Errorf("%s: placeholder가 남아 있다: %q", a.AppID, v)
 		}
+	}
+	return nil
+}
+
+func (a App) validateCORSOrigins() error {
+	seen := make(map[string]struct{}, len(a.CORSOrigins))
+	for _, origin := range a.CORSOrigins {
+		u, err := url.Parse(origin)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("%s: cors_origins 값이 올바른 origin이 아니다: %q", a.AppID, origin)
+		}
+		if _, exists := seen[origin]; exists {
+			return fmt.Errorf("%s: cors_origins가 중복됐다: %q", a.AppID, origin)
+		}
+		seen[origin] = struct{}{}
 	}
 	return nil
 }
