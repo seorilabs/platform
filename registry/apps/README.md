@@ -35,6 +35,7 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
     "entitlement_ids": ["sp_galaxy_gecko"]
   },
   "cors_origins": [
+    "http://localhost:5173",
     "https://lizard-tycoon.apps.tossmini.com",
     "https://lizard-tycoon.private-apps.tossmini.com"
   ]
@@ -43,6 +44,8 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
 
 `cors_origins`는 경로가 없는 정확한 `http` 또는 `https` origin만 허용한다.
 AppsInToss WebView 앱은 실제 서비스와 콘솔 QR 테스트 origin을 각각 등록한다.
+로컬 샌드박스에서 백엔드 E2E를 검증하는 앱은 Granite Web 서버의 정확한
+`http://localhost:<port>` origin도 앱별로 등록한다.
 레지스트리에 없는 origin의 요청과 preflight는 서버가 거부한다.
 
 `features.firebase_custom_token_bridge`가 `true`이면 같은 Firebase 프로젝트의
