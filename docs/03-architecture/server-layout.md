@@ -27,6 +27,7 @@ server/
     ├── identity/          토큰 검증, platform_user
     ├── config/            RemoteConfig
     ├── events/            이벤트 수집 → BigQuery
+    ├── ads/               앱별 광고 정책, claim, SSV 검증과 상태
     └── iap/
         ├── domain/        ★ 값 타입과 불변식 상수만. 인터페이스 없음
         ├── verify/        유스케이스. ★ 여기서 인터페이스를 정의한다
@@ -75,6 +76,8 @@ flowchart TD
 2. **`iap/verify`가 인터페이스를 정의하고 `ledger`·`providers`가 구현한다.** 구현 패키지는 `verify`를 import하지 않는다
 3. **`store` 밖에서 Firestore 클라이언트를 만들지 않는다**
 4. `cmd/platform`만 모든 것을 조립한다. 패키지 간 직접 조립 금지
+5. `ads`는 앱 레지스트리를 경계로 사용하고, callback path의 앱과 claim의
+   앱·사용자·광고 unit·reward가 모두 일치할 때만 `server_verified`로 전이한다
 
 ## 인터페이스 배치 — 절충안
 

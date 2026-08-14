@@ -23,6 +23,7 @@ const (
 	grantsCollection        = "ad_suppression_grants"
 	revocationsCollection   = "ad_suppression_revocations"
 	healthDocument          = "ad_health/current"
+	appHealthCollection     = "ad_app_health"
 )
 
 type StoreRepository struct{ store *store.Client }
@@ -59,6 +60,13 @@ type healthDoc struct {
 	InvalidSignatureCount int64      `firestore:"invalidSignatureCount"`
 	PolicyFailureCount    int64      `firestore:"policyFailureCount"`
 }
+type appHealthDoc struct {
+	AppID                 string     `firestore:"appId"`
+	LastCallbackSuccessAt *time.Time `firestore:"lastCallbackSuccessAt,omitempty"`
+	LastProbeSuccessAt    *time.Time `firestore:"lastProbeSuccessAt,omitempty"`
+	InvalidSignatureCount int64      `firestore:"invalidSignatureCount"`
+	PolicyFailureCount    int64      `firestore:"policyFailureCount"`
+}
 
 func path(raw string) (fspath.Path, error)     { return fspath.Parse(raw) }
 func claimPath(id string) (fspath.Path, error) { return path(claimsCollection + "/" + id) }
@@ -73,6 +81,9 @@ func usagePath(in ConfirmInput, placement, date string) (fspath.Path, error) {
 }
 func policyPath(appID, puid string) (fspath.Path, error) {
 	return path(policyCollection + "/" + hash(appID+"\x00"+puid))
+}
+func appHealthPath(appID string) (fspath.Path, error) {
+	return path(appHealthCollection + "/" + hash(appID))
 }
 
 func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, cooldownSeconds int) (Claim, error) {
@@ -518,19 +529,65 @@ func (r *StoreRepository) Health(ctx context.Context, now time.Time) (Health, er
 	return Health{Status: "ok", LastSSVSuccessAt: doc.LastSSVSuccessAt, InvalidSignatureCount: doc.InvalidSignatureCount, StalePendingCount: count, PolicyFailureCount: doc.PolicyFailureCount, CheckedAt: now}, nil
 }
 
-func (r *StoreRepository) RecordSSVResult(ctx context.Context, valid bool, now time.Time) error {
+func (r *StoreRepository) AppHealth(ctx context.Context, appID string, now time.Time) (AppHealth, error) {
+	p, _ := appHealthPath(appID)
+	doc := appHealthDoc{AppID: appID}
+	snap, err := r.store.Get(ctx, p)
+	if err == nil {
+		if err := snap.DataTo(&doc); err != nil {
+			return AppHealth{}, err
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return AppHealth{}, wrapStore(err, "앱 광고 서비스 상태를 읽지 못했어요")
+	}
+	cp, _ := path(claimsCollection)
+	count, err := r.store.Count(ctx, cp, func(q firestore.Query) firestore.Query {
+		return q.Where("appId", "==", appID).
+			Where("state", "==", string(StateAccepted)).
+			Where("createdAt", "<=", now.Add(-24*time.Hour))
+	})
+	if err != nil {
+		return AppHealth{}, wrapStore(err, "앱의 오래된 claim을 집계하지 못했어요")
+	}
+	return AppHealth{
+		AppID: appID, Status: "ok", LastCallbackSuccessAt: doc.LastCallbackSuccessAt,
+		LastProbeSuccessAt: doc.LastProbeSuccessAt, InvalidSignatureCount: doc.InvalidSignatureCount,
+		StalePendingCount: count, PolicyFailureCount: doc.PolicyFailureCount, CheckedAt: now,
+	}, nil
+}
+
+func (r *StoreRepository) RecordSSVResult(ctx context.Context, appID string, event SSVEvent, now time.Time) error {
 	p, _ := path(healthDocument)
 	data := map[string]any{}
-	if valid {
+	appData := map[string]any{"appId": appID}
+	switch event {
+	case SSVCallbackSuccess:
 		data["lastSsvSuccessAt"] = now
-	} else {
+		appData["lastCallbackSuccessAt"] = now
+	case SSVProbeSuccess:
+		data["lastSsvSuccessAt"] = now
+		appData["lastProbeSuccessAt"] = now
+	case SSVSignatureInvalid:
 		data["invalidSignatureCount"] = firestore.Increment(1)
+		appData["invalidSignatureCount"] = firestore.Increment(1)
+	default:
+		return platformerr.New(platformerr.CodeInternal, "알 수 없는 SSV 상태예요")
 	}
-	return r.store.Set(ctx, p, data, firestore.MergeAll)
+	if err := r.store.Set(ctx, p, data, firestore.MergeAll); err != nil {
+		return err
+	}
+	appPath, _ := appHealthPath(appID)
+	return r.store.Set(ctx, appPath, appData, firestore.MergeAll)
 }
-func (r *StoreRepository) RecordPolicyFailure(ctx context.Context) error {
+func (r *StoreRepository) RecordPolicyFailure(ctx context.Context, appID string) error {
 	p, _ := path(healthDocument)
-	return r.store.Set(ctx, p, map[string]any{"policyFailureCount": firestore.Increment(1)}, firestore.MergeAll)
+	if err := r.store.Set(ctx, p, map[string]any{"policyFailureCount": firestore.Increment(1)}, firestore.MergeAll); err != nil {
+		return err
+	}
+	appPath, _ := appHealthPath(appID)
+	return r.store.Set(ctx, appPath, map[string]any{
+		"appId": appID, "policyFailureCount": firestore.Increment(1),
+	}, firestore.MergeAll)
 }
 
 func wrapStore(err error, message string) error {

@@ -1340,6 +1340,19 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /admin/apps/{appId}/ads/health:
+    get:
+      tags: [admin, ads]
+      summary: 앱별 SSV와 광고 정책 상태 조회
+      security: [{ AdminOidc: [] }]
+      parameters: [{ name: appId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Google probe와 실제 callback을 구분한 앱별 상태
+          content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, required: [result], properties: { result: { $ref: '#/components/schemas/AdminAppAdsHealth' } } }] } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /admin/users/{puid}/ads:
     get:
       tags: [admin, ads]
@@ -1608,6 +1621,20 @@ components:
       properties:
         status: { type: string, enum: [ok] }
         lastSsvSuccessAt: { type: string, format: date-time }
+        invalidSignatureCount: { type: integer, minimum: 0 }
+        stalePendingClaimCount: { type: integer, minimum: 0 }
+        policyFailureCount: { type: integer, minimum: 0 }
+        checkedAt: { type: string, format: date-time }
+
+    AdminAppAdsHealth:
+      type: object
+      required: [appId, status, invalidSignatureCount, stalePendingClaimCount, policyFailureCount, checkedAt]
+      additionalProperties: false
+      properties:
+        appId: { type: string }
+        status: { type: string, enum: [ok] }
+        lastCallbackSuccessAt: { type: string, format: date-time }
+        lastProbeSuccessAt: { type: string, format: date-time }
         invalidSignatureCount: { type: integer, minimum: 0 }
         stalePendingClaimCount: { type: integer, minimum: 0 }
         policyFailureCount: { type: integer, minimum: 0 }

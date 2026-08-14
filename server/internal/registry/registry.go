@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -178,9 +179,18 @@ func (r *Registry) load(ctx context.Context) error {
 	// package name 중복은 어느 appId로 귀속해도 위험하다. 두 항목 모두
 	// 제외해 요청 시 config_unavailable로 드러나게 한다.
 	packageCounts := make(map[string]int)
+	adMobOwners := make(map[string]map[string]struct{})
 	for _, a := range apps {
 		if a.Validate() == nil && a.FeatureEnabled("iap") && a.MarketEnabled("google_play") {
 			packageCounts[a.IAP.GooglePlayPackageName]++
+		}
+		if a.Validate() == nil && a.FeatureEnabled("ads") {
+			for _, unit := range a.AdMobUnits() {
+				if adMobOwners[unit] == nil {
+					adMobOwners[unit] = map[string]struct{}{}
+				}
+				adMobOwners[unit][a.AppID] = struct{}{}
+			}
 		}
 	}
 
@@ -199,6 +209,18 @@ func (r *Registry) load(ctx context.Context) error {
 				"app_id", a.AppID)
 			continue
 		}
+		adMobConflict := false
+		for _, unit := range a.AdMobUnits() {
+			if len(adMobOwners[unit]) > 1 {
+				slog.ErrorContext(ctx, "AdMob unit이 앱 사이에 중복됐다. 앱을 건너뛴다",
+					"app_id", a.AppID, "ad_unit_suffix", unitSuffix(unit))
+				adMobConflict = true
+				break
+			}
+		}
+		if adMobConflict {
+			continue
+		}
 		next[a.AppID] = a
 	}
 
@@ -213,6 +235,13 @@ func (r *Registry) load(ctx context.Context) error {
 
 	slog.InfoContext(ctx, "레지스트리 로드", "count", len(next))
 	return nil
+}
+
+func unitSuffix(value string) string {
+	if i := strings.LastIndexByte(value, '/'); i >= 0 {
+		return value[i+1:]
+	}
+	return value
 }
 
 // FSSource는 파일 시스템에서 레지스트리를 읽는다.

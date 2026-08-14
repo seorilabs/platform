@@ -174,3 +174,49 @@ func TestFirebaseCustomTokenBridgeConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateAppSetRejectsCrossAppAdMobUnitReuse(t *testing.T) {
+	first := validAppForTest()
+	first.AppID = "ads-one"
+	first.FirebaseProjectID = "ads-one"
+	first.Features = map[string]bool{"ads": true}
+	first.IAP = IAPConfig{}
+	first.Ads = rewardedAdsForTest("ca-app-pub-0000000000000000/1234567890")
+
+	second := first
+	second.AppID = "ads-two"
+	second.FirebaseProjectID = "ads-two"
+	second.Ads = rewardedAdsForTest("ca-app-pub-0000000000000000/1234567890")
+
+	err := ValidateAppSet([]App{first, second})
+	if err == nil || !strings.Contains(err.Error(), "앱 사이에 중복") {
+		t.Fatalf("ValidateAppSet() error = %v", err)
+	}
+}
+
+func TestValidateAppSetAllowsUnitReuseInsideOneApp(t *testing.T) {
+	app := validAppForTest()
+	app.AppID = "ads-one"
+	app.FirebaseProjectID = "ads-one"
+	app.Features = map[string]bool{"ads": true}
+	app.IAP = IAPConfig{}
+	app.Ads = rewardedAdsForTest("ca-app-pub-0000000000000000/1234567890")
+	second := app.Ads.Placements[0]
+	second.ID = "reward-two"
+	app.Ads.Placements = append(app.Ads.Placements, second)
+
+	if err := ValidateAppSet([]App{app}); err != nil {
+		t.Fatalf("ValidateAppSet() error = %v", err)
+	}
+}
+
+func rewardedAdsForTest(unit string) AdsConfig {
+	return AdsConfig{
+		Providers: []string{"admob"},
+		Placements: []AdsPlacementConfig{{
+			ID: "reward-one", Format: "rewarded", DailyLimit: 3, CooldownSeconds: 30,
+			Providers: map[string]AdsProviderConfig{"admob": {AndroidAdUnitID: unit}},
+			Reward:    &AdsRewardConfig{Key: "credit", MinAmount: 1, MaxAmount: 10},
+		}},
+	}
+}

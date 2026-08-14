@@ -41,6 +41,21 @@ accepted -- 24h --------> expired
 
 광고 설정 변경은 `registry/apps/*.json` 수정, 리뷰, `regsync`, live readback 순서로만 수행한다. Admin UI는 읽기 전용 설정을 표시하고 직접 수정하지 않는다.
 
+### 멀티앱 SSV 경계
+
+- callback은 `/v1/ads/admob/ssv/{appId}`로 받고 claim의 `appId`, 사용자,
+  provider, 광고 unit, reward를 모두 대조한다.
+- 같은 앱 안에서는 placement가 AdMob unit을 공유할 수 있지만 서로 다른 앱은
+  같은 unit을 등록할 수 없다. `regsync`가 전체 레지스트리를 검사해 부분 반영 전에
+  실패하고 런타임도 충돌한 앱을 제외한다.
+- 전역 `/v1/admin/ads/health`는 기존 운영 호환을 위해 유지한다. 신규 운영은
+  `/v1/admin/apps/{appId}/ads/health`를 사용해 Google Console probe와 실제 보상
+  callback 성공을 구분한다. 앱별 stale claim 집계는 `appId + state + createdAt`
+  복합 인덱스가 `READY`인 뒤 배포한다.
+- 새 Godot 게임은 `sdk-gdscript`의 Firebase identity와 rewarded claim adapter를
+  vendoring한다. 게임 코드는 네이티브 광고 표시와 로컬 보상 정산만 소유하고,
+  Platform 로그인·정책·claim·SSV 조회·ack 순서를 다시 구현하지 않는다.
+
 `platform-ads` 배포 전에는 전용 runtime service account와 Firestore 권한,
 `platform-session-secret` 접근 권한을 준비한다. AppsInToss 로그인은 승인된 mTLS
 certificate와 key를 별도 Secret Manager gate로 마운트한 뒤에만 활성화한다. 인증서가

@@ -71,12 +71,10 @@ func run(args []string) error {
 		return fmt.Errorf("%s 에 레지스트리 파일이 없다", abs)
 	}
 
-	// 쓰기 전에 전부 검증한다.
+	// 쓰기 전에 개별 앱과 앱 사이의 전역 식별자를 함께 검증한다.
 	// 하나라도 잘못됐으면 아무것도 쓰지 않는다. 부분 적용이 더 나쁘다.
-	for _, a := range apps {
-		if err := a.Validate(); err != nil {
-			return fmt.Errorf("검증 실패: %w", err)
-		}
+	if err := registry.ValidateAppSet(apps); err != nil {
+		return fmt.Errorf("검증 실패: %w", err)
 	}
 	fmt.Printf("검증 통과: %d개\n", len(apps))
 

@@ -15,6 +15,7 @@ import (
 
 type AdsService interface {
 	Health(context.Context) (platformads.Health, error)
+	AppHealth(context.Context, string) (platformads.AppHealth, error)
 	AppConfig(context.Context, string) (registry.App, error)
 	LookupUserAds(context.Context, string) (platformads.UserAds, error)
 	ListClaims(context.Context, platformads.ClaimFilter) ([]platformads.Claim, error)
@@ -29,7 +30,7 @@ func RegisterAds(mux *http.ServeMux, auth *Authenticator, service AdsService) er
 		return platformerr.New(platformerr.CodeRuntimeConfigInvalid, "Ads Admin API 설정이 올바르지 않아요")
 	}
 	h := &adsAdminHandler{service: service}
-	reads := map[string]httpx.Handler{"GET /v1/admin/ads/health": h.health, "GET /v1/admin/apps/{appId}/ads/config": h.config, "GET /v1/admin/users/{puid}/ads": h.user, "GET /v1/admin/ads/reward-claims": h.claims}
+	reads := map[string]httpx.Handler{"GET /v1/admin/ads/health": h.health, "GET /v1/admin/apps/{appId}/ads/health": h.appHealth, "GET /v1/admin/apps/{appId}/ads/config": h.config, "GET /v1/admin/users/{puid}/ads": h.user, "GET /v1/admin/ads/reward-claims": h.claims}
 	writes := map[string]httpx.Handler{"POST /v1/admin/ads/suppressions/grant": h.grant, "POST /v1/admin/ads/suppressions/revoke": h.revoke}
 	for pattern, handler := range reads {
 		mux.Handle(pattern, auth.Middleware(AccessRead, http.HandlerFunc(httpx.Wrap(handler))))
@@ -37,6 +38,15 @@ func RegisterAds(mux *http.ServeMux, auth *Authenticator, service AdsService) er
 	for pattern, handler := range writes {
 		mux.Handle(pattern, auth.Middleware(AccessWrite, http.HandlerFunc(httpx.Wrap(handler))))
 	}
+	return nil
+}
+
+func (h *adsAdminHandler) appHealth(w http.ResponseWriter, r *http.Request) error {
+	result, err := h.service.AppHealth(r.Context(), r.PathValue("appId"))
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusOK, result)
 	return nil
 }
 

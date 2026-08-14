@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 func TestAdMobVerifierChecksSignatureAndFields(t *testing.T) {
@@ -118,5 +119,94 @@ func TestAdMobClaimOwnershipAndUnitAreBound(t *testing.T) {
 				t.Fatalf("code = %q, want %q", platformerr.CodeOf(err), tc.code)
 			}
 		})
+	}
+}
+
+func TestAdMobCallbackCannotCrossAppBoundary(t *testing.T) {
+	first := rewardedApp()
+	second := rewardedApp()
+	second.AppID = "other-game"
+	second.Ads.Placements[0].Providers["admob"] = registry.AdsProviderConfig{
+		AndroidAdUnitID: "ca-app-pub-0000000000000000/9999999999",
+		RewardItem:      "harvest_boost", RewardAmount: 1,
+	}
+	repo := &fakeRepo{claims: map[string]Claim{
+		"cl_1": {
+			ClaimID: "cl_1", AppID: first.AppID, PlatformUserID: "pu_1",
+			PlacementID: "harvest_boost", Provider: "admob", ClientPlatform: "android",
+			State: StateAccepted,
+		},
+	}}
+	svc, err := NewService(repo, fakeApps{first.AppID: first, second.AppID: second}, fakeEntitlements{}, fakeUsers{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ConfirmAdMob(context.Background(), second.AppID, SSVResult{
+		ClaimID: "cl_1", PlatformUserID: "pu_1", AdUnitID: "9999999999",
+		TransactionID: "tx", RewardItem: "harvest_boost", RewardAmount: 1,
+	})
+	if platformerr.CodeOf(err) != platformerr.CodeClaimOwnershipMismatch {
+		t.Fatalf("code = %q, want %q", platformerr.CodeOf(err), platformerr.CodeClaimOwnershipMismatch)
+	}
+}
+
+type fixedSSVVerifier struct {
+	result SSVResult
+	err    error
+	calls  int
+}
+
+func (v *fixedSSVVerifier) Verify(context.Context, string) (SSVResult, error) {
+	v.calls++
+	return v.result, v.err
+}
+
+func TestAdMobHandlerSeparatesProbeAndCallbackPerApp(t *testing.T) {
+	app := rewardedApp()
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	repo := &fakeRepo{claims: map[string]Claim{
+		"cl_1": {
+			ClaimID: "cl_1", AppID: app.AppID, PlatformUserID: "pu_1",
+			PlacementID: "harvest_boost", Provider: "admob", ClientPlatform: "android",
+			State: StateAccepted, CreatedAt: now, ExpiresAt: now.Add(24 * time.Hour),
+		},
+	}}
+	svc, err := NewService(repo, fakeApps{app.AppID: app}, fakeEntitlements{}, fakeUsers{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.WithClock(func() time.Time { return now })
+	probeVerifier := &fixedSSVVerifier{result: SSVResult{
+		AdNetworkID: "5450213213286189855", AdUnitID: "1234567890", TransactionID: "123456789",
+	}}
+	handler := NewHandler(svc, nil, probeVerifier)
+	request := httptest.NewRequest(http.MethodGet, "/v1/ads/admob/ssv/happy-farm", nil)
+	request.SetPathValue("appId", app.AppID)
+	if err := handler.admobSSV(httptest.NewRecorder(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.ssvEvents) != 1 || repo.ssvEvents[0] != (recordedSSVEvent{appID: app.AppID, event: SSVProbeSuccess}) {
+		t.Fatalf("probe events = %#v", repo.ssvEvents)
+	}
+
+	callbackVerifier := &fixedSSVVerifier{result: SSVResult{
+		ClaimID: "cl_1", PlatformUserID: "pu_1", AdUnitID: "1234567890",
+		TransactionID: "tx-1", RewardItem: "harvest_boost", RewardAmount: 1,
+	}}
+	handler.verifier = callbackVerifier
+	if err := handler.admobSSV(httptest.NewRecorder(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.ssvEvents) != 2 || repo.ssvEvents[1] != (recordedSSVEvent{appID: app.AppID, event: SSVCallbackSuccess}) {
+		t.Fatalf("callback events = %#v", repo.ssvEvents)
+	}
+
+	unknownRequest := httptest.NewRequest(http.MethodGet, "/v1/ads/admob/ssv/unknown", nil)
+	unknownRequest.SetPathValue("appId", "unknown")
+	if err := handler.admobSSV(httptest.NewRecorder(), unknownRequest); platformerr.CodeOf(err) != platformerr.CodeAppUnknown {
+		t.Fatalf("unknown app code = %q", platformerr.CodeOf(err))
+	}
+	if callbackVerifier.calls != 1 {
+		t.Fatalf("unknown app reached verifier: calls=%d", callbackVerifier.calls)
 	}
 }
