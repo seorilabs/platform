@@ -208,6 +208,27 @@ func _check_invalid_adapter_contract() -> void:
 	identity.free()
 	incomplete_platform.free()
 
+	var platform := PlatformSpy.new()
+	root.add_child(platform)
+	var incomplete_identity := Node.new()
+	root.add_child(incomplete_identity)
+	var identity_adapter := RewardedClaimAdapter.new()
+	root.add_child(identity_adapter)
+	identity_adapter.configure({
+		"platform_client": platform,
+		"identity_adapter": incomplete_identity,
+		"client_platform": "android",
+	})
+	var identity_result: Dictionary = await identity_adapter.ensure_session()
+	_expect(
+		not bool(identity_result.get("success", true))
+			and String(identity_result.get("reason", "")) == "platform_adapter_unavailable",
+		"불완전한 identity adapter 계약이 fail-closed되지 않았다",
+	)
+	identity_adapter.free()
+	incomplete_identity.free()
+	platform.free()
+
 
 func _id_token(uid: String) -> String:
 	var payload := Marshalls.utf8_to_base64(JSON.stringify({"user_id": uid, "sub": uid}))
