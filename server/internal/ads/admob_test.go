@@ -21,6 +21,25 @@ import (
 	"github.com/seorilabs/platform/server/internal/registry"
 )
 
+type ssvQueryParam struct{ key, value string }
+
+func signSSVQuery(t *testing.T, privateKey *ecdsa.PrivateKey, params []ssvQueryParam) string {
+	t.Helper()
+	signedData := ""
+	for i, item := range params {
+		if i > 0 {
+			signedData += "&"
+		}
+		signedData += url.QueryEscape(item.key) + "=" + url.QueryEscape(item.value)
+	}
+	digest := sha256.Sum256([]byte(signedData))
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signedData + "&signature=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString(signature)) + "&key_id=7"
+}
+
 func TestAdMobVerifierChecksSignatureAndFields(t *testing.T) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -39,7 +58,7 @@ func TestAdMobVerifierChecksSignatureAndFields(t *testing.T) {
 	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	verifier := NewAdMobVerifier(keys.Client(), keys.URL)
 	verifier.now = func() time.Time { return now }
-	params := []struct{ key, value string }{
+	params := []ssvQueryParam{
 		{"ad_network", "5450213213286189855"},
 		{"ad_unit", "1234567890"},
 		{"custom_data", "cl_12345678-1234-1234-1234-123456789abc"},
@@ -49,19 +68,7 @@ func TestAdMobVerifierChecksSignatureAndFields(t *testing.T) {
 		{"transaction_id", "transaction-1"},
 		{"user_id", "pu_123"},
 	}
-	signedData := ""
-	for i, item := range params {
-		if i > 0 {
-			signedData += "&"
-		}
-		signedData += url.QueryEscape(item.key) + "=" + url.QueryEscape(item.value)
-	}
-	digest := sha256.Sum256([]byte(signedData))
-	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw := signedData + "&signature=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString(signature)) + "&key_id=7"
+	raw := signSSVQuery(t, privateKey, params)
 
 	result, err := verifier.Verify(context.Background(), raw)
 	if err != nil {
@@ -85,6 +92,56 @@ func TestAdMobVerifierChecksSignatureAndFields(t *testing.T) {
 			t.Fatalf("code = %q", platformerr.CodeOf(err))
 		}
 	})
+}
+
+func TestAdMobVerifierAcceptsConsoleProbeWithoutOptionalFields(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	keys := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{"keyId": 7, "pem": publicPEM}}})
+	}))
+	defer keys.Close()
+
+	now := time.Date(2026, 8, 15, 4, 0, 0, 0, time.UTC)
+	verifier := NewAdMobVerifier(keys.Client(), keys.URL)
+	verifier.now = func() time.Time { return now }
+	params := []ssvQueryParam{
+		{"ad_network", "5450213213286189855"},
+		{"ad_unit", "1234567890"},
+		{"reward_amount", "1"},
+		{"reward_item", "in_game_bonus"},
+		{"timestamp", strconv.FormatInt(now.UnixMilli(), 10)},
+		{"transaction_id", "123456789"},
+	}
+	raw := signSSVQuery(t, privateKey, params)
+
+	result, err := verifier.Verify(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("AdMob console probe rejected: %v", err)
+	}
+	if !isVerificationProbe(result) || result.ClaimID != "" || result.PlatformUserID != "" {
+		t.Fatalf("probe result = %#v", result)
+	}
+
+	missingClaimAndUser := signSSVQuery(t, privateKey, []ssvQueryParam{
+		{"ad_network", "5450213213286189855"},
+		{"ad_unit", "6693003024"},
+		{"reward_amount", "1"},
+		{"reward_item", "in_game_bonus"},
+		{"timestamp", strconv.FormatInt(now.UnixMilli(), 10)},
+		{"transaction_id", "real-transaction"},
+	})
+	_, err = verifier.Verify(context.Background(), missingClaimAndUser)
+	if platformerr.CodeOf(err) != platformerr.CodeSSVInvalid {
+		t.Fatalf("missing claim/user code = %q", platformerr.CodeOf(err))
+	}
 }
 
 func TestAdMobClaimOwnershipAndUnitAreBound(t *testing.T) {
