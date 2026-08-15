@@ -64,7 +64,11 @@ func (v *AdMobVerifier) Verify(ctx context.Context, rawQuery string) (SSVResult,
 	if err != nil {
 		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV query가 올바르지 않아요")
 	}
-	required := []string{"ad_network", "ad_unit", "custom_data", "reward_amount", "reward_item", "signature", "timestamp", "transaction_id", "user_id", "key_id"}
+	// custom_data와 user_id는 SDK에서 값을 설정했을 때만 전송된다. AdMob
+	// 콘솔의 URL 검증 probe도 두 값을 생략하므로 서명 검증 자체의 필수
+	// 파라미터로 취급하지 않는다. 실제 보상 callback은 아래에서 두 값을
+	// 다시 요구해 claim과 사용자의 결합을 느슨하게 만들지 않는다.
+	required := []string{"ad_network", "ad_unit", "reward_amount", "reward_item", "signature", "timestamp", "transaction_id", "key_id"}
 	for _, key := range required {
 		if params.Get(key) == "" {
 			return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV 필수 값이 없어요")
@@ -108,11 +112,14 @@ func (v *AdMobVerifier) Verify(ctx context.Context, rawQuery string) (SSVResult,
 		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV reward가 올바르지 않아요")
 	}
 	result := SSVResult{AdNetworkID: params.Get("ad_network"), AdUnitID: params.Get("ad_unit"), ClaimID: params.Get("custom_data"), TransactionID: params.Get("transaction_id"), PlatformUserID: params.Get("user_id"), RewardItem: params.Get("reward_item"), RewardAmount: rewardAmount, Timestamp: timestamp}
-	if !numericPattern.MatchString(result.AdUnitID) || !validSSVValue(result.TransactionID, 256) || !validSSVValue(result.PlatformUserID, 128) {
+	if !numericPattern.MatchString(result.AdUnitID) || !validSSVValue(result.TransactionID, 256) {
 		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV 식별자가 올바르지 않아요")
 	}
-	if !isVerificationProbe(result) && !claimIDPattern.MatchString(result.ClaimID) {
-		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV claim ID가 올바르지 않아요")
+	if isVerificationProbe(result) {
+		return result, nil
+	}
+	if !validSSVValue(result.PlatformUserID, 128) || !claimIDPattern.MatchString(result.ClaimID) {
+		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV claim 또는 사용자 ID가 올바르지 않아요")
 	}
 	return result, nil
 }
