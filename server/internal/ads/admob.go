@@ -119,7 +119,7 @@ func (v *AdMobVerifier) Verify(ctx context.Context, rawQuery string) (SSVResult,
 		return result, nil
 	}
 	if !validSSVValue(result.PlatformUserID, 128) || !claimIDPattern.MatchString(result.ClaimID) {
-		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV claim ID가 올바르지 않아요")
+		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV claim 또는 사용자 ID가 올바르지 않아요")
 	}
 	return result, nil
 }
