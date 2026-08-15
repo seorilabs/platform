@@ -35,6 +35,12 @@ func TestSpiritgateDefendersRejectsRewardsOutsideRegistryRange(t *testing.T) {
 	}
 
 	for _, placement := range spiritgate.Ads.Placements {
+		if placement.Format != "rewarded" {
+			continue
+		}
+		if placement.Reward == nil {
+			t.Fatalf("%s: rewarded 지면에 보상 계약이 없다", placement.ID)
+		}
 		for _, amount := range []int{placement.Reward.MinAmount - 1, placement.Reward.MaxAmount + 1} {
 			t.Run(placement.ID+"_reject_"+strconv.Itoa(amount), func(t *testing.T) {
 				_, err := svc.CreateClaim(context.Background(), CreateClaimInput{

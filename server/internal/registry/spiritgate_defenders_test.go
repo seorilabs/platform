@@ -57,6 +57,7 @@ func TestSpiritgateDefendersAdsRegistryContract(t *testing.T) {
 		if !ok {
 			t.Fatalf("예상하지 않은 광고 지면: %q", placement.ID)
 		}
+		delete(wantPlacements, placement.ID)
 		provider, ok := placement.Providers["admob"]
 		if !ok {
 			t.Fatalf("%s: AdMob provider가 없다", placement.ID)
@@ -74,6 +75,9 @@ func TestSpiritgateDefendersAdsRegistryContract(t *testing.T) {
 		if provider.RewardItem != "in_game_bonus" || provider.RewardAmount != 1 {
 			t.Fatalf("%s: SSV 보상 계약이 다르다: %#v", placement.ID, provider)
 		}
+	}
+	if len(wantPlacements) != 0 {
+		t.Fatalf("누락된 광고 지면이 있다: %#v", wantPlacements)
 	}
 
 	for _, event := range []string{"ad_reward_requested", "ad_reward_granted", "ad_request_ignored", "ad_impression"} {
