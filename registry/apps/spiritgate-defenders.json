@@ -20,8 +20,7 @@
     "seori_sdk_error",
     "ad_reward_click",
     "ad_reward_completed",
-    "ad_reward_failed",
-    "iap_purchase_verified"
+    "ad_reward_failed"
   ],
   "cors_origins": [
     "https://seorilabs.github.io"
