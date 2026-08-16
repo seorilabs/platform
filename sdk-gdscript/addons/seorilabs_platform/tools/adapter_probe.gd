@@ -164,6 +164,16 @@ func _check_rewarded_claim_flow() -> void:
 	_expect(String(recovered.get("status", "")) == "verified", "server_verified claim을 복원하지 못했다")
 	_expect(await adapter.acknowledge("local-1"), "ack가 실패했다")
 	_expect(adapter.ssv_options("local-1").is_empty(), "ack 뒤 claim 참조가 남았다")
+	var failed_request := {
+		"request_id": "local-failed", "placement": "hint",
+		"reward_key": "hint", "reward_amount": 3,
+	}
+	_expect(
+		bool((await adapter.create_admob_claim(failed_request)).get("success", false)),
+		"폐기 검사용 claim 생성이 실패했다",
+	)
+	_expect(adapter.discard_failed_claim("local-failed"), "최종 실패 claim을 폐기하지 못했다")
+	_expect(adapter.ssv_options("local-failed").is_empty(), "폐기 뒤 claim 참조가 남았다")
 	adapter.free()
 	identity.free()
 	platform.free()

@@ -152,7 +152,10 @@ func _check_standard_adapters() -> void:
 		"claim_map_path": "user://sdk_smoke_claims.json",
 		"ack_queue_path": "user://sdk_smoke_acks.json",
 	})
-	for method in ["policy", "create_admob_claim", "ssv_options", "recover_admob_claim", "acknowledge"]:
+	for method in [
+		"policy", "create_admob_claim", "ssv_options", "recover_admob_claim",
+		"acknowledge", "discard_failed_claim",
+	]:
 		if not rewards.has_method(method):
 			_fail("Rewarded claim 표준 adapter 메서드가 없다: %s" % method)
 
