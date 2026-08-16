@@ -19,6 +19,7 @@ var _platform_client: Node
 var _state_path := DEFAULT_STATE_PATH
 var _app_check_token := ""
 var _state: Dictionary = {}
+var _current_id_token := ""
 var _loaded := false
 var _state_valid := true
 var _state_dirty := false
@@ -53,7 +54,7 @@ func ensure_identity() -> Dictionary:
 
 	var now := int(Time.get_unix_time_from_system())
 	var platform_managed := String(_state.get("auth_provider", "")) == PLATFORM_AUTH_PROVIDER
-	var id_token := String(_state.get("id_token", ""))
+	var id_token := _current_id_token
 	if platform_managed and not id_token.is_empty() \
 			and int(_state.get("expires_at", 0)) > now + TOKEN_REFRESH_MARGIN_SECONDS:
 		if _state_dirty and not _save_state():
@@ -91,6 +92,7 @@ func current_identity() -> Dictionary:
 
 func clear_local_state() -> void:
 	_state = {}
+	_current_id_token = ""
 	_loaded = true
 	_state_valid = true
 	_state_dirty = false
@@ -129,9 +131,9 @@ func _sign_in_with_platform_custom_token(existing_id_token: String, expected_uid
 	if not expected_uid.is_empty() and next_uid != expected_uid:
 		return _failure("platform_uid_mismatch")
 
+	_current_id_token = next_id_token
 	_state = {
 		"uid": next_uid,
-		"id_token": next_id_token,
 		"refresh_token": next_refresh_token,
 		"expires_at": int(Time.get_unix_time_from_system()) + int(data.get("expiresIn", 3600)),
 		"auth_provider": PLATFORM_AUTH_PROVIDER,
@@ -157,16 +159,19 @@ func _refresh_identity() -> Dictionary:
 	if not bool(result.get("success", false)):
 		return _failure("firebase_token_refresh_failed")
 	var data: Dictionary = result.get("data", {})
+	var next_uid := String(data.get("user_id", _state.get("uid", "")))
+	var next_id_token := String(data.get("id_token", ""))
+	var next_refresh_token := String(data.get("refresh_token", refresh_token))
+	if next_uid.is_empty() or next_id_token.is_empty() or next_refresh_token.is_empty():
+		return _failure("firebase_token_refresh_invalid_response")
+	_current_id_token = next_id_token
 	_state = {
-		"uid": String(data.get("user_id", _state.get("uid", ""))),
-		"id_token": String(data.get("id_token", "")),
-		"refresh_token": String(data.get("refresh_token", refresh_token)),
+		"uid": next_uid,
+		"refresh_token": next_refresh_token,
 		"expires_at": int(Time.get_unix_time_from_system()) + int(data.get("expires_in", 3600)),
 	}
 	if not auth_provider.is_empty():
 		_state["auth_provider"] = auth_provider
-	if String(_state.get("uid", "")).is_empty() or String(_state.get("id_token", "")).is_empty():
-		return _failure("firebase_token_refresh_invalid_response")
 	_state_dirty = true
 	if not _save_state():
 		return _failure("firebase_identity_persist_failed")
@@ -219,6 +224,16 @@ func _load_state_once() -> void:
 	_state_valid = bool(stored.get("ok", false))
 	if _state_valid:
 		_state = (stored.get("value", {}) as Dictionary).duplicate(true)
+		# 0.6.1까지 저장하던 ID token은 메모리로만 옮기고 디스크에서 즉시 제거한다.
+		if _state.has("id_token"):
+			_current_id_token = String(_state.get("id_token", ""))
+			_state.erase("id_token")
+			_state_dirty = true
+			if not _save_state():
+				_state = {}
+				_current_id_token = ""
+				_state_dirty = false
+				_state_valid = false
 
 
 func _save_state() -> bool:
@@ -232,7 +247,7 @@ func _identity_result() -> Dictionary:
 	return {
 		"success": true,
 		"uid": String(_state.get("uid", "")),
-		"id_token": String(_state.get("id_token", "")),
+		"id_token": _current_id_token,
 	}
 
 

@@ -228,6 +228,30 @@ func acknowledge(request_id: String) -> bool:
 	return true
 
 
+## 광고를 보여 주지 못했거나, 보상 없이 닫혔거나,
+## recover_admob_claim이 final failed를 반환한 claim의 로컬 참조를 정리한다.
+## 로컬 정산 뒤 ack 대기열에 들어간 claim은 폐기할 수 없다.
+func discard_unsettled_claim(request_id: String) -> bool:
+	_load_once()
+	if not _claim_storage_valid:
+		return false
+	var normalized_request_id := request_id.strip_edges()
+	if normalized_request_id.is_empty():
+		return false
+	if normalized_request_id in _load_ack_queue():
+		return false
+	if not _ack_storage_valid:
+		return false
+	var claim_ref: Dictionary = _claim_refs.get(normalized_request_id, {})
+	if claim_ref.is_empty():
+		return true
+	_claim_refs.erase(normalized_request_id)
+	if _save_claim_refs():
+		return true
+	_claim_refs[normalized_request_id] = claim_ref
+	return false
+
+
 func flush_ack_queue() -> void:
 	for request_id in _load_ack_queue():
 		await acknowledge(request_id)

@@ -121,13 +121,21 @@ var ssv := rewards.ssv_options(local_claim_id)
 # recover_admob_claim이 server_verified일 때 로컬 exactly-once 보상을 정산한다.
 # 로컬 정산이 끝난 뒤에만 acknowledge를 호출한다.
 await rewards.acknowledge(local_claim_id)
+
+# 광고 미노출·미보상 종료 또는 recover final failed claim을 정리한다.
+rewards.discard_unsettled_claim(local_claim_id)
 ```
 
 `firebase_identity_adapter.gd`는 직접 Firebase 익명 가입으로 우회하지 않는다.
-기존 UID 이전이 실패하면 fail-closed한다. `rewarded_claim_adapter.gd`는 정책 조회
+기존 UID 이전이 실패하면 fail-closed한다. UID와 refresh token만 원자적으로 저장하고,
+Custom Token과 ID token은 메모리에서만 사용한다. 0.6.1 저장본에 ID token이 있으면
+로드할 때 제거한다. `rewarded_claim_adapter.gd`는 정책 조회
 실패를 광고 허용으로 바꾸지 않고, pending claim 참조와 ack 재시도를 로컬에
 보존한다. 잘못된 SDK 객체나 버전 불일치로 필수 메서드가 없을 때도 호출 전에
-fail-closed한다. 광고 unit, placement, reward 범위는 계속 앱 registry가 원장이다.
+fail-closed한다. `discard_unsettled_claim`은 광고를 보여 주지 못한 경우,
+보상 없이 닫힌 경우, 또는 `recover_admob_claim`이 final failed로 종결된 후에만
+호출하며, 이미 로컬 정산 후 ack 대기열에 든 claim은 폐기하지 않는다.
+광고 unit, placement, reward 범위는 계속 앱 registry가 원장이다.
 
 `event_context`는 `Dictionary` 또는 `Callable`을 받는다. Callable은 배치를
 보내는 시점에 평가하므로 앱 안에서 언어가 바뀌어도 다음 flush부터 최신 locale이

@@ -3,7 +3,10 @@ extends SceneTree
 
 const FirebaseIdentityAdapter := preload("res://addons/seorilabs_platform/adapters/firebase_identity_adapter.gd")
 const RewardedClaimAdapter := preload("res://addons/seorilabs_platform/adapters/rewarded_claim_adapter.gd")
+const AtomicJsonStore := preload("res://addons/seorilabs_platform/core/atomic_json_store.gd")
 
+const IDENTITY_PATH := "user://sdk_adapter_probe_identity.json"
+const IDENTITY_FAIL_PATH := "user://sdk_adapter_probe_identity_fail.json"
 const CLAIM_PATH := "user://sdk_adapter_probe_claims.json"
 const ACK_PATH := "user://sdk_adapter_probe_acks.json"
 
@@ -117,6 +120,43 @@ func _check_firebase_identity() -> void:
 	_expect(platform.custom_token_existing.is_empty(), "신규 신원에 기존 token을 보냈다")
 	_expect(adapter.requests.size() == 1 and "signInWithCustomToken" in String(adapter.requests[0].url), "Firebase Custom Token endpoint를 사용하지 않았다")
 	_expect("one-time-token" not in JSON.stringify(adapter._state), "일회용 Custom Token을 저장했다")
+	_expect(not adapter._state.has("id_token"), "Firebase ID token을 로컬 상태에 저장했다")
+	_expect(not adapter._current_id_token.is_empty(), "Firebase ID token을 메모리에 유지하지 못했다")
+	_expect(AtomicJsonStore.write(IDENTITY_PATH, {
+		"uid": "pb_1", "id_token": "persisted-id-token",
+		"refresh_token": "refresh", "expires_at": 0,
+	}), "기존 identity 저장본을 준비하지 못했다")
+	var migrated := FirebaseIdentityAdapter.new()
+	root.add_child(migrated)
+	migrated.configure({
+		"firebase_api_key": "api-key",
+		"platform_client": platform,
+		"state_path": IDENTITY_PATH,
+	})
+	migrated._load_state_once()
+	_expect(not migrated._state.has("id_token"), "기존 저장본의 Firebase ID token을 제거하지 못했다")
+	_expect(
+		not (AtomicJsonStore.read_dictionary(IDENTITY_PATH).get("value", {}) as Dictionary).has("id_token"),
+		"기존 저장 파일의 Firebase ID token을 제거하지 못했다",
+	)
+	migrated.free()
+	_expect(AtomicJsonStore.write(IDENTITY_FAIL_PATH, {
+		"uid": "pb_1", "id_token": "persisted-id-token",
+		"refresh_token": "refresh", "expires_at": 0,
+	}), "실패 경로 identity 저장본을 준비하지 못했다")
+	var failed_migration := FirebaseAdapterSpy.new()
+	failed_migration.persist_success = false
+	root.add_child(failed_migration)
+	failed_migration.configure({
+		"firebase_api_key": "api-key",
+		"platform_client": platform,
+		"state_path": IDENTITY_FAIL_PATH,
+	})
+	failed_migration._load_state_once()
+	_expect(failed_migration._state.is_empty(), "ID token 제거 저장 실패 뒤 신원 상태가 메모리에 남았다")
+	_expect(failed_migration._current_id_token.is_empty(), "ID token 제거 저장 실패 뒤 token이 메모리에 남았다")
+	_expect(failed_migration.current_identity().is_empty(), "ID token 제거 저장 실패가 성공 신원으로 노출됐다")
+	failed_migration.free()
 	var failed_persist := FirebaseAdapterSpy.new()
 	root.add_child(failed_persist)
 	failed_persist.configure({"firebase_api_key": "api-key", "platform_client": platform})
@@ -164,6 +204,34 @@ func _check_rewarded_claim_flow() -> void:
 	_expect(String(recovered.get("status", "")) == "verified", "server_verified claim을 복원하지 못했다")
 	_expect(await adapter.acknowledge("local-1"), "ack가 실패했다")
 	_expect(adapter.ssv_options("local-1").is_empty(), "ack 뒤 claim 참조가 남았다")
+	var failed_request := {
+		"request_id": "local-failed", "placement": "hint",
+		"reward_key": "hint", "reward_amount": 3,
+	}
+	_expect(
+		bool((await adapter.create_admob_claim(failed_request)).get("success", false)),
+		"폐기 검사용 claim 생성이 실패했다",
+	)
+	_expect(adapter.discard_unsettled_claim("local-failed"), "미정산 claim을 폐기하지 못했다")
+	_expect(adapter.ssv_options("local-failed").is_empty(), "폐기 뒤 claim 참조가 남았다")
+	var ack_pending_request := {
+		"request_id": "local-ack-pending", "placement": "hint",
+		"reward_key": "hint", "reward_amount": 3,
+	}
+	_expect(
+		bool((await adapter.create_admob_claim(ack_pending_request)).get("success", false)),
+		"ack 대기열 검사용 claim 생성이 실패했다",
+	)
+	_expect(adapter._enqueue_ack("local-ack-pending"), "ack 대기열 준비가 실패했다")
+	_expect(
+		not adapter.discard_unsettled_claim("local-ack-pending"),
+		"ack 대기열의 정산 완료 claim이 폐기됐다",
+	)
+	_expect(
+		not adapter.ssv_options("local-ack-pending").is_empty(),
+		"폐기 거부 뒤 claim 참조가 사라졌다",
+	)
+	_expect(await adapter.acknowledge("local-ack-pending"), "ack 대기열 검사용 claim 정리가 실패했다")
 	adapter.free()
 	identity.free()
 	platform.free()
@@ -237,7 +305,7 @@ func _id_token(uid: String) -> String:
 
 
 func _cleanup() -> void:
-	for path in [CLAIM_PATH, ACK_PATH]:
+	for path in [IDENTITY_PATH, IDENTITY_FAIL_PATH, CLAIM_PATH, ACK_PATH]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
