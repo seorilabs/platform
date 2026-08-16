@@ -20,7 +20,7 @@ const HttpTransport := preload("core/http_transport.gd")
 const Normalizer := preload("core/param_normalizer.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.6.1"
+const SDK_VERSION := "0.6.2"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
