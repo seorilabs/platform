@@ -154,7 +154,7 @@ func _check_standard_adapters() -> void:
 	})
 	for method in [
 		"policy", "create_admob_claim", "ssv_options", "recover_admob_claim",
-		"acknowledge", "discard_failed_claim",
+		"acknowledge", "discard_unsettled_claim",
 	]:
 		if not rewards.has_method(method):
 			_fail("Rewarded claim 표준 adapter 메서드가 없다: %s" % method)

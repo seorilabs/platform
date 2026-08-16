@@ -228,9 +228,10 @@ func acknowledge(request_id: String) -> bool:
 	return true
 
 
+## 광고를 보여 주지 못했거나, 보상 없이 닫혔거나,
 ## recover_admob_claim이 final failed를 반환한 claim의 로컬 참조를 정리한다.
 ## 로컬 정산 뒤 ack 대기열에 들어간 claim은 폐기할 수 없다.
-func discard_failed_claim(request_id: String) -> bool:
+func discard_unsettled_claim(request_id: String) -> bool:
 	_load_once()
 	if not _claim_storage_valid:
 		return false
