@@ -3,7 +3,9 @@ extends SceneTree
 
 const FirebaseIdentityAdapter := preload("res://addons/seorilabs_platform/adapters/firebase_identity_adapter.gd")
 const RewardedClaimAdapter := preload("res://addons/seorilabs_platform/adapters/rewarded_claim_adapter.gd")
+const AtomicJsonStore := preload("res://addons/seorilabs_platform/core/atomic_json_store.gd")
 
+const IDENTITY_PATH := "user://sdk_adapter_probe_identity.json"
 const CLAIM_PATH := "user://sdk_adapter_probe_claims.json"
 const ACK_PATH := "user://sdk_adapter_probe_acks.json"
 
@@ -117,6 +119,26 @@ func _check_firebase_identity() -> void:
 	_expect(platform.custom_token_existing.is_empty(), "신규 신원에 기존 token을 보냈다")
 	_expect(adapter.requests.size() == 1 and "signInWithCustomToken" in String(adapter.requests[0].url), "Firebase Custom Token endpoint를 사용하지 않았다")
 	_expect("one-time-token" not in JSON.stringify(adapter._state), "일회용 Custom Token을 저장했다")
+	_expect(not adapter._state.has("id_token"), "Firebase ID token을 로컬 상태에 저장했다")
+	_expect(not adapter._current_id_token.is_empty(), "Firebase ID token을 메모리에 유지하지 못했다")
+	_expect(AtomicJsonStore.write(IDENTITY_PATH, {
+		"uid": "pb_1", "id_token": "persisted-id-token",
+		"refresh_token": "refresh", "expires_at": 0,
+	}), "기존 identity 저장본을 준비하지 못했다")
+	var migrated := FirebaseIdentityAdapter.new()
+	root.add_child(migrated)
+	migrated.configure({
+		"firebase_api_key": "api-key",
+		"platform_client": platform,
+		"state_path": IDENTITY_PATH,
+	})
+	migrated._load_state_once()
+	_expect(not migrated._state.has("id_token"), "기존 저장본의 Firebase ID token을 제거하지 못했다")
+	_expect(
+		not (AtomicJsonStore.read_dictionary(IDENTITY_PATH).get("value", {}) as Dictionary).has("id_token"),
+		"기존 저장 파일의 Firebase ID token을 제거하지 못했다",
+	)
+	migrated.free()
 	var failed_persist := FirebaseAdapterSpy.new()
 	root.add_child(failed_persist)
 	failed_persist.configure({"firebase_api_key": "api-key", "platform_client": platform})
@@ -265,7 +287,7 @@ func _id_token(uid: String) -> String:
 
 
 func _cleanup() -> void:
-	for path in [CLAIM_PATH, ACK_PATH]:
+	for path in [IDENTITY_PATH, CLAIM_PATH, ACK_PATH]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
