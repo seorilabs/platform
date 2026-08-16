@@ -230,6 +230,9 @@ func _load_state_once() -> void:
 			_state.erase("id_token")
 			_state_dirty = true
 			if not _save_state():
+				_state = {}
+				_current_id_token = ""
+				_state_dirty = false
 				_state_valid = false
 
 

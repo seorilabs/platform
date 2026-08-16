@@ -6,6 +6,7 @@ const RewardedClaimAdapter := preload("res://addons/seorilabs_platform/adapters/
 const AtomicJsonStore := preload("res://addons/seorilabs_platform/core/atomic_json_store.gd")
 
 const IDENTITY_PATH := "user://sdk_adapter_probe_identity.json"
+const IDENTITY_FAIL_PATH := "user://sdk_adapter_probe_identity_fail.json"
 const CLAIM_PATH := "user://sdk_adapter_probe_claims.json"
 const ACK_PATH := "user://sdk_adapter_probe_acks.json"
 
@@ -139,6 +140,23 @@ func _check_firebase_identity() -> void:
 		"기존 저장 파일의 Firebase ID token을 제거하지 못했다",
 	)
 	migrated.free()
+	_expect(AtomicJsonStore.write(IDENTITY_FAIL_PATH, {
+		"uid": "pb_1", "id_token": "persisted-id-token",
+		"refresh_token": "refresh", "expires_at": 0,
+	}), "실패 경로 identity 저장본을 준비하지 못했다")
+	var failed_migration := FirebaseAdapterSpy.new()
+	failed_migration.persist_success = false
+	root.add_child(failed_migration)
+	failed_migration.configure({
+		"firebase_api_key": "api-key",
+		"platform_client": platform,
+		"state_path": IDENTITY_FAIL_PATH,
+	})
+	failed_migration._load_state_once()
+	_expect(failed_migration._state.is_empty(), "ID token 제거 저장 실패 뒤 신원 상태가 메모리에 남았다")
+	_expect(failed_migration._current_id_token.is_empty(), "ID token 제거 저장 실패 뒤 token이 메모리에 남았다")
+	_expect(failed_migration.current_identity().is_empty(), "ID token 제거 저장 실패가 성공 신원으로 노출됐다")
+	failed_migration.free()
 	var failed_persist := FirebaseAdapterSpy.new()
 	root.add_child(failed_persist)
 	failed_persist.configure({"firebase_api_key": "api-key", "platform_client": platform})
@@ -287,7 +305,7 @@ func _id_token(uid: String) -> String:
 
 
 func _cleanup() -> void:
-	for path in [IDENTITY_PATH, CLAIM_PATH, ACK_PATH]:
+	for path in [IDENTITY_PATH, IDENTITY_FAIL_PATH, CLAIM_PATH, ACK_PATH]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
