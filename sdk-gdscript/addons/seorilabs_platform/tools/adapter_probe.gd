@@ -174,6 +174,24 @@ func _check_rewarded_claim_flow() -> void:
 	)
 	_expect(adapter.discard_unsettled_claim("local-failed"), "미정산 claim을 폐기하지 못했다")
 	_expect(adapter.ssv_options("local-failed").is_empty(), "폐기 뒤 claim 참조가 남았다")
+	var ack_pending_request := {
+		"request_id": "local-ack-pending", "placement": "hint",
+		"reward_key": "hint", "reward_amount": 3,
+	}
+	_expect(
+		bool((await adapter.create_admob_claim(ack_pending_request)).get("success", false)),
+		"ack 대기열 검사용 claim 생성이 실패했다",
+	)
+	_expect(adapter._enqueue_ack("local-ack-pending"), "ack 대기열 준비가 실패했다")
+	_expect(
+		not adapter.discard_unsettled_claim("local-ack-pending"),
+		"ack 대기열의 정산 완료 claim이 폐기됐다",
+	)
+	_expect(
+		not adapter.ssv_options("local-ack-pending").is_empty(),
+		"폐기 거부 뒤 claim 참조가 사라졌다",
+	)
+	_expect(await adapter.acknowledge("local-ack-pending"), "ack 대기열 검사용 claim 정리가 실패했다")
 	adapter.free()
 	identity.free()
 	platform.free()
