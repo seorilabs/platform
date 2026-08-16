@@ -15,6 +15,18 @@ project_dir="$repo_root/sdk-gdscript"
 
 godot_bin="${GODOT_BIN:-godot}"
 
+bash "$repo_root/scripts/sdk_gdscript_checksum.sh" --check
+release_version="$(tr -d '[:space:]' < "$project_dir/VERSION")"
+internal_version="$(
+  sed -n 's/^const SDK_VERSION := "\([^"]*\)"$/\1/p' \
+    "$project_dir/addons/seorilabs_platform/platform_client.gd"
+)"
+if [[ -z "$internal_version" || "$internal_version" != "$release_version" ]]; then
+  echo "GDScript SDK VERSION 불일치: release=$release_version internal=$internal_version" >&2
+  exit 1
+fi
+echo "GDScript SDK VERSION 일치: $release_version"
+
 if ! command -v "$godot_bin" >/dev/null 2>&1; then
   echo "godot을 찾을 수 없다. GODOT_BIN으로 경로를 넘겨라." >&2
   exit 1
