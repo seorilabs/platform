@@ -70,6 +70,7 @@ env:
   IMAGE_PATH: seorilabs-platform/platform/platform
   DEPLOYER_SA: platform-deployer@seorilabs-platform.iam.gserviceaccount.com
   ADS_RUNTIME_SA: platform-ads@seorilabs-platform.iam.gserviceaccount.com
+  BACKOFFICE_OPERATIONAL_EVENTS_URL: https://backoffice.vzyx.xyz/api/internal/platform/operational-events
   # push는 build-only라 production 기본값을 쓴다. 실제 배포에서는
   # workflow_dispatch의 명시적 선택이 registry와 일치하는지 다시 검사한다.
   IAP_ENVIRONMENT: ${{ inputs.iap_environment || 'production' }}
@@ -193,19 +194,22 @@ jobs:
       # 갈라질 수 있다.
       - name: Deploy services
         run: |
-          for s in platform-api platform-ingest; do
-            echo "::group::$s"
-            gcloud run deploy "$s" \
-              --project="$PROJECT_ID" --region="$REGION" \
-              --image="${{ needs.build.outputs.image }}" --quiet
-            echo "::endgroup::"
-          done
+          gcloud run deploy platform-api \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --image="${{ needs.build.outputs.image }}" \
+            --update-env-vars="BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
+            --update-secrets="BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
+            --quiet
+
+          gcloud run deploy platform-ingest \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --image="${{ needs.build.outputs.image }}" --quiet
 
           gcloud run deploy platform-iap \
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
-            --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
-            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest" \
+            --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
           gcloud run deploy platform-admin \
@@ -223,8 +227,8 @@ jobs:
             --image="${{ needs.build.outputs.image }}" \
             --service-account="$ADS_RUNTIME_SA" \
             --no-invoker-iam-check \
-            --update-env-vars="PLATFORM_ROLE=ads,GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" \
-            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest" \
+            --update-env-vars="PLATFORM_ROLE=ads,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
       - name: Deploy worker job
@@ -232,8 +236,8 @@ jobs:
           gcloud run jobs update platform-worker \
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
-            --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT}" \
-            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest" \
+            --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
       # 배포가 전부 성공했다고 같은 태그가 됐다는 보장은 없다.
@@ -418,6 +422,58 @@ jobs:
           done
 
           [ "$fail" -eq 0 ] || { echo "AIT mTLS secret role 경계가 올바르지 않다." >&2; exit 1; }
+
+      - name: Assert Backoffice operational event boundary
+        run: |
+          service_env() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .value] | first // ""'
+          }
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+          job_env() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .value] | first // ""'
+          }
+          job_secret() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          fail=0
+          for target in platform-api platform-iap platform-ads; do
+            actual_url=$(service_env "$target" BACKOFFICE_OPERATIONAL_EVENTS_URL)
+            actual_secret=$(service_secret "$target" BACKOFFICE_OPERATIONAL_EVENTS_SECRET)
+            printf '%-18s operational_url=%s secret=%s\n' "$target" "$actual_url" "$actual_secret"
+            [ "$actual_url" = "$BACKOFFICE_OPERATIONAL_EVENTS_URL" ] || fail=1
+            [ "$actual_secret" = "backoffice-operational-events-secret" ] || fail=1
+          done
+
+          actual_url=$(job_env platform-worker BACKOFFICE_OPERATIONAL_EVENTS_URL)
+          actual_secret=$(job_secret platform-worker BACKOFFICE_OPERATIONAL_EVENTS_SECRET)
+          printf '%-18s operational_url=%s secret=%s\n' platform-worker "$actual_url" "$actual_secret"
+          [ "$actual_url" = "$BACKOFFICE_OPERATIONAL_EVENTS_URL" ] || fail=1
+          [ "$actual_secret" = "backoffice-operational-events-secret" ] || fail=1
+
+          for target in platform-ingest platform-admin; do
+            actual_url=$(service_env "$target" BACKOFFICE_OPERATIONAL_EVENTS_URL)
+            actual_secret=$(service_secret "$target" BACKOFFICE_OPERATIONAL_EVENTS_SECRET)
+            printf '%-18s operational_url=%s secret=%s\n' "$target" "${actual_url:-<absent>}" "${actual_secret:-<absent>}"
+            [ -z "$actual_url" ] || fail=1
+            [ -z "$actual_secret" ] || fail=1
+          done
+
+          [ "$fail" -eq 0 ] || { echo "Backoffice 운영 이벤트 role 경계가 올바르지 않다." >&2; exit 1; }
 
       # admin은 DRS로 비공개라 인증 없이는 403이 정상이다. 여기서
       # 확인하는 것은 공개 서비스 셋이 새 리비전으로 뜬 뒤 실제로

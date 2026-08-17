@@ -29,6 +29,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/iap"
 	"github.com/seorilabs/platform/server/internal/identity"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/remoteconfig"
 	"github.com/seorilabs/platform/server/internal/store"
@@ -74,6 +75,9 @@ func run() error {
 	// 캐시를 미리 채워 첫 요청이 키셋과 레지스트리 왕복을 기다리지 않게 한다.
 	// 콜드스타트 425ms에 네트워크 왕복이 더 붙으면 결제 경로에서 체감된다.
 	deps.warm(ctx)
+	if deps.operational != nil {
+		handler = drainOperationalAfter(handler, deps.operational)
+	}
 
 	return serve(ctx, cfg, handler)
 }
@@ -86,12 +90,14 @@ type deps struct {
 	registry *registry.Registry
 	identity *identity.Handler
 	// adminUsers는 세션 issuer 없이 PII 없는 사용자 조회만 제공한다.
-	adminUsers *identity.StoreRepository
-	keys       *identity.KeyCache
-	events     *events.Collector
-	config     *remoteconfig.Service
-	iap        *iapParts
-	ads        *adsParts
+	adminUsers      *identity.StoreRepository
+	keys            *identity.KeyCache
+	events          *events.Collector
+	config          *remoteconfig.Service
+	iap             *iapParts
+	ads             *adsParts
+	operational     *operational.Dispatcher
+	operationalRepo *operational.Repository
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
@@ -112,6 +118,16 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		registry: reg,
 		config:   remoteconfig.NewService(st),
 	}
+	if cfg.Operational.Enabled() {
+		repo := operational.NewRepository(st)
+		sender, err := operational.NewSender(cfg.Operational.URL, cfg.Operational.Secret, nil)
+		if err != nil {
+			closeStore()
+			return nil, err
+		}
+		d.operationalRepo = repo
+		d.operational = operational.NewDispatcher(repo, sender)
+	}
 
 	// 최종 사용자 세션을 발급하는 role만 identity issuer를 조립한다.
 	// Admin은 Config에 비밀이 잘못 들어와도 issuer를 만들지 않는다.
@@ -127,7 +143,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			return nil, err
 		}
 
-		users := identity.NewStoreRepository(st)
+		users := identity.NewStoreRepository(st).WithOperationalEvents(d.operationalRepo)
 		svc := identity.NewService(
 			reg,
 			identity.NewFirebaseVerifier(keys),
@@ -199,7 +215,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	// 워커도 완료 재시도 때 마켓을 호출하므로 검증기가 필요하다.
 	switch cfg.Role {
 	case config.RoleIAP, config.RoleWorker:
-		svc, err := newIAPService(ctx, cfg, st, d.events, reg)
+		svc, err := newIAPService(ctx, cfg, st, d.events, reg, d.operationalRepo)
 		if err != nil {
 			closeStore()
 			return nil, err
@@ -218,7 +234,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	}
 
 	if cfg.Role == config.RoleAds || cfg.Role == config.RoleAdmin {
-		repo := platformads.NewStoreRepository(st)
+		repo := platformads.NewStoreRepository(st).WithOperationalEvents(d.operationalRepo)
 		entitlements := newAdsEntitlements(st)
 		service, err := platformads.NewService(repo, reg, entitlements, d.adminUsers)
 		if err != nil {
@@ -229,6 +245,22 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	}
 
 	return d, nil
+}
+
+func drainOperationalAfter(next http.Handler, dispatcher *operational.Dispatcher) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 8*time.Second)
+		defer cancel()
+		sent, failed, err := dispatcher.Drain(ctx, 20)
+		if err != nil {
+			slog.WarnContext(ctx, "운영 이벤트 전달 실패", "err", err)
+			return
+		}
+		if sent > 0 || failed > 0 {
+			slog.InfoContext(ctx, "운영 이벤트 전달 종료", "sent", sent, "failed", failed)
+		}
+	})
 }
 
 func (d *deps) Close() {

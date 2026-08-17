@@ -17,6 +17,27 @@ stg_iap_environments/sandbox/iap_completion_outbox/{orderKey}      staging 배�
 
 ## 필요한 복합 인덱스
 
+### `operational_event_outbox` — Backoffice 운영 이벤트 전달
+
+요청 role과 Worker가 같은 outbox를 claim하고, 중단된 인스턴스의 만료 lease를
+복구한다. 두 쿼리 모두 `status` equality 뒤 시각 range를 사용한다.
+
+| 쿼리 | 필드 순서 |
+|---|---|
+| 전송 claim | `status ASC`, `nextAttemptAt ASC` |
+| 만료 lease 복구 | `status ASC`, `claimExpiresAt ASC` |
+
+```bash
+for time_field in nextAttemptAt claimExpiresAt; do
+  gcloud firestore indexes composite create \
+    --project=seorilabs-platform --billing-project=seorilabs-platform \
+    --collection-group=operational_event_outbox \
+    --query-scope=COLLECTION \
+    --field-config=field-path=status,order=ascending \
+    --field-config=field-path="$time_field",order=ascending
+done
+```
+
 ### `iap_completion_outbox` — 완료 재시도 대기열
 
 | 필드 | 순서 |

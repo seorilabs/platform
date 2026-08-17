@@ -57,9 +57,10 @@ accepted -- 24h --------> expired
   Platform 로그인·정책·claim·SSV 조회·ack 순서를 다시 구현하지 않는다.
 
 `platform-ads` 배포 전에는 전용 runtime service account와 Firestore 권한,
-`platform-session-secret` 접근 권한을 준비한다. AppsInToss 로그인은 승인된 mTLS
-certificate와 key를 별도 Secret Manager gate로 마운트한 뒤에만 활성화한다. 인증서가
-없거나 교환이 실패한 상태에서는 AppsInToss 광고 세션을 발급하지 않는다.
+`platform-session-secret`, `backoffice-operational-events-secret`의 resource-level
+접근 권한을 준비한다. AppsInToss 로그인은 승인된 mTLS certificate와 key를 별도
+Secret Manager gate로 마운트한 뒤에만 활성화한다. 인증서가 없거나 교환이 실패한
+상태에서는 AppsInToss 광고 세션을 발급하지 않는다.
 
 Happy Farm IAP를 활성화하기 전에는 `iap-catalog`을 앱별 v2 형식으로 갱신하고
 Google Play와 App Store 상품이 실제로 조회되는지 확인한다. registry 반영이나 코드

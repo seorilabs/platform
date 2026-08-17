@@ -27,6 +27,7 @@ server/
     ├── identity/          토큰 검증, platform_user
     ├── config/            RemoteConfig
     ├── events/            이벤트 수집 → BigQuery
+    ├── operational/       확정 운영 이벤트 outbox + 서명 전달
     ├── ads/               앱별 광고 정책, claim, SSV 검증과 상태
     └── iap/
         ├── domain/        ★ 값 타입과 불변식 상수만. 인터페이스 없음
@@ -52,6 +53,7 @@ flowchart TD
   CMD --> ID["identity"]
   CMD --> CFG["config"]
   CMD --> EV["events"]
+  CMD --> OPS["operational"]
 
   HTTPX --> ERR["platformerr"]
   VERIFY --> DOM["iap/domain"]
@@ -64,6 +66,10 @@ flowchart TD
   PROV --> REFUND
   PROV --> ERR
   ID --> STORE
+  ID --> OPS
+  LEDGER --> OPS
+  ADS["ads"] --> OPS
+  OPS --> STORE
   CFG --> STORE
   EV --> ERR
   STORE --> FSPATH["fspath"]
@@ -78,6 +84,8 @@ flowchart TD
 4. `cmd/platform`만 모든 것을 조립한다. 패키지 간 직접 조립 금지
 5. `ads`는 앱 레지스트리를 경계로 사용하고, callback path의 앱과 claim의
    앱·사용자·광고 unit·reward가 모두 일치할 때만 `server_verified`로 전이한다
+6. `operational`은 Discord를 직접 알지 않는다. 도메인 transaction에는 PII 없는
+   event만 쓰고 Backoffice가 공급자·채널·표현을 결정한다
 
 ## 인터페이스 배치 — 절충안
 

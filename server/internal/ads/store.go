@@ -10,6 +10,7 @@ import (
 	"cloud.google.com/go/firestore"
 
 	"github.com/seorilabs/platform/server/internal/fspath"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
 )
@@ -26,9 +27,17 @@ const (
 	appHealthCollection     = "ad_app_health"
 )
 
-type StoreRepository struct{ store *store.Client }
+type StoreRepository struct {
+	store       *store.Client
+	operational *operational.Repository
+}
 
 func NewStoreRepository(st *store.Client) *StoreRepository { return &StoreRepository{store: st} }
+
+func (r *StoreRepository) WithOperationalEvents(repo *operational.Repository) *StoreRepository {
+	r.operational = repo
+	return r
+}
 
 type claimRequestDoc struct {
 	ClaimID        string    `firestore:"claimId"`
@@ -295,7 +304,20 @@ func (r *StoreRepository) AcknowledgeClaim(ctx context.Context, id, appID, puid 
 		}
 		result.State = StateDelivered
 		result.AcknowledgedAt = &now
-		return tx.Set(p, result)
+		if err := tx.Set(p, result); err != nil {
+			return err
+		}
+		if r.operational == nil {
+			return nil
+		}
+		return r.operational.EnqueueTx(tx, operational.Event{
+			EventID:    operational.StableEventID("ad_reward", appID, id),
+			OccurredAt: now.UTC(), Type: "ad.reward.delivered", AppID: appID, Outcome: "delivered",
+			Attributes: map[string]any{
+				"provider": result.Provider, "placementId": result.PlacementID,
+				"rewardKey": result.Reward.Key, "rewardAmount": result.Reward.Amount,
+			},
+		})
 	})
 	if err != nil {
 		return Claim{}, wrapStore(err, "보상 정산을 기록하지 못했어요")
