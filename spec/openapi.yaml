@@ -1904,6 +1904,13 @@ components:
           enum: [verified, pending, revoked]
         entitlementId:
           $ref: '#/components/schemas/EntitlementId'
+        transactionId:
+          type: string
+          maxLength: 256
+          description: |
+            마켓 검증이 반환한 실제 거래 식별자. Google Play orderId,
+            App Store transactionId, AppsInToss orderId다. 클라이언트가
+            GA4 권장 purchase 이벤트의 transaction_id로 사용할 수 있다.
         granted:
           type: boolean
           description: |

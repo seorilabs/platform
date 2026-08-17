@@ -34,6 +34,7 @@ func _initialize() -> void:
 	_check_auth_role_routing()
 	_check_event_context()
 	_check_event_context_request()
+	_check_canonical_event()
 	_check_standard_adapters()
 	_check_guards()
 
@@ -251,6 +252,31 @@ func _check_event_context_request() -> void:
 	}:
 		_fail("flush 요청에 이벤트 context가 붙지 않았다: %s" % transport.last_request)
 
+	client.free()
+
+
+func _check_canonical_event() -> void:
+	var transport := CaptureTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client.configure({"base_url": "https://platform.invalid", "app_id": "probe"})
+	root.add_child(client)
+	client.track_event({
+		"event_id": "0123456789abcdef0123456789abcdef",
+		"occurred_at_micros": 1723456789123456,
+		"name": "purchase",
+		"params": {"transaction_id": "order-1"},
+	})
+	client.flush_events()
+	var events: Array = transport.last_request.get("body", {}).get("events", [])
+	if events.size() != 1 or events[0] != {
+		"eventId": "0123456789abcdef0123456789abcdef",
+		"tsUnixMs": 1723456789123,
+		"name": "purchase",
+		"params": {"transaction_id": "order-1"},
+	}:
+		_fail("canonical event identity가 보존되지 않았다: %s" % events)
 	client.free()
 
 

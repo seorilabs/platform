@@ -51,6 +51,7 @@ type Auditor interface {
 type Outcome struct {
 	Status         string   `json:"status"` // verified | pending | revoked
 	EntitlementID  string   `json:"entitlementId"`
+	TransactionID  string   `json:"transactionId,omitempty"`
 	Granted        *bool    `json:"granted,omitempty"`
 	AlreadyGranted *bool    `json:"alreadyGranted,omitempty"`
 	Entitlements   []string `json:"entitlements"`
@@ -256,6 +257,7 @@ func (s *Service) VerifyPurchase(
 		return Outcome{
 			Status:        "pending",
 			EntitlementID: entID,
+			TransactionID: purchase.ProviderOrderID,
 			Entitlements:  orEmpty(list),
 		}, nil
 
@@ -271,6 +273,7 @@ func (s *Service) VerifyPurchase(
 		return Outcome{
 			Status:        "revoked",
 			EntitlementID: entID,
+			TransactionID: purchase.ProviderOrderID,
 			Entitlements:  orEmpty(list),
 		}, nil
 
@@ -314,6 +317,7 @@ func (s *Service) grantAndComplete(
 	out := Outcome{
 		Status:        "verified",
 		EntitlementID: in.EntitlementID,
+		TransactionID: in.Purchase.ProviderOrderID,
 		Entitlements:  orEmpty(res.Entitlements),
 	}
 	granted, already := res.Granted, res.AlreadyGranted
@@ -381,6 +385,7 @@ func (s *Service) completeSandboxReset(
 	return Outcome{
 		Status:        "revoked",
 		EntitlementID: in.EntitlementID,
+		TransactionID: in.Purchase.ProviderOrderID,
 		Entitlements:  orEmpty(res.Entitlements),
 		Completion:    &Action{Action: domain.ActionAppStoreSyncAfterSandboxReset},
 	}, nil
