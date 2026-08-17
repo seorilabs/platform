@@ -33,6 +33,8 @@ export type CompletionAction =
 export interface VerifyOutcome {
   status: "verified" | "pending" | "revoked";
   entitlementId: string;
+  /** 마켓이 발급하고 서버가 검증한 실제 거래 식별자. */
+  transactionId?: string;
   /** 이번 호출로 지급됐으면 true. alreadyGranted와 배타적이다. */
   granted?: boolean;
   /** 이미 갖고 있었으면 true. */

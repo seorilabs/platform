@@ -22,12 +22,14 @@
     "entitlement_ids": ["sp_galaxy_gecko", "sp_shootingstar_tokay"]
   },
   "platform_event_allowlist": [
-    "seori_session_start",
-    "seori_sdk_error",
-    "seori_iap_verify",
-    "core_purchase_start",
-    "core_purchase_result",
-    "core_tutorial_step"
+    "lizard_adopted",
+    "tutorial_begin",
+    "tutorial_step",
+    "tutorial_complete",
+    "daily_play_completed",
+    "purchase",
+    "premium_purchase_failed",
+    "script_error"
   ],
   "cors_origins": [
     "http://localhost:5173",

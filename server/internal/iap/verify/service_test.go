@@ -131,13 +131,14 @@ func newTestService(t *testing.T, v *fakeVerifier, l *fakeLedger, out OutboxWrit
 func activePurchase() domain.VerifiedPurchase {
 	now := time.Now().UTC()
 	return domain.VerifiedPurchase{
-		Platform:    domain.PlatformGooglePlay,
-		ProductID:   "gecko_galaxy",
-		CanonicalID: "token-1",
-		PurchasedAt: now,
-		ObservedAt:  now,
-		State:       domain.StateActive,
-		Completion:  domain.CompletionGoogleAcknowledge,
+		Platform:        domain.PlatformGooglePlay,
+		ProductID:       "gecko_galaxy",
+		CanonicalID:     "token-1",
+		ProviderOrderID: "provider-order-1",
+		PurchasedAt:     now,
+		ObservedAt:      now,
+		State:           domain.StateActive,
+		Completion:      domain.CompletionGoogleAcknowledge,
 	}
 }
 
@@ -160,6 +161,9 @@ func TestVerifyPurchaseGrants(t *testing.T) {
 	}
 	if out.EntitlementID != "sp_galaxy_gecko" {
 		t.Errorf("entitlementId = %q", out.EntitlementID)
+	}
+	if out.TransactionID != "provider-order-1" {
+		t.Errorf("transactionId = %q", out.TransactionID)
 	}
 	if out.Granted == nil || !*out.Granted {
 		t.Error("granted가 true가 아니다")

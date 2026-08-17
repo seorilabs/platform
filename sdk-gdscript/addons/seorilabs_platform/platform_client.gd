@@ -20,7 +20,7 @@ const HttpTransport := preload("core/http_transport.gd")
 const Normalizer := preload("core/param_normalizer.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.6.2"
+const SDK_VERSION := "0.6.3"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -326,6 +326,26 @@ func track(event_name: String, params: Dictionary = {}) -> void:
 		"tsUnixMs": int(Time.get_unix_time_from_system() * 1000.0),
 	})
 
+	if _event_buffer.size() >= MAX_EVENT_BATCH:
+		flush_events()
+
+
+## 앱의 canonical analytics envelope를 받아 같은 eventId/발생시각을 보존한다.
+## 서버 계약에 없는 envelope 필드는 전송하지 않는다.
+func track_event(event: Dictionary) -> void:
+	var event_id := String(event.get("event_id", "")).strip_edges()
+	var event_name := String(event.get("name", "")).strip_edges()
+	var occurred_at_micros := int(event.get("occurred_at_micros", 0))
+	var params = event.get("params", null)
+	if event_id.length() != 32 or event_name.is_empty() or occurred_at_micros <= 0 \
+			or not (params is Dictionary):
+		return
+	_event_buffer.append({
+		"eventId": event_id,
+		"name": event_name,
+		"params": Normalizer.normalize(params),
+		"tsUnixMs": int(occurred_at_micros / 1000),
+	})
 	if _event_buffer.size() >= MAX_EVENT_BATCH:
 		flush_events()
 
