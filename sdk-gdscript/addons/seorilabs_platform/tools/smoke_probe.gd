@@ -263,7 +263,7 @@ func _check_canonical_event() -> void:
 	client.configure({"base_url": "https://platform.invalid", "app_id": "probe"})
 	root.add_child(client)
 	client.track_event({
-		"event_id": "0123456789abcdef0123456789abcdef",
+		"event_id": "01ABCDEF89abcdef0123456789ABCDEF",
 		"occurred_at_micros": 1723456789123456,
 		"name": "purchase",
 		"params": {"transaction_id": "order-1"},
@@ -271,7 +271,7 @@ func _check_canonical_event() -> void:
 	client.flush_events()
 	var events: Array = transport.last_request.get("body", {}).get("events", [])
 	if events.size() != 1 or events[0] != {
-		"eventId": "0123456789abcdef0123456789abcdef",
+		"eventId": "01ABCDEF89abcdef0123456789ABCDEF",
 		"tsUnixMs": 1723456789123,
 		"name": "purchase",
 		"params": {"transaction_id": "order-1"},

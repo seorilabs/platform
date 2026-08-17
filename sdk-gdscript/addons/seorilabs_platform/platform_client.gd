@@ -333,7 +333,7 @@ func track(event_name: String, params: Dictionary = {}) -> void:
 ## 앱의 canonical analytics envelope를 받아 같은 eventId/발생시각을 보존한다.
 ## 서버 계약에 없는 envelope 필드는 전송하지 않는다.
 func track_event(event: Dictionary) -> void:
-	var event_id := String(event.get("event_id", "")).strip_edges().to_lower()
+	var event_id := String(event.get("event_id", "")).strip_edges()
 	var event_name := String(event.get("name", "")).strip_edges()
 	var occurred_at_micros := int(event.get("occurred_at_micros", 0))
 	var params = event.get("params", null)
