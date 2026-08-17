@@ -12,6 +12,7 @@ import (
 	"cloud.google.com/go/firestore"
 
 	"github.com/seorilabs/platform/server/internal/fspath"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
 )
@@ -73,8 +74,15 @@ type refreshDoc struct {
 
 // StoreRepository는 Firestore 기반 identity 저장소다.
 type StoreRepository struct {
-	store *store.Client
-	now   func() time.Time
+	store       *store.Client
+	now         func() time.Time
+	operational *operational.Repository
+}
+
+// WithOperationalEvents는 새 사용자 커밋과 같은 transaction에 운영 이벤트를 쌓는다.
+func (r *StoreRepository) WithOperationalEvents(repo *operational.Repository) *StoreRepository {
+	r.operational = repo
+	return r
 }
 
 // NewStoreRepository는 저장소를 만든다.
@@ -198,7 +206,7 @@ func (r *StoreRepository) EnsureUser(
 			return err
 		}
 
-		return tx.Set(uPath, userDoc{
+		if err := tx.Set(uPath, userDoc{
 			AppID:       appID,
 			AppUserID:   uid,
 			Anonymous:   anonymous,
@@ -206,6 +214,16 @@ func (r *StoreRepository) EnsureUser(
 			CreatedAt:   now,
 			LastSeenAt:  now,
 			SupportCode: NewSupportCode(appID, puid),
+		}); err != nil {
+			return err
+		}
+		if r.operational == nil {
+			return nil
+		}
+		return r.operational.EnqueueTx(tx, operational.Event{
+			EventID:    operational.StableEventID("identity", appID, puid),
+			OccurredAt: now.UTC(), Type: "identity.created", AppID: appID, Outcome: "created",
+			Attributes: map[string]any{"authType": authType, "anonymous": anonymous},
 		})
 	})
 	if err != nil {

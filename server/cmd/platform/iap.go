@@ -21,6 +21,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/providers/toss"
 	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/iap/verify"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/store"
@@ -61,6 +62,7 @@ func newIAPService(
 	st *store.Client,
 	col *events.Collector,
 	reg *registry.Registry,
+	opEvents *operational.Repository,
 ) (*iapParts, error) {
 	ic := cfg.IAP
 
@@ -120,7 +122,7 @@ func newIAPService(
 		if app.IAP.LedgerEnvironment == registry.LedgerSandbox {
 			appEnv = domain.EnvSandbox
 		}
-		appLedger := ledgerForRegistryApp(st, app, appEnv)
+		appLedger := ledgerForRegistryApp(st, app, appEnv).WithOperationalEvents(opEvents)
 		appLedgers[app.AppID] = appLedger
 		appLedgerValues[app.AppID] = appLedger
 		appsByID[app.AppID] = app
@@ -207,7 +209,7 @@ func validateAppCatalog(cat *catalog.Catalog, app registry.App, requiredMarkets 
 
 func ledgerForRegistryApp(st *store.Client, app registry.App, env domain.Environment) *ledger.Ledger {
 	if app.IAP.LegacyUnscopedLedger {
-		return ledger.New(st, env)
+		return ledger.New(st, env).WithAppID(app.AppID)
 	}
 	return ledger.NewForApp(st, env, app.AppID)
 }

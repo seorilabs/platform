@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -46,9 +47,19 @@ type Config struct {
 	// IAP는 결제 설정이다. iap, worker, admin role에서 채워진다.
 	//
 	// 마켓 자격증명은 platform-iap 서비스에만 마운트된다. R3다.
-	IAP IAPConfig
-	Ads AdsConfig
+	IAP         IAPConfig
+	Ads         AdsConfig
+	Operational OperationalConfig
 }
+
+// OperationalConfig는 확정 이벤트를 Backoffice에 서명해 전달하는 설정이다.
+// URL과 키는 계정·IAP·광고 이벤트를 만드는 role과 재시도 worker에만 둔다.
+type OperationalConfig struct {
+	URL    string
+	Secret []byte
+}
+
+func (c OperationalConfig) Enabled() bool { return c.URL != "" && len(c.Secret) >= 32 }
 
 // Load는 환경변수에서 설정을 읽는다.
 func Load() (Config, error) {
@@ -111,8 +122,39 @@ func Load() (Config, error) {
 		}
 		c.Ads = ads
 	}
+	if role == RoleAPI || role == RoleIAP || role == RoleAds || role == RoleWorker {
+		operational, err := loadOperational()
+		if err != nil {
+			return Config{}, err
+		}
+		c.Operational = operational
+	}
 
 	return c, nil
+}
+
+func loadOperational() (OperationalConfig, error) {
+	rawURL := strings.TrimSpace(os.Getenv("BACKOFFICE_OPERATIONAL_EVENTS_URL"))
+	rawSecret := os.Getenv("BACKOFFICE_OPERATIONAL_EVENTS_SECRET")
+	if rawURL == "" && rawSecret == "" {
+		return OperationalConfig{}, nil
+	}
+	if rawURL == "" || rawSecret == "" {
+		return OperationalConfig{}, errors.New("config: Backoffice operational URL과 secret은 함께 필요하다")
+	}
+	parsed, err := url.ParseRequestURI(rawURL)
+	loopbackHTTP := err == nil && parsed.Scheme == "http" &&
+		(parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1")
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !loopbackHTTP) {
+		return OperationalConfig{}, errors.New("config: BACKOFFICE_OPERATIONAL_EVENTS_URL은 HTTPS 또는 loopback HTTP여야 한다")
+	}
+	// Backoffice도 환경변수 문자열 자체를 HMAC key로 사용한다. 여기서만
+	// base64 decode하면 양쪽 key가 달라져 모든 서명이 401이 된다.
+	secret := []byte(rawSecret)
+	if len(secret) < 32 {
+		return OperationalConfig{}, fmt.Errorf("config: BACKOFFICE_OPERATIONAL_EVENTS_SECRET은 32바이트 이상이어야 한다 (현재 %d)", len(secret))
+	}
+	return OperationalConfig{URL: rawURL, Secret: secret}, nil
 }
 
 // IsStaging은 staging 환경인지 본다.

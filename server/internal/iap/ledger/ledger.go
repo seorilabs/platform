@@ -10,6 +10,7 @@ import (
 
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
 )
@@ -128,10 +129,12 @@ type GrantInput struct {
 
 // Ledger는 Firestore 기반 entitlement 원장이다.
 type Ledger struct {
-	store *store.Client
-	paths pathBuilder
-	env   domain.Environment
-	now   func() time.Time
+	store       *store.Client
+	paths       pathBuilder
+	env         domain.Environment
+	appID       string
+	operational *operational.Repository
+	now         func() time.Time
 }
 
 // New는 원장을 만든다.
@@ -151,8 +154,21 @@ func NewForApp(s *store.Client, env domain.Environment, appID string) *Ledger {
 		store: s,
 		paths: newAppPathBuilder(env, appID),
 		env:   env,
+		appID: appID,
 		now:   time.Now,
 	}
+}
+
+// WithAppID는 기존 unscoped 원장에도 운영 이벤트의 앱 범위를 명시한다.
+func (l *Ledger) WithAppID(appID string) *Ledger {
+	l.appID = appID
+	return l
+}
+
+// WithOperationalEvents는 지급 커밋과 같은 transaction에 운영 이벤트를 쌓는다.
+func (l *Ledger) WithOperationalEvents(repo *operational.Repository) *Ledger {
+	l.operational = repo
+	return l
 }
 
 // WithClock은 시계를 주입한다. 테스트용이다.
@@ -516,6 +532,20 @@ func (l *Ledger) grant(
 			AlreadyGranted:  alreadyActive,
 			EntitlementID:   in.EntitlementID,
 			TransferredFrom: transferredFrom,
+		}
+		if result.Granted && l.operational != nil && l.appID != "" {
+			if err := l.operational.EnqueueTx(tx, operational.Event{
+				EventID: operational.StableEventID(
+					"iap", l.appID, orderKey, in.PlatformUserID,
+					in.Purchase.ObservedAt.UTC().Format(time.RFC3339Nano),
+				),
+				OccurredAt: now, Type: "iap.granted", AppID: l.appID, Outcome: "granted",
+				Attributes: map[string]any{
+					"platform": string(in.Purchase.Platform), "entitlementId": in.EntitlementID,
+				},
+			}); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

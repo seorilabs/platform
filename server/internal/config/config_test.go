@@ -26,3 +26,33 @@ func TestAdminDoesNotRequirePlatformSessionSecret(t *testing.T) {
 		t.Error("admin role이 entitlement 카탈로그를 읽지 않았다")
 	}
 }
+
+func TestOperationalConfigRequiresPairAndPreservesSharedSecret(t *testing.T) {
+	t.Setenv("PLATFORM_ROLE", string(RoleAPI))
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
+	t.Setenv("PLATFORM_SESSION_SECRET", strings.Repeat("s", 64))
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_URL", "https://backoffice.example/internal/events")
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_SECRET", strings.Repeat("b", 44))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("config load 실패: %v", err)
+	}
+	if !cfg.Operational.Enabled() {
+		t.Fatal("operational 전달 설정이 활성화되지 않았다")
+	}
+	if got := string(cfg.Operational.Secret); got != strings.Repeat("b", 44) {
+		t.Fatalf("Backoffice와 공유할 원문 secret이 바뀌었다: 길이=%d", len(got))
+	}
+
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_SECRET", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("URL만 있는 설정을 허용했다")
+	}
+
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_SECRET", strings.Repeat("b", 44))
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_URL", "http://backoffice.example/internal/events")
+	if _, err := Load(); err == nil {
+		t.Fatal("외부 평문 HTTP로 서명키를 보내도록 허용했다")
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -252,6 +253,13 @@ func runWorker(ctx context.Context, cfg config.Config) error {
 		} else if n > 0 {
 			slog.ErrorContext(ctx, "완료 처리를 포기한 주문이 있다", "app_id", appID, "count", n)
 		}
+	}
+	if deps.operational != nil {
+		sent, failed, err := deps.operational.Drain(ctx, 200)
+		if err != nil {
+			return fmt.Errorf("운영 이벤트 재시도 실패: %w", err)
+		}
+		slog.Info("운영 이벤트 재시도 종료", "sent", sent, "failed", failed)
 	}
 
 	return nil
