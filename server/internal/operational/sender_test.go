@@ -45,8 +45,9 @@ func TestSenderSignsSafeEnvelope(t *testing.T) {
 	}
 	sender.now = func() time.Time { return now }
 	err = sender.Send(context.Background(), Event{
-		EventID: "identity_1234567890", OccurredAt: now, Type: "identity.created",
-		AppID: "happy-farm", Outcome: "ok", Attributes: map[string]any{"authType": "firebase"},
+		EventID:    StableEventID("identity", "happy-farm", "pu_sensitive"),
+		OccurredAt: now, Type: "identity.created", AppID: "happy-farm", Outcome: "created",
+		Attributes: map[string]any{"authType": "firebase"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,5 +61,27 @@ func TestStableEventIDDoesNotExposeInput(t *testing.T) {
 	}
 	if got := StableEventID("identity", "happy-farm", "pu_sensitive"); got != id {
 		t.Fatalf("unstable id=%q got=%q", id, got)
+	}
+}
+
+func TestEventContractRejectsPIIAndRawIdentifiers(t *testing.T) {
+	now := time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC)
+	safe := Event{
+		EventID:    StableEventID("identity", "happy-farm", "pu_sensitive"),
+		OccurredAt: now, Type: "identity.created", AppID: "happy-farm", Outcome: "created",
+		Attributes: map[string]any{"authType": "firebase", "anonymous": false},
+	}
+	if err := validateEvent(safe); err != nil {
+		t.Fatalf("safe event rejected: %v", err)
+	}
+	unsafeAttribute := safe
+	unsafeAttribute.Attributes = map[string]any{"platformUserId": "pu_sensitive"}
+	if err := validateEvent(unsafeAttribute); err == nil {
+		t.Fatal("platformUserId attribute를 허용했다")
+	}
+	unsafeID := safe
+	unsafeID.EventID = "identity_pu_sensitive"
+	if err := validateEvent(unsafeID); err == nil {
+		t.Fatal("원본 식별자가 드러나는 event ID를 허용했다")
 	}
 }

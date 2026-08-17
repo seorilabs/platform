@@ -10,6 +10,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
+	"regexp"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -34,6 +37,31 @@ type Event struct {
 	Outcome    string         `json:"outcome" firestore:"outcome"`
 	Attributes map[string]any `json:"attributes" firestore:"attributes"`
 }
+
+type eventContract struct {
+	prefix     string
+	outcome    string
+	attributes map[string]struct{}
+}
+
+var (
+	eventIDPattern = regexp.MustCompile(`^[a-z_]+_[0-9a-f]{32}$`)
+	appIDPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	eventContracts = map[string]eventContract{
+		"identity.created": {
+			prefix: "identity_", outcome: "created",
+			attributes: setOf("authType", "anonymous"),
+		},
+		"iap.granted": {
+			prefix: "iap_", outcome: "granted",
+			attributes: setOf("platform", "entitlementId"),
+		},
+		"ad.reward.delivered": {
+			prefix: "ad_reward_", outcome: "delivered",
+			attributes: setOf("provider", "placementId", "rewardKey", "rewardAmount"),
+		},
+	}
+)
 
 type outboxDoc struct {
 	Event
@@ -78,21 +106,62 @@ func outboxPath(eventID string) (fspath.Path, error) {
 func outboxesPath() (fspath.Path, error) { return fspath.Parse(collection) }
 
 func (r *Repository) EnqueueTx(tx *store.Tx, event Event) error {
-	if event.EventID == "" || event.Type == "" || event.AppID == "" || event.Outcome == "" {
-		return errors.New("operational: 필수 이벤트 필드가 비어 있다")
+	now := r.now().UTC()
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = now
+	}
+	if err := validateEvent(event); err != nil {
+		return err
 	}
 	path, err := outboxPath(event.EventID)
 	if err != nil {
 		return err
 	}
-	now := r.now().UTC()
-	if event.OccurredAt.IsZero() {
-		event.OccurredAt = now
-	}
 	return tx.Create(path, outboxDoc{
 		Event: event, Status: statusPending, NextAttemptAt: now,
 		CreatedAt: now, UpdatedAt: now,
 	})
+}
+
+func validateEvent(event Event) error {
+	contract, ok := eventContracts[event.Type]
+	if !ok || !eventIDPattern.MatchString(event.EventID) ||
+		!strings.HasPrefix(event.EventID, contract.prefix) || !appIDPattern.MatchString(event.AppID) ||
+		event.Outcome != contract.outcome || event.OccurredAt.IsZero() {
+		return errors.New("operational: 이벤트 계약이 올바르지 않다")
+	}
+	if len(event.Attributes) > 20 {
+		return errors.New("operational: 이벤트 attribute가 너무 많다")
+	}
+	for key, value := range event.Attributes {
+		if _, allowed := contract.attributes[key]; !allowed || !safeScalar(value) {
+			return fmt.Errorf("operational: 허용되지 않은 attribute: %s", key)
+		}
+	}
+	return nil
+}
+
+func setOf(keys ...string) map[string]struct{} {
+	result := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		result[key] = struct{}{}
+	}
+	return result
+}
+
+func safeScalar(value any) bool {
+	switch value := value.(type) {
+	case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	case string:
+		return len(value) <= 120
+	case float32:
+		return !math.IsNaN(float64(value)) && !math.IsInf(float64(value), 0)
+	case float64:
+		return !math.IsNaN(value) && !math.IsInf(value, 0)
+	default:
+		return false
+	}
 }
 
 func (r *Repository) ClaimNext(ctx context.Context) (Item, bool, error) {

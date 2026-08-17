@@ -55,5 +55,41 @@ require(
     "AIT 개인키 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
 )
 
-print("production 배포 공개 IAM과 IAP catalog 경계가 일치한다.")
+
+def command_block(marker: str) -> str:
+    start = text.find(marker)
+    require(start >= 0, f"배포 명령이 없다: {marker}")
+    end = text.find("--quiet", start)
+    require(end >= 0, f"배포 명령의 끝을 찾지 못했다: {marker}")
+    return text[start:end]
+
+
+operational_url = "BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}"
+operational_secret = (
+    "BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest"
+)
+for target in ("platform-api", "platform-iap", "platform-ads"):
+    block = command_block(f"gcloud run deploy {target}")
+    require(operational_url in block, f"{target}에 Backoffice 운영 URL이 없다.")
+    require(operational_secret in block, f"{target}에 Backoffice 운영 secret이 없다.")
+
+worker_block = command_block("gcloud run jobs update platform-worker")
+require(operational_url in worker_block, "platform-worker에 Backoffice 운영 URL이 없다.")
+require(operational_secret in worker_block, "platform-worker에 Backoffice 운영 secret이 없다.")
+
+for target in ("platform-ingest", "platform-admin"):
+    block = command_block(f"gcloud run deploy {target}")
+    require(operational_url not in block, f"{target}에 운영 URL을 마운트하면 안 된다.")
+    require(operational_secret not in block, f"{target}에 운영 secret을 마운트하면 안 된다.")
+
+require(
+    text.count(operational_secret) == 4,
+    "Backoffice 운영 secret은 API, IAP, Ads, worker 네 대상에만 마운트해야 한다.",
+)
+require(
+    "Assert Backoffice operational event boundary" in text,
+    "Backoffice 운영 이벤트 배포 후 readback gate가 없다.",
+)
+
+print("production 배포 공개 IAM, IAP catalog, 운영 이벤트 경계가 일치한다.")
 PY

@@ -34,6 +34,9 @@ func NewSender(url string, secret []byte, client *http.Client) (*Sender, error) 
 }
 
 func (s *Sender) Send(ctx context.Context, event Event) error {
+	if err := validateEvent(event); err != nil {
+		return err
+	}
 	body, err := json.Marshal(struct {
 		Version int `json:"version"`
 		Event
