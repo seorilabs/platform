@@ -59,7 +59,7 @@ func (s *Sender) Send(ctx context.Context, event Event) error {
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	// 짧은 JSON 응답을 비워 connection을 재사용한다. 본문에는 운영상 필요한
 	// 정보가 없고 오류에도 상태 코드만 기록해 외부 payload가 로그로 새지 않게 한다.
 	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4<<10))
