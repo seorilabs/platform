@@ -69,6 +69,7 @@ env:
   REGISTRY: asia-northeast3-docker.pkg.dev
   IMAGE_PATH: seorilabs-platform/platform/platform
   DEPLOYER_SA: platform-deployer@seorilabs-platform.iam.gserviceaccount.com
+  API_RUNTIME_SA: platform-api@seorilabs-platform.iam.gserviceaccount.com
   ADS_RUNTIME_SA: platform-ads@seorilabs-platform.iam.gserviceaccount.com
   BACKOFFICE_OPERATIONAL_EVENTS_URL: https://backoffice.vzyx.xyz/api/internal/platform/operational-events
   # push는 build-only라 production 기본값을 쓴다. 실제 배포에서는
@@ -197,6 +198,7 @@ jobs:
           gcloud run deploy platform-api \
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
+            --service-account="$API_RUNTIME_SA" \
             --update-env-vars="BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
             --update-secrets="BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet

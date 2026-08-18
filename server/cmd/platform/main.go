@@ -96,6 +96,7 @@ type deps struct {
 	config          *remoteconfig.Service
 	iap             *iapParts
 	ads             *adsParts
+	content         *contentParts
 	operational     *operational.Dispatcher
 	operationalRepo *operational.Repository
 }
@@ -244,6 +245,14 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		d.ads = &adsParts{service: service, repo: repo}
 	}
 
+	if cfg.Role == config.RoleAPI {
+		d.content, err = newContent(ctx, cfg, st, reg, d.identity)
+		if err != nil {
+			closeStore()
+			return nil, err
+		}
+	}
+
 	return d, nil
 }
 
@@ -264,6 +273,11 @@ func drainOperationalAfter(next http.Handler, dispatcher *operational.Dispatcher
 }
 
 func (d *deps) Close() {
+	if d.content != nil && d.content.source != nil {
+		if err := d.content.source.Close(); err != nil {
+			slog.Error("GCS 콘텐츠 client 종료 실패", "err", err)
+		}
+	}
 	if d.events != nil {
 		if err := d.events.Close(); err != nil {
 			slog.Error("BigQuery 종료 실패", "err", err)
@@ -318,11 +332,12 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 
 	switch cfg.Role {
 	case config.RoleAPI:
-		if d.identity == nil {
-			return nil, errors.New("api role에 identity가 필요하다")
+		if d.identity == nil || d.content == nil {
+			return nil, errors.New("api role에 identity와 콘텐츠 서비스가 필요하다")
 		}
 		d.identity.Register(mux)
 		remoteconfig.NewHandler(d.config, d.registry).Register(mux)
+		d.content.handler.Register(mux)
 		// entitlement 조회는 여기가 아니라 iap role이 맡는다.
 		// GET /v1/iap/entitlements 하나로 통일했다. 마켓 자격증명이
 		// 붙은 서비스에 원장 읽기를 모아 두는 편이 경로가 줄어든다.
