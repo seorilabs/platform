@@ -77,12 +77,22 @@ func testHandler(t *testing.T, appChecks *fakeAppChecks) *http.ServeMux {
 }
 
 func TestHandlerRequiresAppCheck(t *testing.T) {
-	checks := &fakeAppChecks{err: platformerr.New(platformerr.CodeAppCheckRequired, "required")}
-	r := httptest.NewRequest(http.MethodGet, "/v1/content/version", nil)
-	w := httptest.NewRecorder()
-	testHandler(t, checks).ServeHTTP(w, r)
-	if w.Code != http.StatusUnauthorized || checks.token != "" {
-		t.Fatalf("status=%d token=%q body=%s", w.Code, checks.token, w.Body.String())
+	for _, tc := range []struct {
+		name, method, path, body string
+	}{
+		{name: "version", method: http.MethodGet, path: "/v1/content/version"},
+		{name: "resolve", method: http.MethodPost, path: "/v1/content/readings:resolve", body: `{}`},
+		{name: "term", method: http.MethodGet, path: "/v1/content/terms/ilju.gapja"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := &fakeAppChecks{err: platformerr.New(platformerr.CodeAppCheckRequired, "required")}
+			r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			w := httptest.NewRecorder()
+			testHandler(t, checks).ServeHTTP(w, r)
+			if w.Code != http.StatusUnauthorized || checks.token != "" {
+				t.Fatalf("status=%d token=%q body=%s", w.Code, checks.token, w.Body.String())
+			}
+		})
 	}
 }
 
@@ -100,10 +110,20 @@ func TestHandlerRequiresPlatformSession(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	handler.Register(mux)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/content/version", nil))
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	for _, tc := range []struct {
+		name, method, path, body string
+	}{
+		{name: "version", method: http.MethodGet, path: "/v1/content/version"},
+		{name: "resolve", method: http.MethodPost, path: "/v1/content/readings:resolve", body: `{}`},
+		{name: "term", method: http.MethodGet, path: "/v1/content/terms/ilju.gapja"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+		})
 	}
 }
 
