@@ -133,8 +133,10 @@ func TestCORSOriginValidation(t *testing.T) {
 				"https://test-app.private-apps.tossmini.com",
 			},
 		},
+		{name: "Capacitor iOS 기본 origin 허용", origins: []string{"capacitor://localhost"}},
 		{name: "경로가 있는 URL 거부", origins: []string{"https://example.com/path"}, wantErr: "올바른 origin"},
-		{name: "비 HTTP scheme 거부", origins: []string{"file://local"}, wantErr: "올바른 origin"},
+		{name: "임의 custom scheme 거부", origins: []string{"ungeul://localhost"}, wantErr: "올바른 origin"},
+		{name: "Capacitor 임의 host 거부", origins: []string{"capacitor://attacker"}, wantErr: "올바른 origin"},
 		{name: "중복 거부", origins: []string{"https://example.com", "https://example.com"}, wantErr: "중복"},
 	}
 
@@ -208,6 +210,47 @@ func TestFirebaseCustomTokenBridgeConfigValidation(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestContentConfigValidation(t *testing.T) {
+	validContentApp := func() App {
+		app := validAppForTest()
+		app.Features["content"] = true
+		app.Features["firebase_custom_token_bridge"] = true
+		app.FirebaseCustomTokenServiceAccount = "platform-auth@test-app.iam.gserviceaccount.com"
+		app.RequireAppCheck = true
+		app.Content = ContentConfig{
+			Bucket: "seorilabs-private-content", Prefix: "ungeul",
+			ReadingDailyLimit: 10, TermDailyLimit: 100,
+			TicketEntitlementID: "premium", TicketUnitsPerPurchase: 5,
+			SeasonEntitlements: map[string]string{"2026": "premium"},
+		}
+		return app
+	}
+
+	if err := validContentApp().Validate(); err != nil {
+		t.Fatalf("valid content config: %v", err)
+	}
+
+	app := validContentApp()
+	app.RequireAppCheck = false
+	if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "App Check") {
+		t.Fatalf("App Check 없는 content error = %v", err)
+	}
+
+	app = validContentApp()
+	app.Content.Prefix = "production/../ungeul"
+	if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "content.prefix") {
+		t.Fatalf("위험한 prefix error = %v", err)
+	}
+
+	for _, prefix := range []string{"production", "production/ungeul", "staging", "staging/ungeul"} {
+		app = validContentApp()
+		app.Content.Prefix = prefix
+		if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "content.prefix") {
+			t.Fatalf("환경을 포함한 prefix %q error = %v", prefix, err)
+		}
 	}
 }
 

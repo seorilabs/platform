@@ -59,6 +59,19 @@ const (
 	CodeRateLimited Code = "rate_limited"
 )
 
+// 보호 콘텐츠
+const (
+	CodeContentNotEnabled      Code = "content_not_enabled"
+	CodeContentUnavailable     Code = "content_unavailable"
+	CodeContentSchemaMismatch  Code = "content_schema_mismatch"
+	CodeContentSelectorInvalid Code = "content_selector_invalid"
+	CodeContentTermNotFound    Code = "content_term_not_found"
+	CodeContentLocked          Code = "content_locked"
+	CodeContentClaimInvalid    Code = "content_claim_invalid"
+	CodeContentTicketEmpty     Code = "content_ticket_empty"
+	CodeContentReplayMismatch  Code = "content_replay_mismatch"
+)
+
 // 광고 정책과 보상 claim
 const (
 	CodeAdsNotEnabled            Code = "ads_not_enabled"
@@ -210,6 +223,17 @@ var statusByCode = map[Code]int{
 	// 한도
 	CodeRateLimited: http.StatusTooManyRequests,
 
+	// 보호 콘텐츠
+	CodeContentNotEnabled:      http.StatusForbidden,
+	CodeContentUnavailable:     http.StatusServiceUnavailable,
+	CodeContentSchemaMismatch:  http.StatusConflict,
+	CodeContentSelectorInvalid: http.StatusBadRequest,
+	CodeContentTermNotFound:    http.StatusNotFound,
+	CodeContentLocked:          http.StatusForbidden,
+	CodeContentClaimInvalid:    http.StatusForbidden,
+	CodeContentTicketEmpty:     http.StatusForbidden,
+	CodeContentReplayMismatch:  http.StatusConflict,
+
 	// 광고
 	CodeAdsNotEnabled:            http.StatusForbidden,
 	CodeAdsSuppressed:            http.StatusForbidden,
@@ -327,7 +351,8 @@ func IsRetryable(c Code) bool {
 		CodeConfigUnavailable,
 		CodeRuntimeConfigInvalid,
 		CodeSecretConfigInvalid,
-		CodeSandboxResetPending:
+		CodeSandboxResetPending,
+		CodeContentUnavailable:
 		return true
 	default:
 		return false

@@ -22,3 +22,14 @@ func TestAppScopedPathsKeepLegacyPathUnchanged(t *testing.T) {
 		t.Fatalf("scoped path = %q, want %q", got, want)
 	}
 }
+
+func TestContentConsumptionPathsStayInsideIAPScope(t *testing.T) {
+	builder := newAppPathBuilder(domain.EnvProduction, "ungeul")
+	consumption, err := builder.contentConsumption("abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := consumption.String(), "iap_apps/ungeul/content_consumptions/abcdef"; got != want {
+		t.Fatalf("consumption path=%q want=%q", got, want)
+	}
+}

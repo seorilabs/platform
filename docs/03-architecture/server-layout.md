@@ -29,6 +29,7 @@ server/
     ├── events/            이벤트 수집 → BigQuery
     ├── operational/       확정 운영 이벤트 outbox + 서명 전달
     ├── ads/               앱별 광고 정책, claim, SSV 검증과 상태
+    ├── content/           private GCS 릴리스, selector, 한도와 심화 권한
     └── iap/
         ├── domain/        ★ 값 타입과 불변식 상수만. 인터페이스 없음
         ├── verify/        유스케이스. ★ 여기서 인터페이스를 정의한다
@@ -69,6 +70,10 @@ flowchart TD
   ID --> OPS
   LEDGER --> OPS
   ADS["ads"] --> OPS
+  CONTENT["content"] --> STORE
+  CONTENT --> ID
+  CONTENT --> ADS
+  CONTENT --> LEDGER
   OPS --> STORE
   CFG --> STORE
   EV --> ERR
@@ -86,6 +91,8 @@ flowchart TD
    앱·사용자·광고 unit·reward가 모두 일치할 때만 `server_verified`로 전이한다
 6. `operational`은 Discord를 직접 알지 않는다. 도메인 transaction에는 PII 없는
    event만 쓰고 Backoffice가 공급자·채널·표현을 결정한다
+7. `content`는 GCS object source, session/App Check, 광고 claim, IAP 원장을 포트로
+   소비한다. 원문 저장소나 공급자 SDK를 직접 조립하지 않고 `cmd/platform`이 연결한다
 
 ## 인터페이스 배치 — 절충안
 

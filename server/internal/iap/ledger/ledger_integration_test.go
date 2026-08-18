@@ -99,6 +99,110 @@ func testPurchase(canonicalID string, state domain.State, observedAt time.Time) 
 	}
 }
 
+func TestContentUnitsAreAtomicIdempotentAndReflectRevocation(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	puid := uniqueID("pu_content")
+	entitlementID := "deep_ticket"
+	now := time.Now().UTC().Truncate(time.Second)
+	firstPurchase := testPurchase(uniqueID("ticket-a"), domain.StateActive, now)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: puid, EntitlementID: entitlementID, Purchase: firstPurchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := l.ConsumeUnits(ctx, puid, entitlementID, 2, "reading-a/seun:2026")
+	if err != nil || !first.Applied || first.Remaining != 1 || first.SourceKey != firstPurchase.Key() {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	active, err := l.IsSourceActive(ctx, puid, entitlementID, first.SourceKey)
+	if err != nil || !active {
+		t.Fatalf("active source=%v err=%v", active, err)
+	}
+	replay, err := l.ConsumeUnits(ctx, puid, entitlementID, 2, "reading-a/seun:2026")
+	if err != nil || replay.Applied || replay.Remaining != 1 || replay.SourceKey != first.SourceKey {
+		t.Fatalf("replay=%+v err=%v", replay, err)
+	}
+	second, err := l.ConsumeUnits(ctx, puid, entitlementID, 2, "reading-a/wolun:2026")
+	if err != nil || !second.Applied || second.Remaining != 0 {
+		t.Fatalf("second=%+v err=%v", second, err)
+	}
+	_, err = l.ConsumeUnits(ctx, puid, entitlementID, 2, "reading-b/seun:2026")
+	if platformerr.CodeOf(err) != platformerr.CodeContentTicketEmpty {
+		t.Fatalf("exhausted code=%q err=%v", platformerr.CodeOf(err), err)
+	}
+
+	revoked := firstPurchase
+	revoked.State = domain.StateRevoked
+	revoked.ObservedAt = now.Add(2 * time.Minute)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: puid, EntitlementID: entitlementID, Purchase: revoked,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	active, err = l.IsSourceActive(ctx, puid, entitlementID, first.SourceKey)
+	if err != nil || active {
+		t.Fatalf("revoked source=%v err=%v", active, err)
+	}
+	_, err = l.ConsumeUnits(ctx, puid, entitlementID, 2, "reading-c/seun:2026")
+	if platformerr.CodeOf(err) != platformerr.CodeContentTicketEmpty {
+		t.Fatalf("revoked source code=%q err=%v", platformerr.CodeOf(err), err)
+	}
+
+	// 환불된 source에서 쓴 장수는 새 구매 source의 장수를 깎지 않는다.
+	secondPurchase := testPurchase(uniqueID("ticket-b"), domain.StateActive, now.Add(3*time.Minute))
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: puid, EntitlementID: entitlementID, Purchase: secondPurchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	afterRepurchase, err := l.ConsumeUnits(ctx, puid, entitlementID, 2, "reading-d/seun:2026")
+	if err != nil || !afterRepurchase.Applied || afterRepurchase.Remaining != 1 {
+		t.Fatalf("repurchase=%+v err=%v", afterRepurchase, err)
+	}
+}
+
+func TestContentUnitsFollowPurchaseOwnershipTransfer(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	entitlementID := "deep_ticket"
+	now := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("ticket-transfer"), domain.StateActive, now)
+	firstOwner := uniqueID("pu_content_owner_a")
+	secondOwner := uniqueID("pu_content_owner_b")
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: firstOwner, EntitlementID: entitlementID, Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := l.ConsumeUnits(ctx, firstOwner, entitlementID, 2, "reading-a/seun:2026")
+	if err != nil || first.Remaining != 1 {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+
+	transferred := purchase
+	transferred.PlatformAccountID = "account-after-reinstall"
+	transferred.ObservedAt = now.Add(time.Minute)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: secondOwner, EntitlementID: entitlementID, Purchase: transferred,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := l.ConsumeUnits(ctx, secondOwner, entitlementID, 2, "reading-b/seun:2026")
+	if err != nil || second.Remaining != 0 || second.SourceKey != first.SourceKey {
+		t.Fatalf("after transfer=%+v first=%+v err=%v", second, first, err)
+	}
+	_, err = l.ConsumeUnits(ctx, secondOwner, entitlementID, 2, "reading-c/seun:2026")
+	if platformerr.CodeOf(err) != platformerr.CodeContentTicketEmpty {
+		t.Fatalf("exhausted after transfer code=%q err=%v", platformerr.CodeOf(err), err)
+	}
+}
+
 // 불변식 2: 첫 지급은 granted, 재지급은 alreadyGranted. 항상 배타적이다.
 func TestGrantIdempotency(t *testing.T) {
 	l, done := newTestLedger(t)

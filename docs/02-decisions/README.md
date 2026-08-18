@@ -35,3 +35,4 @@ ADR과 장기 의사결정을 관리한다.
 | [0014](0014-google-play-refund-review.md) | Google Play 환불 검토 결정은 외부 호출 전에 영구 확정한다 | Accepted |
 | [0015](0015-platform-ads-boundary.md) | 광고 검증을 platform-ads 경계로 분리한다 | Accepted |
 | [0016](0016-iap-app-scoped-ledger.md) | 신규 IAP 원장을 앱 범위로 격리한다 | Accepted |
+| [0018](0018-private-versioned-content-delivery.md) | 보호 콘텐츠는 private GCS 릴리스와 Platform 선택 API로 전달한다 | Accepted |

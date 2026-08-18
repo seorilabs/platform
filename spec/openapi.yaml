@@ -32,6 +32,8 @@ tags:
     description: 인앱결제 검증과 entitlement
   - name: ads
     description: 광고 정책과 보상 claim
+  - name: content
+    description: private 릴리스의 인증된 선택 전달
   - name: webhook
     description: 마켓 서버 알림 수신
   - name: user
@@ -242,6 +244,112 @@ paths:
         '304':
           description: 변경 없음
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /content/version:
+    get:
+      tags: [content]
+      summary: 활성 콘텐츠 버전 조회
+      description: 원본 manifest나 전체 ID 목록 없이 현재 버전과 스키마만 반환한다.
+      operationId: getContentVersion
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/ContentAppCheck'
+      responses:
+        '200':
+          description: 활성 정상본
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result: { $ref: '#/components/schemas/ContentVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /content/readings:resolve:
+    post:
+      tags: [content]
+      summary: 파생 명식에 성립하는 해설 선택
+      description: |
+        생년월일, 출생시각, 장소, 프로필명은 받지 않는다. 앱이 보낸 파생 명식 사실을
+        selector가 축별 enum, 개수, 중복, 고정 조합과 명식 관계로 다시 검증하고 해당
+        좌표만 선택한다. 임의 article ID 배열은 받지 않는다.
+
+        같은 파생 사실은 같은 `readingKey`를 만들며 재조회는 신규 명식 일일 한도에서
+        제외한다. `unlock`은 `reward_claim` 또는 `ticket`만 허용한다. 서버 권한 근거가
+        없으면 오류로 우회하지 않고 해당 심화 섹션을 `locked`로 반환한다.
+      operationId: resolveContentReading
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/ContentAppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveContentReadingRequest' }
+      responses:
+        '200':
+          description: 선택 결과. 잠긴 심화 본문은 articles에 포함하지 않는다.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result: { $ref: '#/components/schemas/ResolvedContentReading' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /content/terms/{termId}:
+    get:
+      tags: [content]
+      summary: 사전 단일 항목 조회
+      description: 활성 릴리스에서 `term` context로 분류된 한 항목만 반환한다.
+      operationId: getContentTerm
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/ContentAppCheck'
+        - name: termId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9가-힣][a-z0-9가-힣._-]{0,127}$' }
+      responses:
+        '200':
+          description: 사전 항목
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [schemaVersion, contentVersion, article]
+                        properties:
+                          schemaVersion: { type: integer, minimum: 1 }
+                          contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+                          article: { $ref: '#/components/schemas/ContentArticle' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /events:
     post:
@@ -1468,11 +1576,16 @@ components:
       name: X-Firebase-AppCheck
       in: header
       description: |
-        레지스트리 `require_app_check`가 true인 앱에서만 필수다.
-
-        1단계는 optional로 시작한다. Godot에 App Check SDK가 없고
-        replay 방지(consume)가 Go SDK에 없다.
+        레지스트리 `require_app_check`가 true인 앱에서 필수다.
+        `features.content=true`인 앱은 레지스트리 검증 단계에서 이 값을 반드시 true로
+        강제하므로 모든 콘텐츠 요청에 유효한 token이 필요하다.
       schema: { type: string }
+    ContentAppCheck:
+      name: X-Firebase-AppCheck
+      in: header
+      required: true
+      description: 보호 콘텐츠 경로에서 매 요청 검증하는 Firebase App Check token
+      schema: { type: string, minLength: 1 }
     AdminLimit:
       name: limit
       in: query
@@ -1522,6 +1635,235 @@ components:
     ClientPlatform:
       type: string
       enum: [android, ios, web, ait]
+
+    ContentVersionId:
+      type: string
+      pattern: '^sha256-[a-f0-9]{64}$'
+
+    ContentVersion:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, contentVersion]
+      properties:
+        schemaVersion: { type: integer, minimum: 1 }
+        contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+
+    ContentAccess:
+      type: string
+      enum: [free, deep]
+
+    ContentArticle:
+      type: object
+      additionalProperties: false
+      required: [id, text, access]
+      properties:
+        id: { type: string, pattern: '^[a-z0-9가-힣][a-z0-9가-힣._-]{0,127}$' }
+        text: { type: string, minLength: 1, maxLength: 16384 }
+        access: { $ref: '#/components/schemas/ContentAccess' }
+
+    GanjiFact:
+      type: string
+      pattern: '^[甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥]$'
+
+    SipseongFact:
+      type: string
+      enum: [bigyeon, geopjae, siksin, sanggwan, pyeonjae, jeongjae, pyeongwan, jeonggwan, pyeonin, jeongin]
+
+    UnseongFact:
+      type: string
+      enum: [jangsaeng, mogyok, gwandae, geonrok, jewang, soe, byeong, sa, myo, jeol, tae, yang]
+
+    OhaengStateFact:
+      type: string
+      enum: [과다, 보통, 부족]
+
+    SinsalNameFact:
+      type: string
+      enum:
+        - amrok
+        - baekho_daesal
+        - banan
+        - biin
+        - cheondeok_gwiin
+        - cheondeok_hap
+        - cheoneul_gwiin
+        - cheonsa
+        - cheonsal
+        - cheonui_seong
+        - eumyang_chachak
+        - gasuk
+        - geonrok
+        - geopsal
+        - geumyeo
+        - geupgak
+        - goegang
+        - gongmang
+        - goran
+        - gosin
+        - gugin_gwiin
+        - gwangwi_hakgwan
+        - gwimun_gwansal
+        - gyeokgak
+        - hakdang_gwiin
+        - hongyeom
+        - hwagae
+        - hyeonchim
+        - jaesal
+        - jangseong
+        - jisal
+        - mangsin
+        - muncheong_gwiin
+        - mungok_gwiin
+        - nakjeong_gwansal
+        - nyeonsal_dohwa
+        - samgi_gwiin
+        - sipak_daepae
+        - taegeuk_gwiin
+        - woldeok_gwiin
+        - woldeok_hap
+        - wolsal
+        - wonjin
+        - yangin
+        - yeokma
+        - yukhae
+
+    FlowContentFact:
+      type: object
+      additionalProperties: false
+      required: [sipseong, state]
+      properties:
+        sipseong: { $ref: '#/components/schemas/SipseongFact' }
+        state: { $ref: '#/components/schemas/OhaengStateFact' }
+
+    ResolveContentReadingRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, reading, scope]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        reading: { $ref: '#/components/schemas/DerivedReadingFacts' }
+        scope:
+          type: array
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items: { type: string, enum: [base, seun, wolun] }
+        unlock:
+          oneOf:
+            - $ref: '#/components/schemas/RewardClaimContentUnlock'
+            - $ref: '#/components/schemas/TicketContentUnlock'
+
+    RewardClaimContentUnlock:
+      type: object
+      additionalProperties: false
+      required: [section, kind, claimId]
+      properties:
+        section: { type: string, enum: [seun, wolun] }
+        kind: { type: string, enum: [reward_claim] }
+        claimId: { type: string, pattern: '^cl_[A-Za-z0-9._-]{1,128}$' }
+
+    TicketContentUnlock:
+      type: object
+      additionalProperties: false
+      required: [section, kind]
+      properties:
+        section: { type: string, enum: [seun, wolun] }
+        kind: { type: string, enum: [ticket] }
+
+    DerivedReadingFacts:
+      type: object
+      additionalProperties: false
+      required: [kind, chart, ilju, johap, sinsal, relations, daeun, seun, wolun]
+      properties:
+        kind: { type: string, enum: [full, three_pillar] }
+        chart:
+          type: object
+          additionalProperties: false
+          required: [year, month, day]
+          properties:
+            year: { $ref: '#/components/schemas/GanjiFact' }
+            month: { $ref: '#/components/schemas/GanjiFact' }
+            day: { $ref: '#/components/schemas/GanjiFact' }
+            hour: { $ref: '#/components/schemas/GanjiFact' }
+        ilju: { type: string, pattern: '^(gap|eul|byeong|jeong|mu|gi|gyeong|sin|im|gye)(ja|chuk|in|myo|jin|sa|o|mi|shin|yu|sul|hae)$' }
+        johap:
+          type: array
+          minItems: 3
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [sipseong, unseong]
+            properties:
+              sipseong: { $ref: '#/components/schemas/SipseongFact' }
+              unseong: { $ref: '#/components/schemas/UnseongFact' }
+        sinsal:
+          description: 시각 미상 three_pillar 명식에서는 빈 배열이어야 한다.
+          type: array
+          maxItems: 24
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name: { $ref: '#/components/schemas/SinsalNameFact' }
+              variant: { type: string, enum: [nyeonju, wolju, ilju, siju, outer] }
+        relations:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind]
+            properties:
+              kind: { type: string, enum: [yukhap, samhap, banghap, chung, hyeong, jahyeong, pa, hae, wonjin, gwimun] }
+              pair: { type: string, pattern: '^[子丑寅卯辰巳午未申酉戌亥]{2}$' }
+        daeun:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items: { $ref: '#/components/schemas/FlowContentFact' }
+        seun:
+          type: object
+          additionalProperties: false
+          required: [year, flow, daeunSipseong]
+          properties:
+            year: { type: integer, minimum: 1900, maximum: 2200 }
+            flow: { $ref: '#/components/schemas/FlowContentFact' }
+            daeunSipseong:
+              type: array
+              minItems: 1
+              maxItems: 2
+              items: { $ref: '#/components/schemas/SipseongFact' }
+            samjae: { type: string, enum: [in, mid, out] }
+        wolun:
+          type: array
+          minItems: 12
+          maxItems: 12
+          items: { $ref: '#/components/schemas/FlowContentFact' }
+
+    ResolvedContentReading:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, contentVersion, readingKey, articles, locked]
+      properties:
+        schemaVersion: { type: integer, minimum: 1 }
+        contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+        readingKey: { type: string, pattern: '^rk_[a-f0-9]{64}$' }
+        articles:
+          type: array
+          items: { $ref: '#/components/schemas/ContentArticle' }
+        locked:
+          type: array
+          maxItems: 2
+          items:
+            type: object
+            additionalProperties: false
+            required: [deepKey, section, year]
+            properties:
+              deepKey: { type: string, pattern: '^(seun|wolun):[0-9]{4}$' }
+              section: { type: string, enum: [seun, wolun] }
+              year: { type: integer, minimum: 1900, maximum: 2200 }
 
     ProductId:
       type: string

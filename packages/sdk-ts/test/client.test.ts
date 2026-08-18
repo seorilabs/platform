@@ -78,6 +78,40 @@ describe("Transport", () => {
     assert.equal(f.calls[0]!.headers["X-Seori-App"], "lizard-tycoon");
   });
 
+  it("App Check 공급자의 최신 토큰을 붙인다", async () => {
+    const f = fakeFetch([ok({}), ok({})]);
+    let token = "attested-1";
+    const transport = new Transport({
+      baseUrl: "https://platform.test",
+      appId: "ungeul",
+      fetchImpl: f.impl,
+      appCheckToken: async () => token,
+    });
+    await transport.request({ method: "GET", path: "/v1/test" });
+    token = "attested-2";
+    await transport.request({ method: "GET", path: "/v1/test" });
+
+    assert.equal(f.calls[0]!.headers["X-Firebase-AppCheck"], "attested-1");
+    assert.equal(f.calls[1]!.headers["X-Firebase-AppCheck"], "attested-2");
+  });
+
+  it("App Check 공급자가 멈춰도 요청 제한 시간을 지킨다", async () => {
+    const f = fakeFetch([ok({})]);
+    const transport = new Transport({
+      baseUrl: "https://platform.test",
+      appId: "ungeul",
+      fetchImpl: f.impl,
+      timeoutMs: 5,
+      appCheckToken: async () => new Promise(() => {}),
+    });
+
+    await assert.rejects(
+      transport.request({ method: "GET", path: "/v1/test", noRetry: true }),
+      (error: unknown) => error instanceof PlatformError && error.code === "network_error",
+    );
+    assert.equal(f.calls.length, 0);
+  });
+
   it("토큰이 있으면 Authorization을 붙인다", async () => {
     const f = fakeFetch([ok({})]);
     await newTransport(f.impl).request({
@@ -762,5 +796,43 @@ describe("서버 계약", () => {
 
     assert.equal(Number.isInteger(ts), true, "정수가 아니다");
     assert.equal(ts, 1_700_000_000_123);
+  });
+});
+
+describe("Content와 Identity", () => {
+  it("세션과 App Check로 콘텐츠 버전을 조회한다", async () => {
+    const f = fakeFetch([
+      ok({
+        platformToken: "pt-content", refreshToken: "rt-content",
+        platformUserId: "pu-content", appUserId: "uid-content",
+        isAnonymous: false, expiresIn: 3600,
+      }),
+      ok({ schemaVersion: 1, contentVersion: `sha256-${"a".repeat(64)}` }),
+    ]);
+    const platform = new Platform({
+      baseUrl: "https://platform.test", appId: "ungeul", fetchImpl: f.impl,
+      appCheckToken: async () => "attested-content",
+    });
+    await platform.signIn({ kind: "firebase-id-token", value: "firebase-id-token" });
+    const version = await platform.content.version();
+
+    assert.equal(version.schemaVersion, 1);
+    assert.equal(f.calls[1]!.url, "https://platform.test/v1/content/version");
+    assert.equal(f.calls[1]!.headers.Authorization, "Bearer pt-content");
+    assert.equal(f.calls[1]!.headers["X-Firebase-AppCheck"], "attested-content");
+  });
+
+  it("Firebase custom token bridge는 기존 ID token을 선택적으로 보낸다", async () => {
+    const f = fakeFetch([ok({ firebaseCustomToken: "custom", appUserId: "uid" })]);
+    const platform = new Platform({
+      baseUrl: "https://platform.test", appId: "ungeul", fetchImpl: f.impl,
+      appCheckToken: async () => "attested-content",
+    });
+    const got = await platform.identity.firebaseCustomToken("existing-id-token");
+
+    assert.equal(got.firebaseCustomToken, "custom");
+    assert.deepEqual(f.calls[0]!.body, {
+      appId: "ungeul", existingFirebaseIdToken: "existing-id-token",
+    });
   });
 });

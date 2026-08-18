@@ -35,6 +35,8 @@ export interface TransportOptions {
   now?: () => number;
   /** 요청 하나의 제한 시간. */
   timeoutMs?: number;
+  /** Firebase App Check token 공급자. 요청 시점마다 호출해 만료 토큰을 피한다. */
+  appCheckToken?: () => Promise<string>;
 }
 
 export interface RequestOptions {
@@ -62,6 +64,7 @@ export class Transport {
   private readonly random: () => number;
   private readonly now: () => number;
   private readonly timeoutMs: number;
+  private readonly appCheckToken: (() => Promise<string>) | undefined;
 
   constructor(opts: TransportOptions) {
     if (!opts.baseUrl) {
@@ -79,6 +82,7 @@ export class Transport {
     this.random = opts.random ?? Math.random;
     this.now = opts.now ?? Date.now;
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.appCheckToken = opts.appCheckToken;
   }
 
   /**
@@ -128,7 +132,7 @@ export class Transport {
     try {
       const response = await this.fetchImpl(url, {
         method: opts.method,
-        headers: this.buildHeaders(opts),
+        headers: await raceAbort(this.buildHeaders(opts), controller.signal),
         body: opts.body === undefined ? null : JSON.stringify(opts.body),
         signal: controller.signal,
       });
@@ -196,18 +200,34 @@ export class Transport {
     return url.toString();
   }
 
-  private buildHeaders(opts: RequestOptions): Record<string, string> {
+  private async buildHeaders(opts: RequestOptions): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       // 서버가 앱을 식별하는 헤더다. 레지스트리 조회의 키가 된다.
       "X-Seori-App": this.appId,
-      ...opts.headers,
     };
+    const appCheckToken = await this.appCheckToken?.();
+    if (appCheckToken) {
+      headers["X-Firebase-AppCheck"] = appCheckToken;
+    }
+    Object.assign(headers, opts.headers);
     if (opts.token) {
       headers["Authorization"] = `Bearer ${opts.token}`;
     }
     return headers;
   }
+}
+
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  const aborted = new Promise<never>((_, reject) => {
+    const fail = () => reject(new Error("요청 시간이 초과됐어요"));
+    if (signal.aborted) {
+      fail();
+      return;
+    }
+    signal.addEventListener("abort", fail, { once: true });
+  });
+  return Promise.race([promise, aborted]);
 }
 
 function toPlatformError(body: PlatformErrorBody, status: number): PlatformError {
