@@ -1749,13 +1749,26 @@ components:
           uniqueItems: true
           items: { type: string, enum: [base, seun, wolun] }
         unlock:
-          type: object
-          additionalProperties: false
-          required: [section, kind]
-          properties:
-            section: { type: string, enum: [seun, wolun] }
-            kind: { type: string, enum: [reward_claim, ticket] }
-            claimId: { type: string, pattern: '^cl_[A-Za-z0-9._-]{1,128}$' }
+          oneOf:
+            - $ref: '#/components/schemas/RewardClaimContentUnlock'
+            - $ref: '#/components/schemas/TicketContentUnlock'
+
+    RewardClaimContentUnlock:
+      type: object
+      additionalProperties: false
+      required: [section, kind, claimId]
+      properties:
+        section: { type: string, enum: [seun, wolun] }
+        kind: { type: string, enum: [reward_claim] }
+        claimId: { type: string, pattern: '^cl_[A-Za-z0-9._-]{1,128}$' }
+
+    TicketContentUnlock:
+      type: object
+      additionalProperties: false
+      required: [section, kind]
+      properties:
+        section: { type: string, enum: [seun, wolun] }
+        kind: { type: string, enum: [ticket] }
 
     DerivedReadingFacts:
       type: object

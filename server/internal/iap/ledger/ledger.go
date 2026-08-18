@@ -231,6 +231,7 @@ func (l *Ledger) grant(
 		// 트랜잭션은 재시도될 수 있다. 매 시도마다 초기화한다.
 		transferredFrom := ""
 		var prevOwnerEnt entitlementDoc
+		var transferredSource domain.Source
 		var prevOwnerPUID string
 
 		orderPath, err := l.paths.order(orderKey)
@@ -287,7 +288,8 @@ func (l *Ledger) grant(
 				//
 				// 여기서는 읽기만 한다. Firestore 트랜잭션은 모든 읽기가
 				// 쓰기보다 앞서야 해서, 실제 반영은 아래 쓰기 구간에서 한다.
-				prevOwnerEnt, prevOwnerPUID, err = l.readDetachedPreviousOwner(tx, order, orderKey)
+				prevOwnerEnt, transferredSource, prevOwnerPUID, err =
+					l.readDetachedPreviousOwner(tx, order, orderKey)
 				if err != nil {
 					return err
 				}
@@ -492,13 +494,18 @@ func (l *Ledger) grant(
 			return err
 		}
 
+		contentUnitsConsumed := prevSource.ContentUnitsConsumed
+		if transferredSource.ContentUnitsConsumed > contentUnitsConsumed {
+			contentUnitsConsumed = transferredSource.ContentUnitsConsumed
+		}
 		ent.Sources[orderKey] = domain.Source{
-			Platform:    in.Purchase.Platform,
-			ProductID:   in.Purchase.ProductID,
-			State:       storedState,
-			PurchasedAt: storedPurchasedAt,
-			ObservedAt:  storedObservedAt,
-			UpdatedAt:   now,
+			Platform:             in.Purchase.Platform,
+			ProductID:            in.Purchase.ProductID,
+			State:                storedState,
+			PurchasedAt:          storedPurchasedAt,
+			ObservedAt:           storedObservedAt,
+			UpdatedAt:            now,
+			ContentUnitsConsumed: contentUnitsConsumed,
 		}
 
 		if err := l.writeEntitlement(tx, in.PlatformUserID, ent, now); err != nil {
@@ -1804,26 +1811,27 @@ func (l *Ledger) readDetachedPreviousOwner(
 	tx *store.Tx,
 	order orderDoc,
 	orderKey string,
-) (entitlementDoc, string, error) {
+) (entitlementDoc, domain.Source, string, error) {
 	if order.PlatformUserID == "" || order.EntitlementID == "" {
-		return entitlementDoc{}, "", nil
+		return entitlementDoc{}, domain.Source{}, "", nil
 	}
 
 	intPath, err := l.paths.internalEntitlement(order.PlatformUserID, order.EntitlementID)
 	if err != nil {
-		return entitlementDoc{}, "", err
+		return entitlementDoc{}, domain.Source{}, "", err
 	}
 	prev, err := l.readEntitlement(tx, intPath, order.EntitlementID)
 	if err != nil {
-		return entitlementDoc{}, "", err
+		return entitlementDoc{}, domain.Source{}, "", err
 	}
-	if _, ok := prev.Sources[orderKey]; !ok {
+	source, ok := prev.Sources[orderKey]
+	if !ok {
 		// 이전 소유자에게 이 근거가 없다. 쓸 것도 없다.
-		return entitlementDoc{}, "", nil
+		return entitlementDoc{}, domain.Source{}, "", nil
 	}
 	delete(prev.Sources, orderKey)
 
-	return prev, order.PlatformUserID, nil
+	return prev, source, order.PlatformUserID, nil
 }
 
 // checkReplay는 같은 주문 키에 다른 내용이 오는지 본다.

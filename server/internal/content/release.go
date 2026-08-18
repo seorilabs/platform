@@ -58,6 +58,7 @@ type ReleaseLoader struct {
 
 	mu    sync.Mutex
 	cache map[string]cachedRelease
+	locks map[string]*sync.Mutex
 }
 
 func NewReleaseLoader(source ObjectSource, environment string) (*ReleaseLoader, error) {
@@ -67,7 +68,7 @@ func NewReleaseLoader(source ObjectSource, environment string) (*ReleaseLoader, 
 	}
 	return &ReleaseLoader{
 		source: source, environment: environment, ttl: DefaultReleaseTTL,
-		now: time.Now, cache: make(map[string]cachedRelease),
+		now: time.Now, cache: make(map[string]cachedRelease), locks: make(map[string]*sync.Mutex),
 	}, nil
 }
 
@@ -89,15 +90,24 @@ func (l *ReleaseLoader) Load(ctx context.Context, app registry.App) (Release, er
 			"이 앱은 콘텐츠 API를 사용하지 않아요")
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	// 같은 앱의 만료 캐시는 한 번만 다시 읽되, 한 앱의 GCS 지연이 다른 앱의
+	// 콘텐츠 요청까지 막지 않도록 네트워크 I/O는 전역 mutex 밖에서 수행한다.
+	appLock := l.lockForApp(app.AppID)
+	appLock.Lock()
+	defer appLock.Unlock()
+
 	now := l.now().UTC()
+	l.mu.Lock()
 	previous, hasPrevious := l.cache[app.AppID]
 	if hasPrevious && now.Sub(previous.checkedAt) < l.ttl {
+		l.mu.Unlock()
 		return previous.release, nil
 	}
+	l.mu.Unlock()
 
 	next, err := l.read(ctx, app, now)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if err == nil {
 		l.cache[app.AppID] = cachedRelease{release: next, checkedAt: now}
 		return next, nil
@@ -112,6 +122,17 @@ func (l *ReleaseLoader) Load(ctx context.Context, app registry.App) (Release, er
 	}
 	return Release{}, platformerr.Wrap(err, platformerr.CodeContentUnavailable,
 		"사용할 수 있는 콘텐츠 릴리스가 없어요")
+}
+
+func (l *ReleaseLoader) lockForApp(appID string) *sync.Mutex {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lock := l.locks[appID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		l.locks[appID] = lock
+	}
+	return lock
 }
 
 func (l *ReleaseLoader) read(ctx context.Context, app registry.App, now time.Time) (Release, error) {

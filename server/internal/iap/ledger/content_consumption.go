@@ -8,18 +8,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
 )
-
-type contentSourceUsageDoc struct {
-	EntitlementID string    `firestore:"entitlementId"`
-	SourceKey     string    `firestore:"sourceKey"`
-	Consumed      int       `firestore:"consumed"`
-	UpdatedAt     time.Time `firestore:"updatedAt"`
-}
 
 type contentConsumptionDoc struct {
 	PlatformUserID string    `firestore:"platformUserId"`
@@ -42,8 +34,8 @@ type ConsumptionResult struct {
 }
 
 // ConsumeUnits는 현재 활성 구매 source마다 unitsPerSource를 배정하고 한 건을
-// 원자적으로 차감한다. 불변식 4·6에 따라 source 해시에 사용량을 묶으므로 소유권
-// 이전에도 사용량을 되살리지 않고, 환불된 source의 사용량이 새 구매를 깎지 않는다.
+// 원자적으로 차감한다. 사용량은 entitlement의 source와 함께 저장해 소유권 이전에도
+// 되살아나지 않고, source 수와 무관하게 Firestore 문서 두 건만 읽는다.
 // 불변식 5에 따라 request별 consumption 증거는 create-only로 남겨 재시작을 멱등 처리한다.
 func (l *Ledger) ConsumeUnits(
 	ctx context.Context,
@@ -106,76 +98,28 @@ func (l *Ledger) ConsumeUnits(
 			return platformerr.New(platformerr.CodeLedgerStateInvalid,
 				"열람권 entitlement 원장이 올바르지 않아요")
 		}
-		activeSources := make([]string, 0, len(entitlement.Sources))
-		for sourceKey, source := range entitlement.Sources {
-			if source.State == domain.StateActive {
-				activeSources = append(activeSources, sourceKey)
-			}
-		}
-		sort.Strings(activeSources)
-		if len(activeSources) == 0 {
-			return platformerr.New(platformerr.CodeContentTicketEmpty,
-				"사용할 수 있는 열람권이 없어요")
-		}
-
-		type sourceUsage struct {
-			path fspath.Path
-			doc  contentSourceUsageDoc
-		}
-		usages := make([]sourceUsage, 0, len(activeSources))
-		for _, sourceKey := range activeSources {
-			usagePath, err := l.paths.contentSourceUsage(sourceKey)
-			if err != nil {
-				return err
-			}
-			exists, snap, err := tx.Exists(usagePath)
-			if err != nil {
-				return err
-			}
-			usage := contentSourceUsageDoc{EntitlementID: entitlementID, SourceKey: sourceKey}
-			if exists {
-				if err := snap.DataTo(&usage); err != nil {
-					return err
-				}
-				if usage.EntitlementID != entitlementID || usage.SourceKey != sourceKey ||
-					usage.Consumed < 0 || usage.Consumed > unitsPerSource {
-					return platformerr.New(platformerr.CodeLedgerStateInvalid,
-						"열람권 source 사용 원장이 올바르지 않아요")
-				}
-			}
-			usages = append(usages, sourceUsage{path: usagePath, doc: usage})
-		}
-
-		chosen := -1
-		remaining := 0
-		for index := range usages {
-			capacity := unitsPerSource - usages[index].doc.Consumed
-			remaining += capacity
-			if chosen < 0 && capacity > 0 {
-				chosen = index
-			}
-		}
-		if chosen < 0 {
-			return platformerr.New(platformerr.CodeContentTicketEmpty,
-				"사용할 수 있는 열람권이 없어요")
+		chosen, remaining, err := chooseContentSource(entitlement.Sources, unitsPerSource)
+		if err != nil {
+			return err
 		}
 
 		now := l.now().UTC()
-		usages[chosen].doc.Consumed++
-		usages[chosen].doc.UpdatedAt = now
+		source := entitlement.Sources[chosen]
+		source.ContentUnitsConsumed++
+		entitlement.Sources[chosen] = source
 		remaining--
-		if err := tx.Set(usages[chosen].path, usages[chosen].doc); err != nil {
+		if err := tx.Set(entitlementPath, entitlement); err != nil {
 			return err
 		}
 		if err := tx.Create(consumptionPath, contentConsumptionDoc{
 			PlatformUserID: puid, EntitlementID: entitlementID, RequestKey: requestKey,
-			SourceKey: usages[chosen].doc.SourceKey, Consumed: 1,
+			SourceKey: chosen, Consumed: 1,
 			Remaining: remaining, CreatedAt: now,
 		}); err != nil {
 			return err
 		}
 		result = ConsumptionResult{
-			Applied: true, Remaining: remaining, SourceKey: usages[chosen].doc.SourceKey,
+			Applied: true, Remaining: remaining, SourceKey: chosen,
 		}
 		return nil
 	})
@@ -187,6 +131,36 @@ func (l *Ledger) ConsumeUnits(
 			"열람권을 차감하지 못했어요")
 	}
 	return result, nil
+}
+
+func chooseContentSource(sources map[string]domain.Source, unitsPerSource int) (string, int, error) {
+	activeSources := make([]string, 0, len(sources))
+	for sourceKey, source := range sources {
+		if source.State == domain.StateActive {
+			activeSources = append(activeSources, sourceKey)
+		}
+	}
+	sort.Strings(activeSources)
+
+	chosen := ""
+	remaining := 0
+	for _, sourceKey := range activeSources {
+		consumed := sources[sourceKey].ContentUnitsConsumed
+		if consumed < 0 || consumed > unitsPerSource {
+			return "", 0, platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"열람권 source 사용 원장이 올바르지 않아요")
+		}
+		capacity := unitsPerSource - consumed
+		remaining += capacity
+		if chosen == "" && capacity > 0 {
+			chosen = sourceKey
+		}
+	}
+	if chosen == "" {
+		return "", 0, platformerr.New(platformerr.CodeContentTicketEmpty,
+			"사용할 수 있는 열람권이 없어요")
+	}
+	return chosen, remaining, nil
 }
 
 // IsActive는 특정 entitlement를 원문 source를 노출하지 않고 확인한다.

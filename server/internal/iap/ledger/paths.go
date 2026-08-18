@@ -39,7 +39,6 @@ const (
 	adminMutationLimits     = "admin_mutation_limits"
 	pendingRefundReviews    = "pending_refund_reviews"
 	refundReviewDecisions   = "refund_review_decisions"
-	contentSourceUsage      = "content_source_usage"
 	contentConsumptions     = "content_consumptions"
 )
 
@@ -76,12 +75,6 @@ func (b pathBuilder) internalEntitlement(puid, entID string) (fspath.Path, error
 // internalEntitlements는 한 사용자의 내부 원장 컬렉션이다.
 func (b pathBuilder) internalEntitlements(puid string) (fspath.Path, error) {
 	return b.parse(internalUsers + "/" + puid + "/" + entitlements)
-}
-
-// contentSourceUsage는 주문 source 해시별 사용량이다. 사용자 소유권이 이전돼도
-// 같은 구매의 이미 쓴 장수를 되살리지 않고, 새 구매는 자기 장수를 온전히 받는다.
-func (b pathBuilder) contentSourceUsage(sourceKey string) (fspath.Path, error) {
-	return b.parse(contentSourceUsage + "/" + sourceKey)
 }
 
 // contentConsumption은 요청 키별 immutable 차감 증거다. 같은 reading/deep

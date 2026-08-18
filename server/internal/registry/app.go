@@ -272,7 +272,7 @@ func (a App) validateContent() error {
 	}
 	if !contentPrefixPattern.MatchString(cfg.Prefix) || strings.HasPrefix(cfg.Prefix, "/") ||
 		strings.HasSuffix(cfg.Prefix, "/") || strings.Contains(cfg.Prefix, "//") ||
-		strings.Contains(cfg.Prefix, "..") || isPlaceholder(cfg.Prefix) {
+		strings.Contains(cfg.Prefix, "..") || hasEnvironmentPrefix(cfg.Prefix) || isPlaceholder(cfg.Prefix) {
 		return fmt.Errorf("%s: content.prefix가 올바르지 않다", a.AppID)
 	}
 	if cfg.ReadingDailyLimit <= 0 || cfg.ReadingDailyLimit > 100 {
@@ -311,6 +311,11 @@ func (a App) validateContent() error {
 		}
 	}
 	return nil
+}
+
+func hasEnvironmentPrefix(prefix string) bool {
+	first, _, _ := strings.Cut(prefix, "/")
+	return first == "staging" || first == "production"
 }
 
 func (a App) validateCORSOrigins() error {

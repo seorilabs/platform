@@ -213,6 +213,10 @@ type Source struct {
 	ObservedAt  time.Time `firestore:"observedAt"`
 	UpdatedAt   time.Time `firestore:"updatedAt"`
 
+	// ContentUnitsConsumed는 이 구매 source에서 이미 사용한 콘텐츠 열람권 수다.
+	// source와 함께 소유권 이전되므로 재설치·계정 이전으로 사용량이 되살아나지 않는다.
+	ContentUnitsConsumed int `firestore:"contentUnitsConsumed,omitempty"`
+
 	// 운영자 지급 전용 필드. 마켓 구매면 비어 있다.
 	ActorLogin string `firestore:"actorLogin,omitempty"`
 	Reason     string `firestore:"reason,omitempty"`

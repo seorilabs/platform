@@ -244,6 +244,14 @@ func TestContentConfigValidation(t *testing.T) {
 	if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "content.prefix") {
 		t.Fatalf("위험한 prefix error = %v", err)
 	}
+
+	for _, prefix := range []string{"production", "production/ungeul", "staging", "staging/ungeul"} {
+		app = validContentApp()
+		app.Content.Prefix = prefix
+		if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "content.prefix") {
+			t.Fatalf("환경을 포함한 prefix %q error = %v", prefix, err)
+		}
+	}
 }
 
 func TestValidateAppSetRejectsCrossAppAdMobUnitReuse(t *testing.T) {

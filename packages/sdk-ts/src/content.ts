@@ -62,12 +62,12 @@ export interface ResolveContentRequest {
   schemaVersion: typeof CONTENT_SCHEMA_VERSION;
   reading: DerivedReadingFacts;
   scope: ContentScope[];
-  unlock?: {
-    section: "seun" | "wolun";
-    kind: "reward_claim" | "ticket";
-    claimId?: string;
-  };
+  unlock?: ContentUnlockRequest;
 }
+
+export type ContentUnlockRequest =
+  | { section: "seun" | "wolun"; kind: "reward_claim"; claimId: string }
+  | { section: "seun" | "wolun"; kind: "ticket"; claimId?: never };
 
 export interface LockedDeepContent {
   deepKey: string;

@@ -165,6 +165,44 @@ func TestContentUnitsAreAtomicIdempotentAndReflectRevocation(t *testing.T) {
 	}
 }
 
+func TestContentUnitsFollowPurchaseOwnershipTransfer(t *testing.T) {
+	l, done := newTestLedger(t)
+	defer done()
+
+	ctx := context.Background()
+	entitlementID := "deep_ticket"
+	now := time.Now().UTC().Truncate(time.Second)
+	purchase := testPurchase(uniqueID("ticket-transfer"), domain.StateActive, now)
+	firstOwner := uniqueID("pu_content_owner_a")
+	secondOwner := uniqueID("pu_content_owner_b")
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: firstOwner, EntitlementID: entitlementID, Purchase: purchase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := l.ConsumeUnits(ctx, firstOwner, entitlementID, 2, "reading-a/seun:2026")
+	if err != nil || first.Remaining != 1 {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+
+	transferred := purchase
+	transferred.PlatformAccountID = "account-after-reinstall"
+	transferred.ObservedAt = now.Add(time.Minute)
+	if _, err := l.Grant(ctx, GrantInput{
+		PlatformUserID: secondOwner, EntitlementID: entitlementID, Purchase: transferred,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := l.ConsumeUnits(ctx, secondOwner, entitlementID, 2, "reading-b/seun:2026")
+	if err != nil || second.Remaining != 0 || second.SourceKey != first.SourceKey {
+		t.Fatalf("after transfer=%+v first=%+v err=%v", second, first, err)
+	}
+	_, err = l.ConsumeUnits(ctx, secondOwner, entitlementID, 2, "reading-c/seun:2026")
+	if platformerr.CodeOf(err) != platformerr.CodeContentTicketEmpty {
+		t.Fatalf("exhausted after transfer code=%q err=%v", platformerr.CodeOf(err), err)
+	}
+}
+
 // 불변식 2: 첫 지급은 granted, 재지급은 alreadyGranted. 항상 배타적이다.
 func TestGrantIdempotency(t *testing.T) {
 	l, done := newTestLedger(t)
