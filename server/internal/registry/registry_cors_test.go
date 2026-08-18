@@ -7,18 +7,23 @@ import (
 
 func TestAllowsCORSOriginUsesExplicitRegistryAllowlist(t *testing.T) {
 	app := validAppForTest()
-	app.CORSOrigins = []string{"https://test-app.private-apps.tossmini.com"}
+	app.CORSOrigins = []string{
+		"https://test-app.private-apps.tossmini.com",
+		"capacitor://localhost",
+	}
 	r := New(staticRegistrySource{apps: []App{app}})
 
-	allowed, err := r.AllowsCORSOrigin(context.Background(), app.CORSOrigins[0])
-	if err != nil {
-		t.Fatalf("AllowsCORSOrigin() error = %v", err)
-	}
-	if !allowed {
-		t.Fatal("등록된 origin이 거부됐다")
+	for _, origin := range app.CORSOrigins {
+		allowed, err := r.AllowsCORSOrigin(context.Background(), origin)
+		if err != nil {
+			t.Fatalf("AllowsCORSOrigin(%q) error = %v", origin, err)
+		}
+		if !allowed {
+			t.Fatalf("등록된 origin이 거부됐다: %s", origin)
+		}
 	}
 
-	allowed, err = r.AllowsCORSOrigin(context.Background(), "https://attacker.example")
+	allowed, err := r.AllowsCORSOrigin(context.Background(), "https://attacker.example")
 	if err != nil {
 		t.Fatalf("AllowsCORSOrigin() error = %v", err)
 	}

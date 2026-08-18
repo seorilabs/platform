@@ -20,6 +20,8 @@ import {
 } from "./events.ts";
 import { Iap } from "./iap.ts";
 import { Ads } from "./ads.ts";
+import { Content } from "./content.ts";
+import { Identity } from "./identity.ts";
 import {
   MemorySessionStore,
   SessionManager,
@@ -44,6 +46,8 @@ export { MemoryEventOutbox, Events } from "./events.ts";
 export { Iap } from "./iap.ts";
 export { Ads } from "./ads.ts";
 export { Config } from "./config.ts";
+export { Content, CONTENT_SCHEMA_VERSION } from "./content.ts";
+export { Identity } from "./identity.ts";
 export { SDK_VERSION } from "./version.ts";
 
 export type { Credential, CredentialKind, Session, SessionStore } from "./session.ts";
@@ -64,6 +68,23 @@ export type {
 export type { RemoteConfig, ConfigTarget, SdkStatus, Maintenance } from "./config.ts";
 export type { TransportOptions, RequestOptions } from "./transport.ts";
 export type { ParamValue } from "./normalize.ts";
+export type {
+  ContentAccess,
+  ContentArticle,
+  ContentScope,
+  ContentTerm,
+  ContentVersion,
+  DerivedReadingFacts,
+  FlowContentFact,
+  LockedDeepContent,
+  OhaengStateFact,
+  ResolvedContentReading,
+  ResolveContentRequest,
+  SinsalNameFact,
+  SipseongFact,
+  UnseongFact,
+} from "./content.ts";
+export type { FirebaseCustomTokenResult } from "./identity.ts";
 export type {
   AdsPolicy,
   AdReward,
@@ -100,6 +121,8 @@ export class Platform {
   readonly iap: Iap;
   readonly config: Config;
   readonly ads: Ads;
+  readonly content: Content;
+  readonly identity: Identity;
 
   constructor(opts: PlatformOptions) {
     this.transport = new Transport(opts);
@@ -153,6 +176,8 @@ export class Platform {
       getToken: () => this.session.token(),
     });
     this.ads = new Ads(adsTransport, () => this.session.token());
+    this.content = new Content(this.transport, () => this.session.token());
+    this.identity = new Identity(this.transport, opts.appId);
 
     this.config = new Config({
       transport: this.transport,

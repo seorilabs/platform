@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,12 +63,15 @@ type App struct {
 	GA4 GA4Config `json:"ga4" firestore:"ga4"`
 	IAP IAPConfig `json:"iap" firestore:"iap"`
 	Ads AdsConfig `json:"ads" firestore:"ads"`
+	// Content는 private GCS 릴리스와 사용자별 조회 한도의 원장이다.
+	// bucket에는 gs://를 넣지 않고, prefix에는 환경(staging/production)을 넣지 않는다.
+	Content ContentConfig `json:"content,omitempty" firestore:"content,omitempty"`
 
 	// PlatformEventAllowlist에 없는 이벤트는 플랫폼으로 보내지 않는다.
 	// 비용과 QPS를 규모와 무관한 상수로 묶는 장치다.
 	PlatformEventAllowlist []string `json:"platform_event_allowlist" firestore:"platform_event_allowlist"`
 
-	// CORSOrigins는 웹과 AIT 빌드용이다. 비어 있으면 CORS를 허용하지 않는다.
+	// CORSOrigins는 웹, AIT와 Capacitor WebView 빌드용이다. 비어 있으면 CORS를 허용하지 않는다.
 	CORSOrigins []string `json:"cors_origins" firestore:"cors_origins"`
 
 	// BlockedUIDs는 남용 계정 차단용이다. 앱 전체를 멈추지 않고 개별 차단한다.
@@ -135,12 +139,32 @@ type AdsRewardConfig struct {
 	MaxAmount int    `json:"max_amount" firestore:"max_amount"`
 }
 
+// ContentConfig는 인증된 콘텐츠 전달에 필요한 앱별 경계다.
+// 실제 GCS IAM, Firebase App Check, AdMob/IAP 콘솔 활성 상태는 별도 운영 gate다.
+type ContentConfig struct {
+	Bucket            string `json:"bucket" firestore:"bucket"`
+	Prefix            string `json:"prefix" firestore:"prefix"`
+	ReadingDailyLimit int    `json:"reading_daily_limit" firestore:"reading_daily_limit"`
+	TermDailyLimit    int    `json:"term_daily_limit" firestore:"term_daily_limit"`
+
+	// RewardKey는 server_verified claim이 가져야 하는 광고 보상 key다.
+	RewardKey string `json:"reward_key,omitempty" firestore:"reward_key,omitempty"`
+	// TicketEntitlementID의 활성 IAP source 하나가 TicketUnitsPerPurchase만큼의
+	// 심화 열람권을 만든다. 차감은 IAP 원장에서 request key로 멱등 처리한다.
+	TicketEntitlementID    string `json:"ticket_entitlement_id,omitempty" firestore:"ticket_entitlement_id,omitempty"`
+	TicketUnitsPerPurchase int    `json:"ticket_units_per_purchase,omitempty" firestore:"ticket_units_per_purchase,omitempty"`
+	// SeasonEntitlements는 연도 문자열을 활성 entitlement에 연결한다.
+	SeasonEntitlements map[string]string `json:"season_entitlements,omitempty" firestore:"season_entitlements,omitempty"`
+}
+
 var appIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 var entitlementIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 var serviceAccountPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{5,29}@[a-z0-9][a-z0-9-]{5,29}\.iam\.gserviceaccount\.com$`)
 var androidPackagePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$`)
 var adsIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
 var admobUnitPattern = regexp.MustCompile(`^ca-app-pub-[0-9]{16}/[0-9]{10}$`)
+var gcsBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
+var contentPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9/_-]{0,127}$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
@@ -213,6 +237,9 @@ func (a App) Validate() error {
 	if err := a.validateAds(); err != nil {
 		return err
 	}
+	if err := a.validateContent(); err != nil {
+		return err
+	}
 	if err := a.validateCORSOrigins(); err != nil {
 		return err
 	}
@@ -226,11 +253,75 @@ func (a App) Validate() error {
 	return nil
 }
 
+func (a App) validateContent() error {
+	cfg := a.Content
+	if !a.FeatureEnabled("content") {
+		if cfg.Bucket != "" || cfg.Prefix != "" || cfg.ReadingDailyLimit != 0 ||
+			cfg.TermDailyLimit != 0 || cfg.RewardKey != "" || cfg.TicketEntitlementID != "" ||
+			cfg.TicketUnitsPerPurchase != 0 || len(cfg.SeasonEntitlements) != 0 {
+			return fmt.Errorf("%s: content가 비활성인데 content 설정이 존재한다", a.AppID)
+		}
+		return nil
+	}
+	if !a.RequireAppCheck || !a.FeatureEnabled("firebase_custom_token_bridge") {
+		return fmt.Errorf("%s: content 활성 앱은 App Check와 firebase custom token bridge가 필수다", a.AppID)
+	}
+	if !gcsBucketPattern.MatchString(cfg.Bucket) || strings.HasPrefix(cfg.Bucket, "gs://") ||
+		isPlaceholder(cfg.Bucket) {
+		return fmt.Errorf("%s: content.bucket이 올바르지 않다", a.AppID)
+	}
+	if !contentPrefixPattern.MatchString(cfg.Prefix) || strings.HasPrefix(cfg.Prefix, "/") ||
+		strings.HasSuffix(cfg.Prefix, "/") || strings.Contains(cfg.Prefix, "//") ||
+		strings.Contains(cfg.Prefix, "..") || isPlaceholder(cfg.Prefix) {
+		return fmt.Errorf("%s: content.prefix가 올바르지 않다", a.AppID)
+	}
+	if cfg.ReadingDailyLimit <= 0 || cfg.ReadingDailyLimit > 100 {
+		return fmt.Errorf("%s: content.reading_daily_limit은 1~100이어야 한다", a.AppID)
+	}
+	if cfg.TermDailyLimit <= 0 || cfg.TermDailyLimit > 1000 {
+		return fmt.Errorf("%s: content.term_daily_limit은 1~1000이어야 한다", a.AppID)
+	}
+	if cfg.RewardKey != "" {
+		if !a.FeatureEnabled("ads") || !adsIDPattern.MatchString(cfg.RewardKey) {
+			return fmt.Errorf("%s: content.reward_key에는 활성 광고 reward가 필요하다", a.AppID)
+		}
+		matched := false
+		for _, placement := range a.Ads.Placements {
+			if placement.Reward != nil && placement.Reward.Key == cfg.RewardKey {
+				matched = true
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%s: content.reward_key가 광고 placement와 이어지지 않는다", a.AppID)
+		}
+	}
+	if cfg.TicketEntitlementID == "" {
+		if cfg.TicketUnitsPerPurchase != 0 {
+			return fmt.Errorf("%s: ticket entitlement 없이 단위 수를 둘 수 없다", a.AppID)
+		}
+	} else if !a.FeatureEnabled("iap") || !a.EntitlementAllowed(cfg.TicketEntitlementID) ||
+		cfg.TicketUnitsPerPurchase <= 0 || cfg.TicketUnitsPerPurchase > 100 {
+		return fmt.Errorf("%s: content 열람권 IAP 설정이 올바르지 않다", a.AppID)
+	}
+	for year, entitlementID := range cfg.SeasonEntitlements {
+		y, err := strconv.Atoi(year)
+		if err != nil || y < 1900 || y > 2200 || !a.FeatureEnabled("iap") ||
+			!a.EntitlementAllowed(entitlementID) {
+			return fmt.Errorf("%s: content 시즌 entitlement가 올바르지 않다: %q", a.AppID, year)
+		}
+	}
+	return nil
+}
+
 func (a App) validateCORSOrigins() error {
 	seen := make(map[string]struct{}, len(a.CORSOrigins))
 	for _, origin := range a.CORSOrigins {
 		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		webOrigin := u != nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+		// Capacitor iOS는 WKWebView가 가로챌 수 없는 전용 scheme을 기본 origin으로 쓴다.
+		// 임의 custom scheme을 열지 않고 공식 기본값 하나만 exact allowlist에 허용한다.
+		capacitorIOSOrigin := u != nil && u.Scheme == "capacitor" && u.Host == "localhost"
+		if err != nil || (!webOrigin && !capacitorIOSOrigin) ||
 			u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("%s: cors_origins 값이 올바른 origin이 아니다: %q", a.AppID, origin)
 		}

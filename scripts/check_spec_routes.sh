@@ -28,13 +28,13 @@ root = sys.argv[1]
 spec = set()
 with open(f"{root}/spec/openapi.yaml", encoding="utf-8") as f:
     for line in f:
-        m = re.match(r"^  (/[A-Za-z0-9/{}._-]+):\s*$", line)
+        m = re.match(r"^  (/[A-Za-z0-9/{}._:-]+):\s*$", line)
         if m:
             spec.add(m.group(1))
 
 # 실제 등록 라우트. net/http 패턴 문자열에서 뽑는다.
 out = subprocess.run(
-    ["grep", "-rhoE", r'"(GET|POST|DELETE|PUT|PATCH) /v1/[A-Za-z0-9/{}._-]+"',
+    ["grep", "-rhoE", r'"(GET|POST|DELETE|PUT|PATCH) /v1/[A-Za-z0-9/{}._:-]+"',
      f"{root}/server", "--include=*.go"],
     capture_output=True, text=True, check=False,
 ).stdout

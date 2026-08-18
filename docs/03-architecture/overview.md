@@ -11,7 +11,7 @@ flowchart TB
   end
 
   subgraph GCP["GCP seorilabs-platform - asia-northeast3"]
-    API["platform-api<br/>session · RC · entitlements"]
+    API["platform-api<br/>session · RC · content"]
     IAP["platform-iap<br/>검증 · 웹훅<br/>마켓 자격증명 격리"]
     ING["platform-ingest<br/>이벤트 수집"]
     ADM["platform-admin<br/>private"]
@@ -28,6 +28,7 @@ flowchart TB
   CLIENT --> IAP
   CLIENT --> ING
   API --> FS
+  API --> GCS["private GCS content releases"]
   IAP --> FS
   ING --> BQ
   ADM --> FS
@@ -45,7 +46,7 @@ flowchart TB
 
 | role | 노출 | 특징 |
 |---|---|---|
-| `api` | public | session, RemoteConfig, entitlement 조회 |
+| `api` | public | session, RemoteConfig, 인증된 콘텐츠 선택 전달 |
 | `iap` | public | 검증, 웹훅. **마켓 자격증명은 여기에만** |
 | `ingest` | public | 이벤트 수집. 고QPS, I/O 바운드 write-only |
 | `admin` | **private** | `--no-allow-unauthenticated` |

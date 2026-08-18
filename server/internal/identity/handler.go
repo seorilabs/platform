@@ -241,6 +241,13 @@ func (h *Handler) Authenticate(r *http.Request) (Session, error) {
 	return h.svc.Authenticate(r.Context(), appID, token)
 }
 
+// VerifyAppCheck는 인증된 기능 핸들러가 동일한 App Check 검증 경계를
+// 재사용하게 한다. 검증 구현이나 레지스트리 세부사항은 identity 밖으로
+// 노출하지 않는다.
+func (h *Handler) VerifyAppCheck(ctx context.Context, appID, token string) error {
+	return h.svc.VerifyAppCheck(ctx, appID, token)
+}
+
 // resolveAppID는 헤더와 본문의 앱 식별자를 대조한다.
 func resolveAppID(r *http.Request, bodyAppID string) (string, error) {
 	headerAppID, err := httpx.Header(r, AppHeader, platformerr.CodeRequestInvalid)
