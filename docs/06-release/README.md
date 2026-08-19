@@ -3,12 +3,14 @@
 ## 배포 파이프라인
 
 ```
-PR / push→main  → static-checks    golangci-lint · go vet · go test · conformance
-push→main       → deploy-staging   자동 → 스모크
-운영자 dispatch  → deploy-production  Environment 승인 게이트
+PR / push→main  → static-checks   golangci-lint · go vet · go test · conformance
+push→main       → deploy          이미지 빌드 → 여섯 대상 배포 → readback · 스모크
+운영자 dispatch  → deploy          같은 commit 재배포용
 ```
 
-org 표준(`main = 정적 게이트만`)보다 한 단계 보수적이다. 이 플랫폼은 20개 앱 클라이언트가 물린 공개 API이므로 프로덕션 배포에 명시적 승인을 요구한다.
+배포는 `production` 고정이며 병합과 함께 자동으로 돈다. 승인 게이트 대신
+배포 후 검증(이미지 태그 일치, secret·환경 경계 readback, `health/ready`)이
+실패하면 워크플로가 실패한다.
 
 ## 러너
 

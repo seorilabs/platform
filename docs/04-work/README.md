@@ -132,8 +132,8 @@ Apple App Review의 인앱결제는 sandbox 거래다. 플랫폼은 자동 fallb
 이 일치를 fail-closed로 검사한다.
 
 심사 승인 뒤에도 앱은 수동 출시 상태로 둔다. 공개 출시 전에 별도 변경으로
-registry를 production으로 되돌리고 `regsync`를 적용한 다음, Deploy workflow의
-`iap_environment=production` 배포와 production 실거래 검증을 마쳐야 한다.
+registry를 production으로 되돌리고 `regsync`를 적용한 다음, 배포와 production
+실거래 검증을 마쳐야 한다. 배포 workflow는 production 고정이다.
 
 2026-08-09 App Store 공개 상태를 확인하고 `lizard-tycoon` registry와 런타임을
 production으로 복구했다. sandbox 심사·테스트 원장은 production으로 복사하지 않고

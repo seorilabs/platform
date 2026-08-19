@@ -484,23 +484,23 @@ platform-worker                                               (Cloud Run Job)
 | 단계 | 트리거 |
 |---|---|
 | 빌드·push | main 병합 시 자동 |
-| 배포 | Actions에서 **Deploy 워크플로를 사람이 실행** |
+| 배포 | main 병합 시 자동 (같은 실행에서 이어짐) |
 
-실결제 원장이라 배포 직전에 사람이 한 번 끊는다. 병합만으로는 배포되지
-않는다.
+병합이 곧 배포다. 손으로 끊는 단계는 병합된 코드가 며칠씩 배포되지 않는
+드리프트를 만들었고, 그 사이 Backoffice와 Platform의 계약이 어긋난 적이
+있다. 리뷰는 병합 시점에 끝나므로 배포 직전에 다시 끊지 않는다.
 
-승인 게이트를 GitHub environment로 걸지 않은 이유는 요금제다. private
-repo에서 required reviewer는 이 요금제로 쓸 수 없고 API가 422로 거부한다.
-그래서 배포 job을 `workflow_dispatch`에서만 돌게 해서 같은 효과를 낸다.
+IAP 원장 환경은 `production` 고정이다. 배포마다 고르지 않는다. registry의
+기존 원장 앱이 production이 아니면 배포는 시작 전에 실패한다.
 
-빌드 job은 같은 commit의 이미지가 이미 있으면 건너뛴다. 병합 직후
-실행하면 빌드를 기다리지 않고 배포로 바로 들어간다.
-
-### 배포 실행
+### 같은 commit을 다시 배포할 때
 
 ```
 Actions → Deploy → Run workflow → Branch: main
 ```
+
+빌드 job은 같은 commit의 이미지가 이미 있으면 건너뛰므로 곧바로 배포로
+들어간다.
 
 ### 러너
 
@@ -646,18 +646,14 @@ GET /v1/admin/apps/lizard-tycoon/iap/catalog
 반영은 캐시 TTL 60초 안에 끝난다. 위 엔드포인트가 200에 entitlement
 목록을 돌려주면 된 것이다.
 
-App Store 심사 때문에 sandbox로 전환할 때는 다음 순서를 지킨다.
+App Store 심사 때문에 sandbox로 전환하는 경로는 지금 배포 워크플로에 없다.
+`IAP_ENVIRONMENT`가 production 고정이고, registry의 기존 원장 앱이 sandbox면
+배포가 시작 전에 실패한다. Apple 검증기의 자동 sandbox fallback도 허용하지
+않는다.
 
-1. 모든 `features.iap=true` 앱이 sandbox 전환 가능한지 확인한다.
-2. registry의 `iap.ledger_environment`를 sandbox로 병합한다.
-3. `regsync --dry-run` 후 실제 sync를 실행한다.
-4. Deploy workflow를 `iap_environment=sandbox`로 실행한다.
-5. 서비스·worker 환경 readback과 sandbox 구매 E2E를 확인한 뒤 심사를 접수한다.
-6. 승인 후에도 수동 출시를 유지한다.
-7. 공개 출시 전에 같은 순서로 production을 복구하고 production 실거래를 확인한다.
-
-workflow는 활성 IAP 앱의 registry 환경과 dispatch 선택이 하나라도 다르면 배포를
-거부한다. Apple 검증기의 자동 sandbox fallback은 허용하지 않는다.
+sandbox가 실제로 필요해지면 워크플로를 먼저 고치고, registry
+(`iap.ledger_environment`)와 런타임 환경을 같은 값으로 맞춘 뒤 전환한다.
+런타임만 바꾸고 registry를 두면 두 값이 갈라진다.
 
 ### 4.0.3 운영자 지급(선물)을 열 때
 
