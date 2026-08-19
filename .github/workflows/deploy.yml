@@ -120,12 +120,17 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # 로그를 우리 버킷에 쓴다. 기본 로그 버킷은 Google이 관리해서 읽으려면
+      # 프로젝트 Viewer/Owner가 필요하고, platform-deployer에는 그 권한이 없다.
+      # 빌드가 SUCCESS여도 gcloud가 스트리밍에 실패해 exit 1로 끝나 배포가
+      # 통째로 건너뛰어졌다. 스테이징 버킷은 이미 deployer가 쓰고 있다.
       - name: Build and push on Cloud Build
         if: steps.exists.outputs.found == 'false'
         run: |
           gcloud builds submit server \
             --project="$PROJECT_ID" \
             --tag="${{ steps.meta.outputs.image }}" \
+            --gcs-log-dir="gs://${PROJECT_ID}_cloudbuild/logs" \
             --quiet
 
       # Cloud Build가 성공했다고 태그가 우리가 기대한 자리에 생겼다는 보장은
