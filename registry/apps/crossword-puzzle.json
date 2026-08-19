@@ -1,0 +1,24 @@
+{
+  "app_id": "crossword-puzzle",
+  "display_name": "가로세로 낱말 퍼즐",
+  "firebase_project_id": "crossword-puzzle-79ae0",
+  "firebase_custom_token_service_account": "platform-auth@crossword-puzzle-79ae0.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "ads": false,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": "game_"
+  },
+  "platform_event_allowlist": [],
+  "cors_origins": [
+    "https://crossword-puzzle-game.apps.tossmini.com",
+    "https://crossword-puzzle-game.private-apps.tossmini.com"
+  ],
+  "blocked_uids": []
+}
