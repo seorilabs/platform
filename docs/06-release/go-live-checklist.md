@@ -531,6 +531,7 @@ ARC로 넘어가면 빌드는 `seorilabs-rpi-arm64-dind`(Docker 필요), 배포�
 
 ```bash
 cd server
+mkdir -p out
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -ldflags="-s -w" -o out/platform ./cmd/platform
 docker build --platform linux/amd64 -t platform .

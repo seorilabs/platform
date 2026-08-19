@@ -10,6 +10,7 @@
 #
 # 빌드 전에 amd64 정적 바이너리를 준비한다.
 #
+#   mkdir -p out
 #   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 #     go build -trimpath -ldflags="-s -w" -o out/platform ./cmd/platform
 #   docker build --platform linux/amd64 -t platform server
