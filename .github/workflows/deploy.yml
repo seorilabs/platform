@@ -8,18 +8,18 @@
 # 그래서 이 워크플로는 이미지를 한 번만 만들고 여섯 대상에 같은 태그로
 # 올린 뒤, 실제로 같은 태그가 됐는지 다시 확인한다.
 #
-# ## 승인 게이트를 environment로 하지 않는 이유
+# ## main 병합이 곧 배포다
 #
-# private repo에서 required reviewer는 이 요금제로 쓸 수 없다. API가
-# 422로 거부한다("Please ensure the billing plan supports the required
-# reviewers protection rule").
+# 사람이 Actions에서 dispatch해야 배포가 시작되던 구조를 걷어냈다. 손으로
+# 끊는 단계는 병합된 코드가 며칠씩 배포되지 않는 드리프트를 만들었고,
+# 실제로 그 사이 Backoffice와 Platform의 이벤트 계약이 어긋났다. 병합
+# 시점에 리뷰가 끝나므로 배포 직전에 한 번 더 끊을 필요가 없다.
 #
-# 대신 배포 job을 workflow_dispatch에서만 돌게 한다. main 병합 시에는
-# 빌드만 자동으로 돌고, 배포는 사람이 Actions에서 명시적으로 실행해야
-# 시작된다. 실결제 원장이라 사람이 한 번 끊는다는 목적은 같다.
+# IAP 원장 환경은 production 고정이다. 배포마다 고르지 않는다. registry의
+# 기존 원장 앱이 production이 아니면 배포는 시작 전에 실패한다.
 #
-# 빌드 job은 같은 commit의 이미지가 이미 있으면 건너뛴다. 그래서 병합
-# 직후 dispatch하면 빌드를 기다리지 않고 배포로 바로 들어간다.
+# workflow_dispatch는 같은 commit을 다시 배포할 때만 쓴다. 빌드 job은 같은
+# commit의 이미지가 이미 있으면 건너뛰므로 재배포는 곧바로 배포로 들어간다.
 #
 # ## 러너
 #
@@ -47,12 +47,6 @@ on:
         required: false
         default: github
         options: [github, arc]
-      iap_environment:
-        description: "IAP 원장과 마켓 검증 환경. registry의 활성 IAP 앱과 같아야 한다"
-        type: choice
-        required: true
-        default: production
-        options: [production, sandbox]
 
 permissions:
   contents: read
@@ -72,9 +66,9 @@ env:
   API_RUNTIME_SA: platform-api@seorilabs-platform.iam.gserviceaccount.com
   ADS_RUNTIME_SA: platform-ads@seorilabs-platform.iam.gserviceaccount.com
   BACKOFFICE_OPERATIONAL_EVENTS_URL: https://backoffice.vzyx.xyz/api/internal/platform/operational-events
-  # push는 build-only라 production 기본값을 쓴다. 실제 배포에서는
-  # workflow_dispatch의 명시적 선택이 registry와 일치하는지 다시 검사한다.
-  IAP_ENVIRONMENT: ${{ inputs.iap_environment || 'production' }}
+  # 실거래만 배포한다. registry의 기존 원장 앱이 이 값과 다르면 배포를
+  # 거부하므로, sandbox가 필요해지면 이 워크플로를 먼저 고쳐야 한다.
+  IAP_ENVIRONMENT: production
 
 jobs:
   build:
@@ -104,8 +98,8 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      # 병합 시 빌드해두고 dispatch로 배포하는 흐름이라, 같은 commit을
-      # 두 번 빌드하게 된다. 이미 있으면 건너뛰어 승인 후 대기를 없앤다.
+      # 같은 commit을 다시 배포할 때 빌드를 반복하지 않는다. 재배포가
+      # 곧바로 배포 단계로 들어간다.
       - name: Check whether the image already exists
         id: exists
         run: |
@@ -136,9 +130,6 @@ jobs:
   deploy:
     name: Deploy production runtime
     needs: build
-    # main 병합만으로는 배포하지 않는다. 사람이 Actions에서 실행해야
-    # 시작된다 — 이것이 승인 게이트를 대신한다.
-    if: github.event_name == 'workflow_dispatch'
     # gcloud만 쓰므로 Docker가 필요 없다. ARC로 넘어가도 일반 러너면 된다.
     runs-on: ${{ (github.event.inputs.runner == 'arc' || vars.PLATFORM_DEPLOY_RUNNER == 'arc') && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
     timeout-minutes: 30
@@ -149,7 +140,7 @@ jobs:
         uses: actions/checkout@v7
 
       # 신규 앱은 registry의 앱별 환경을 사용한다. 전역 환경은 기존 경로를
-      # 유지하는 legacy 앱에만 적용되므로 그 앱만 dispatch 선택과 대조한다.
+      # 유지하는 legacy 앱에만 적용되므로 그 앱만 production 고정값과 대조한다.
       - name: Assert registry IAP environments
         run: |
           fail=0
@@ -177,7 +168,7 @@ jobs:
           [ "$active" -gt 0 ] || { echo "활성 IAP 앱이 없다." >&2; exit 1; }
           [ "$legacy" -gt 0 ] || { echo "기존 원장 호환 앱이 없다." >&2; exit 1; }
           [ "$fail" -eq 0 ] || {
-            echo "registry 원장 환경이 잘못됐거나 기존 원장 앱과 배포 선택($IAP_ENVIRONMENT)이 다르다." >&2
+            echo "registry 원장 환경이 잘못됐거나 기존 원장 앱이 배포 환경($IAP_ENVIRONMENT)과 다르다." >&2
             exit 1
           }
 
@@ -191,7 +182,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       # 서비스 이미지와 IAP 원장 환경을 함께 고정한다. 환경을 명시하지 않으면
-      # App Review 기간의 sandbox 값이 다음 배포에도 남아 registry와 런타임이
+      # 이전에 손으로 넣은 값이 다음 배포에도 남아 registry와 런타임이
       # 갈라질 수 있다.
       - name: Deploy services
         run: |
@@ -305,7 +296,7 @@ jobs:
             [ "$actual" = "$IAP_ENVIRONMENT" ] || fail=1
           done
 
-          [ "$fail" -eq 0 ] || { echo "선택한 IAP 환경($IAP_ENVIRONMENT)이 일치하지 않는다." >&2; exit 1; }
+          [ "$fail" -eq 0 ] || { echo "배포한 IAP 환경($IAP_ENVIRONMENT)이 일치하지 않는다." >&2; exit 1; }
 
       # 구버전 리비전은 v1 catalog에 고정해 둔 뒤 v2 version을 만든다.
       # 새 이미지 배포에서만 latest를 명시적으로 마운트해야 cold start
