@@ -21,15 +21,18 @@ FROM golang:1.25 AS build
 WORKDIR /src
 
 # 의존성 레이어를 먼저 캐시한다. 소스만 바뀌면 이 레이어는 재사용된다.
-COPY go.mod go.su[m] ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
 # CGO_ENABLED=0 이어야 정적 바이너리가 나오고 distroless/static 에서 돈다.
 # -s -w 는 디버그 심볼을 빼 이미지를 줄인다.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/platform ./cmd/platform
+#
+# GOARCH는 고정하지 않는다. 빌드 플랫폼이 곧 이미지 아키텍처라, 고정하면
+# arm64에서 만든 이미지가 arm64 base에 amd64 바이너리를 담아 실행되지
+# 않는다. 배포 이미지는 amd64인 Cloud Build가 만든다.
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/platform ./cmd/platform
 
 # static-debian12 는 CA 인증서를 포함한다. scratch 는 포함하지 않아
 # 외부 HTTPS 호출(마켓 API, JWKS)이 실패한다.
