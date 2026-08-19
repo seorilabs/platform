@@ -518,23 +518,24 @@ GitHub Actions에 자동 fallback은 없다. 쿼타가 차면 명시적으로 �
 
 둘 중 하나라도 `arc`면 ARC로 간다. 쿼타가 풀리면 변수를 지운다.
 
-ARC로 넘어가면 빌드는 `seorilabs-rpi-arm64-dind`(Docker 필요), 배포는
-`seorilabs-rpi-arm64`(gcloud만 사용)로 간다.
+ARC로 넘어가도 빌드·배포 모두 `seorilabs-rpi-arm64`로 간다. 이미지는 Cloud
+Build가 만들고 러너는 `gcloud builds submit`으로 제출만 하므로 Docker가
+필요 없다.
 
-바이너리는 러너에서 만들고 Dockerfile은 담기만 한다. `setup-go`가 모듈·빌드
-캐시를 재사용하고 Go 크로스컴파일은 arm64에서도 네이티브다. Dockerfile에
-`RUN`이 없어 amd64 이미지를 만들 때 QEMU가 필요 없다. golang 이미지 안에서
-컴파일하던 예전 구조는 ARC에서 30분 timeout에 걸렸다 — DIND가 실행마다 빈
-컨테이너라 이미지 pull 6분과 `go mod download` 9분을 매번 다시 치렀다.
+ARC RPi 러너에서 직접 빌드하는 경로는 무엇을 해도 30분 timeout에 걸렸다.
+DIND 안에서 빌드하면 golang 이미지 pull 6분과 `go mod download` 9분,
+Docker를 걷어내고 러너에서 바이너리만 만들어도 모듈 다운로드가 20분을
+넘겼다. 병목은 컴파일이 아니라 그 러너의 네트워크다. Cloud Build는 amd64
+네이티브이고 Artifact Registry와 같은 클라우드 안에 있어 2~3분에 끝난다.
 
-로컬에서 같은 이미지를 만들려면 바이너리를 먼저 빌드한다.
+빌드 비용은 Cloud Build 무료 티어(e2-medium 기준 하루 120 build-minutes)
+안에 들어간다. 배포가 월 30회여도 90분 남짓이다.
+
+로컬 검증은 네이티브 아키텍처로 한다. `--platform linux/amd64`를 주면
+arm64에서 컴파일러까지 QEMU로 돌아 Go 어셈블러가 세그폴트한다.
 
 ```bash
-cd server
-mkdir -p out
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -trimpath -ldflags="-s -w" -o out/platform ./cmd/platform
-docker build --platform linux/amd64 -t platform .
+docker build -t platform server
 ```
 
 Go 체크(`checks-go.yml`)는 ARC에 그대로 둔다.

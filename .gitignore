@@ -22,7 +22,6 @@
 *.tfvars
 /.emulator-data/
 /server/bin/
-/server/out/
 # Agent local overrides
 # Firestore 에뮬레이터
 # Go

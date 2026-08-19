@@ -23,18 +23,19 @@
 #
 # ## 이미지 빌드
 #
-# 바이너리는 러너에서 만들고 Dockerfile은 담기만 한다. golang 이미지 안에서
-# 컴파일하던 구조는 ARC RPi 러너에서 30분 timeout에 걸렸다 — DIND는 실행마다
-# 빈 컨테이너라 golang 이미지 pull 6분과 go mod download 9분을 매번 다시
-# 치렀다. setup-go가 모듈·빌드 캐시를 재사용하고, 남는 docker 단계는 2MB
-# base에 바이너리 하나를 얹는 일뿐이다.
+# 이미지는 Cloud Build에서 만들고 러너는 제출만 한다. ARC RPi 러너에서는
+# 무엇을 해도 30분 timeout에 걸렸다 — DIND 안에서 빌드하면 golang 이미지
+# pull 6분과 go mod download 9분, Docker를 걷어내고 러너에서 직접 빌드해도
+# 모듈 다운로드만 20분이었다. 병목은 컴파일이 아니라 그 러너의 네트워크다.
+#
+# Cloud Build는 amd64 네이티브고 Artifact Registry와 같은 클라우드 안에
+# 있다. 러너는 gcloud만 쓰므로 Docker도 필요 없다.
 #
 # ## 러너
 #
-# GitHub-hosted를 기본으로 쓴다. 배포는 짧고, x64 러너에서는 amd64가
-# 네이티브라 크로스컴파일도 필요 없다. ARC는 최대 3대라 짧은 작업이
-# 자리를 차지하면 다른 작업을 밀어낸다. 조직 기본값인 ARC arm64 라우팅을
-# 여기서만 의도적으로 벗어난다.
+# GitHub-hosted를 기본으로 쓴다. 두 job 모두 gcloud만 호출하고 짧게 끝난다.
+# ARC는 최대 3대라 짧은 작업이 자리를 차지하면 다른 작업을 밀어낸다. 조직
+# 기본값인 ARC arm64 라우팅을 여기서만 의도적으로 벗어난다.
 #
 # GitHub Actions에 자동 fallback은 없다. 쿼타가 차면 명시적으로 넘긴다.
 #
@@ -81,10 +82,9 @@ env:
 jobs:
   build:
     name: Build and push image
-    # GitHub-hosted에는 Docker가 이미 있고 x64라 amd64가 네이티브다.
-    # ARC로 넘어가면 Docker가 필요하므로 DIND 라벨을 쓴다. 그쪽은 arm64지만
-    # Go가 amd64로 크로스컴파일하고 Dockerfile에는 RUN이 없어 QEMU가 필요 없다.
-    runs-on: ${{ (github.event.inputs.runner == 'arc' || vars.PLATFORM_DEPLOY_RUNNER == 'arc') && 'seorilabs-rpi-arm64-dind' || 'ubuntu-latest' }}
+    # 빌드는 Cloud Build에서 돌므로 러너에는 gcloud만 있으면 된다.
+    # DIND가 필요 없어 일반 ARC 러너로 간다.
+    runs-on: ${{ (github.event.inputs.runner == 'arc' || vars.PLATFORM_DEPLOY_RUNNER == 'arc') && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
     timeout-minutes: 30
     outputs:
       image: ${{ steps.meta.outputs.image }}
@@ -117,52 +117,21 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup Go
-        if: steps.exists.outputs.found == 'false'
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: server/go.mod
-          cache-dependency-path: server/go.sum
-
-      # 정적 링크여야 distroless/static 에서 돈다. -s -w 는 디버그 심볼을
-      # 빼 이미지를 줄인다. 러너가 arm64여도 Go 크로스컴파일은 네이티브다.
-      - name: Build binary
-        if: steps.exists.outputs.found == 'false'
-        working-directory: server
-        run: |
-          mkdir -p out
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -trimpath -ldflags="-s -w" -o out/platform ./cmd/platform
-          ls -lh out/platform
-
-          # 러너가 arm64라 교차 대상이 어긋나면 이미지가 Cloud Run에서 뜨지
-          # 않는다. ELF e_machine(62=x86-64)과 CGO 설정을 여기서 끊는다.
-          machine=$(od -An -t u1 -j 18 -N 1 out/platform | tr -d ' ')
-          [ "$machine" = "62" ] || {
-            echo "amd64 바이너리가 아니다: ELF e_machine=$machine" >&2
-            exit 1
-          }
-          go version -m out/platform | grep -q 'CGO_ENABLED=0' || {
-            echo "CGO가 켜져 있어 distroless/static에서 돌지 않는다." >&2
-            exit 1
-          }
-
-      - name: Configure Docker for Artifact Registry
-        if: steps.exists.outputs.found == 'false'
-        run: gcloud auth configure-docker "$REGISTRY" --quiet
-
-      - name: Setup Buildx
-        if: steps.exists.outputs.found == 'false'
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build and push
+      - name: Build and push on Cloud Build
         if: steps.exists.outputs.found == 'false'
         run: |
-          docker buildx build \
-            --platform linux/amd64 \
-            --tag "${{ steps.meta.outputs.image }}" \
-            --push \
-            server
+          gcloud builds submit server \
+            --project="$PROJECT_ID" \
+            --tag="${{ steps.meta.outputs.image }}" \
+            --quiet
+
+      # Cloud Build가 성공했다고 태그가 우리가 기대한 자리에 생겼다는 보장은
+      # 없다. 배포가 없는 이미지를 가리키기 전에 여기서 끊는다.
+      - name: Assert image exists
+        if: steps.exists.outputs.found == 'false'
+        run: |
+          gcloud artifacts docker images describe "${{ steps.meta.outputs.image }}" \
+            --format='value(image_summary.fully_qualified_digest)'
 
   deploy:
     name: Deploy production runtime

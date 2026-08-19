@@ -4,7 +4,7 @@
 
 ```
 PR / push→main  → static-checks   golangci-lint · go vet · go test · conformance
-push→main       → deploy          이미지 빌드 → 여섯 대상 배포 → readback · 스모크
+push→main       → deploy          Cloud Build 이미지 → 여섯 대상 배포 → readback · 스모크
 운영자 dispatch  → deploy          같은 commit 재배포용
 ```
 
