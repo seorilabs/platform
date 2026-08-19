@@ -21,6 +21,14 @@
 # workflow_dispatch는 같은 commit을 다시 배포할 때만 쓴다. 빌드 job은 같은
 # commit의 이미지가 이미 있으면 건너뛰므로 재배포는 곧바로 배포로 들어간다.
 #
+# ## 이미지 빌드
+#
+# 바이너리는 러너에서 만들고 Dockerfile은 담기만 한다. golang 이미지 안에서
+# 컴파일하던 구조는 ARC RPi 러너에서 30분 timeout에 걸렸다 — DIND는 실행마다
+# 빈 컨테이너라 golang 이미지 pull 6분과 go mod download 9분을 매번 다시
+# 치렀다. setup-go가 모듈·빌드 캐시를 재사용하고, 남는 docker 단계는 2MB
+# base에 바이너리 하나를 얹는 일뿐이다.
+#
 # ## 러너
 #
 # GitHub-hosted를 기본으로 쓴다. 배포는 짧고, x64 러너에서는 amd64가
@@ -74,9 +82,8 @@ jobs:
   build:
     name: Build and push image
     # GitHub-hosted에는 Docker가 이미 있고 x64라 amd64가 네이티브다.
-    # ARC로 넘어가면 Docker가 필요하므로 DIND 라벨을 쓴다. 그쪽은
-    # arm64지만 Dockerfile이 FROM --platform=$BUILDPLATFORM이라
-    # QEMU 없이 amd64로 크로스컴파일한다.
+    # ARC로 넘어가면 Docker가 필요하므로 DIND 라벨을 쓴다. 그쪽은 arm64지만
+    # Go가 amd64로 크로스컴파일하고 Dockerfile에는 RUN이 없어 QEMU가 필요 없다.
     runs-on: ${{ (github.event.inputs.runner == 'arc' || vars.PLATFORM_DEPLOY_RUNNER == 'arc') && 'seorilabs-rpi-arm64-dind' || 'ubuntu-latest' }}
     timeout-minutes: 30
     outputs:
@@ -109,6 +116,23 @@ jobs:
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Setup Go
+        if: steps.exists.outputs.found == 'false'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      # 정적 링크여야 distroless/static 에서 돈다. -s -w 는 디버그 심볼을
+      # 빼 이미지를 줄인다. 러너가 arm64여도 Go 크로스컴파일은 네이티브다.
+      - name: Build binary
+        if: steps.exists.outputs.found == 'false'
+        working-directory: server
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags="-s -w" -o out/platform ./cmd/platform
+          ls -lh out/platform
 
       - name: Configure Docker for Artifact Registry
         if: steps.exists.outputs.found == 'false'

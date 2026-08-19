@@ -1,33 +1,24 @@
-# Cloud Run은 amd64 전용이다. Go는 크로스컴파일이 네이티브라
-# ARC arm64 러너에서도 QEMU 없이 amd64 바이너리를 만든다.
-# 그래서 이 Dockerfile은 빌드 플랫폼과 무관하게 동작한다.
-
-# go.mod의 go 지시어와 맞춘다. 낮으면 빌드가 거부된다.
+# Cloud Run은 amd64 전용이다. 바이너리는 이 이미지 밖에서 만들고 여기서는
+# 담기만 한다.
 #
-# --platform=$BUILDPLATFORM이 있어야 빌더가 빌드 머신의 아키텍처로 돈다.
-# 없으면 --platform linux/amd64로 빌드할 때 arm64 머신에서 컴파일러까지
-# QEMU로 돌아가고, Go 어셈블러가 거기서 세그폴트한다. Colima arm64에서
-# 실제로 겪었다. 크로스컴파일은 아래 GOARCH가 담당한다.
-FROM --platform=$BUILDPLATFORM golang:1.25 AS build
-
-WORKDIR /src
-
-# 의존성 레이어를 먼저 캐시한다. 소스만 바뀌면 이 레이어는 재사용된다.
-COPY go.mod go.su[m] ./
-RUN go mod download
-
-COPY . .
-
-# CGO_ENABLED=0 이어야 정적 바이너리가 나오고 distroless/static 에서 돈다.
-# -s -w 는 디버그 심볼을 빼 이미지를 줄인다.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/platform ./cmd/platform
+# 안에서 컴파일하던 구조는 ARC RPi 러너에서 30분 timeout에 걸렸다. DIND는
+# 실행마다 빈 컨테이너라 golang 이미지 pull(6분)과 go mod download(9분)를
+# 매번 처음부터 했다. 러너에서 직접 빌드하면 Go 모듈·빌드 캐시가 남고,
+# 이 이미지는 2MB 남짓한 base에 바이너리 하나를 얹는 일만 한다.
+#
+# RUN이 없으므로 arm64 호스트에서 amd64 이미지를 만들 때도 QEMU가 필요 없다.
+#
+# 빌드 전에 amd64 정적 바이너리를 준비한다.
+#
+#   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+#     go build -trimpath -ldflags="-s -w" -o out/platform ./cmd/platform
+#   docker build --platform linux/amd64 -t platform server
 
 # static-debian12 는 CA 인증서를 포함한다. scratch 는 포함하지 않아
 # 외부 HTTPS 호출(마켓 API, JWKS)이 실패한다.
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=build /out/platform /platform
+COPY out/platform /platform
 
 USER nonroot:nonroot
 EXPOSE 8080
