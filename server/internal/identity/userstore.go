@@ -220,22 +220,28 @@ func (r *StoreRepository) EnsureUser(
 		if r.operational == nil {
 			return nil
 		}
-		attributes := map[string]any{"authType": authType, "anonymous": anonymous}
-		// referrer는 AppsInToss 로그인에만 있다. 빈 값을 실어 보내면 알림에
-		// 유입이 "없음"으로 읽히므로 있는 경우만 넣는다.
-		if referrer != "" {
-			attributes["referrer"] = referrer
-		}
 		return r.operational.EnqueueTx(tx, operational.Event{
 			EventID:    operational.StableEventID("identity", appID, puid),
 			OccurredAt: now.UTC(), Type: "identity.created", AppID: appID, Outcome: "created",
-			Attributes: attributes,
+			Attributes: identityEventAttributes(authType, anonymous, referrer),
 		})
 	})
 	if err != nil {
 		return "", platformerr.Wrap(err, platformerr.CodeInternal, "사용자를 확인하지 못했어요")
 	}
 	return result, nil
+}
+
+// identityEventAttributes는 신규 계정 이벤트에 실을 속성을 만든다.
+//
+// referrer는 AppsInToss 로그인에만 있다. 빈 값을 실어 보내면 알림에서 유입이
+// "없음"이라는 사실로 읽히므로 값이 있을 때만 넣는다.
+func identityEventAttributes(authType string, anonymous bool, referrer string) map[string]any {
+	attributes := map[string]any{"authType": authType, "anonymous": anonymous}
+	if referrer != "" {
+		attributes["referrer"] = referrer
+	}
+	return attributes
 }
 
 // LookupUser는 기존 identity 매핑만 읽는다. 삭제 재시도 중 새 매핑이
