@@ -105,6 +105,13 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
+      # WIF는 external account 자격증명이라 gcloud가 어느 프로젝트로 쿼터를
+      # 청구할지 스스로 알지 못한다. 지정하지 않으면 Cloud Build 소스 업로드가
+      # "forbidden from accessing the bucket ... serviceusage.services.use"로
+      # 막힌다. platform-deployer에는 serviceusage.serviceUsageConsumer가 있다.
+      - name: Set quota project
+        run: gcloud config set billing/quota_project "$PROJECT_ID"
+
       # 같은 commit을 다시 배포할 때 빌드를 반복하지 않는다. 재배포가
       # 곧바로 배포 단계로 들어간다.
       - name: Check whether the image already exists
