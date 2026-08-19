@@ -74,6 +74,11 @@ func TestEventContractRejectsPIIAndRawIdentifiers(t *testing.T) {
 	if err := validateEvent(safe); err != nil {
 		t.Fatalf("safe event rejected: %v", err)
 	}
+	withReferrer := safe
+	withReferrer.Attributes = map[string]any{"authType": "apps_in_toss", "referrer": "SANDBOX"}
+	if err := validateEvent(withReferrer); err != nil {
+		t.Fatalf("referrer attribute를 거부했다: %v", err)
+	}
 	unsafeAttribute := safe
 	unsafeAttribute.Attributes = map[string]any{"platformUserId": "pu_sensitive"}
 	if err := validateEvent(unsafeAttribute); err == nil {
