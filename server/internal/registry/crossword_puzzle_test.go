@@ -26,6 +26,12 @@ func TestCrosswordPuzzleRegistryAuthBridgeContract(t *testing.T) {
 		t.Fatal("crossword-puzzle registry가 없다")
 	}
 
+	// 스키마 규칙(중복 origin, bridge SA 형식 등)은 Validate가 소유한다. 계약
+	// 테스트가 그 경로를 함께 타야 잘못된 등록이 여기서 걸린다.
+	if err := app.Validate(); err != nil {
+		t.Fatalf("레지스트리 항목이 유효하지 않다: %v", err)
+	}
+
 	if !app.FeatureEnabled("firebase_custom_token_bridge") {
 		t.Fatal("인증 브리지가 비활성이다")
 	}
@@ -46,8 +52,12 @@ func TestCrosswordPuzzleRegistryAuthBridgeContract(t *testing.T) {
 		"https://crossword-puzzle-game.private-apps.tossmini.com": false,
 	}
 	for _, origin := range app.CORSOrigins {
-		if _, ok := wantOrigins[origin]; !ok {
+		seen, ok := wantOrigins[origin]
+		if !ok {
 			t.Fatalf("등록되지 않은 origin: %q", origin)
+		}
+		if seen {
+			t.Fatalf("origin 중복: %q", origin)
 		}
 		wantOrigins[origin] = true
 	}
