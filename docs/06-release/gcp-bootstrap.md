@@ -272,6 +272,6 @@ gcloud run services update platform-api \
 ## 아직 하지 않은 것
 
 - **WIF** — CI를 붙이는 P1에서 한다. org var `GOOGLE_WORKLOAD_IDENTITY_PROVIDER` 재사용
-- Cloud Monitoring 알림 정책 — Telegram 채널 연결 포함
+- Cloud Monitoring 알림 정책 — Discord 채널 연결 포함
 - 환불 검토 Firestore 인덱스 — `infra/firestore/indexes.md` 정의, 실제 `READY` 확인 필요
 - 환불 검토 keyring Secret — 생성·두 role 연결·부재 role readback 필요
