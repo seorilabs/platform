@@ -128,7 +128,7 @@ func (r *StoreRepository) EnsureUser(
 	ctx context.Context,
 	appID, uid string,
 	anonymous bool,
-	authType string,
+	authType, referrer string,
 ) (string, error) {
 	idPath, err := identityPath(appID, uid)
 	if err != nil {
@@ -220,10 +220,16 @@ func (r *StoreRepository) EnsureUser(
 		if r.operational == nil {
 			return nil
 		}
+		attributes := map[string]any{"authType": authType, "anonymous": anonymous}
+		// referrer는 AppsInToss 로그인에만 있다. 빈 값을 실어 보내면 알림에
+		// 유입이 "없음"으로 읽히므로 있는 경우만 넣는다.
+		if referrer != "" {
+			attributes["referrer"] = referrer
+		}
 		return r.operational.EnqueueTx(tx, operational.Event{
 			EventID:    operational.StableEventID("identity", appID, puid),
 			OccurredAt: now.UTC(), Type: "identity.created", AppID: appID, Outcome: "created",
-			Attributes: map[string]any{"authType": authType, "anonymous": anonymous},
+			Attributes: attributes,
 		})
 	})
 	if err != nil {

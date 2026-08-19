@@ -86,12 +86,13 @@ func (f *fakeCustomTokenIssuer) Mint(
 // EnsureUser의 멱등성을 실제로 검증하려고 잠금을 건다.
 // Firestore 트랜잭션이 하는 일을 흉내낸 것이다.
 type memRepo struct {
-	mu       sync.Mutex
-	users    map[string]string // appID+uid → puid
-	refresh  map[string]Session
-	created  int // 새로 만든 횟수
-	deleteOK bool
-	deleted  int
+	mu           sync.Mutex
+	users        map[string]string // appID+uid → puid
+	refresh      map[string]Session
+	created      int // 새로 만든 횟수
+	deleteOK     bool
+	deleted      int
+	lastReferrer string
 }
 
 func newMemRepo() *memRepo {
@@ -102,9 +103,16 @@ func newMemRepo() *memRepo {
 	}
 }
 
-func (m *memRepo) EnsureUser(_ context.Context, appID, uid string, _ bool, _ string) (string, error) {
+func (m *memRepo) EnsureUser(
+	_ context.Context,
+	appID, uid string,
+	_ bool,
+	_, referrer string,
+) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.lastReferrer = referrer
 
 	key := appID + "\x00" + uid
 	if p, ok := m.users[key]; ok {
@@ -332,6 +340,7 @@ func TestDeleteFirebaseAccount(t *testing.T) {
 		"firebase-user",
 		false,
 		"firebase",
+		"",
 	); err != nil {
 		t.Fatalf("test user 생성 실패: %v", err)
 	}
@@ -566,6 +575,11 @@ func TestAITLoginAllowsAppsInTossAdsAndStoresOnlyHashedIdentity(t *testing.T) {
 	}
 	if _, ok := repo.users[app.AppID+"\x00ait:"+verifier.hashedUserID]; !ok {
 		t.Fatalf("해시된 AIT identity가 저장되지 않았다: %v", repo.users)
+	}
+	// 운영 이벤트가 실서비스 유입과 샌드박스 테스트를 가르려면 정규화된
+	// referrer가 저장소까지 내려가야 한다.
+	if repo.lastReferrer != "SANDBOX" {
+		t.Fatalf("referrer가 저장소로 전달되지 않았다: %q", repo.lastReferrer)
 	}
 	for key := range repo.users {
 		if strings.Contains(key, "one-time-authorization-code") {
