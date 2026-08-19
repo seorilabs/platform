@@ -8,8 +8,31 @@
     "config": true,
     "events": false,
     "iap": false,
-    "ads": false,
+    "ads": true,
     "firebase_custom_token_bridge": true
+  },
+  "ads": {
+    "providers": [
+      "admob"
+    ],
+    "placements": [
+      {
+        "id": "hint_reward",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-2444587584524186/4203846143"
+          }
+        },
+        "reward": {
+          "key": "hint",
+          "min_amount": 3,
+          "max_amount": 3
+        },
+        "daily_limit": 3,
+        "cooldown_seconds": 30
+      }
+    ]
   },
   "require_app_check": false,
   "ga4": {

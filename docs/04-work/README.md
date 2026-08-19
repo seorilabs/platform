@@ -50,6 +50,7 @@ AIT sandbox 실구매 검증이 남았다.
 | `slotmachine-game` | ✖ | ✅ | ✖ | ✅ | AdMob SSV 보상 claim |
 | `cycle-pair` | ✖ | ✖ | ✖ | ✖ | Firebase 게스트 인증 |
 | `babycare` | ✖ | ✅ | ✖ | ✖ | Firebase custom token bridge + 핵심 퍼널·광고 이벤트 |
+| `jomul` | ✅ | ✖ | ✖ | ✅ | Firebase custom token bridge + AdMob SSV 힌트 보상 1지면 |
 
 **레지스트리는 파일을 고치는 것만으로 반영되지 않는다.** `cmd/regsync`를 사람이
 돌린다 — [registry/apps/README.md](../../registry/apps/README.md).
