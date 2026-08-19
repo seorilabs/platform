@@ -519,8 +519,23 @@ GitHub Actions에 자동 fallback은 없다. 쿼타가 차면 명시적으로 �
 둘 중 하나라도 `arc`면 ARC로 간다. 쿼타가 풀리면 변수를 지운다.
 
 ARC로 넘어가면 빌드는 `seorilabs-rpi-arm64-dind`(Docker 필요), 배포는
-`seorilabs-rpi-arm64`(gcloud만 사용)로 간다. arm64에서도 Dockerfile이
-`FROM --platform=$BUILDPLATFORM`이라 QEMU 없이 amd64로 크로스컴파일한다.
+`seorilabs-rpi-arm64`(gcloud만 사용)로 간다.
+
+바이너리는 러너에서 만들고 Dockerfile은 담기만 한다. `setup-go`가 모듈·빌드
+캐시를 재사용하고 Go 크로스컴파일은 arm64에서도 네이티브다. Dockerfile에
+`RUN`이 없어 amd64 이미지를 만들 때 QEMU가 필요 없다. golang 이미지 안에서
+컴파일하던 예전 구조는 ARC에서 30분 timeout에 걸렸다 — DIND가 실행마다 빈
+컨테이너라 이미지 pull 6분과 `go mod download` 9분을 매번 다시 치렀다.
+
+로컬에서 같은 이미지를 만들려면 바이너리를 먼저 빌드한다.
+
+```bash
+cd server
+mkdir -p out
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags="-s -w" -o out/platform ./cmd/platform
+docker build --platform linux/amd64 -t platform .
+```
 
 Go 체크(`checks-go.yml`)는 ARC에 그대로 둔다.
 
