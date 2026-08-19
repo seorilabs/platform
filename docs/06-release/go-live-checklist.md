@@ -504,23 +504,15 @@ Actions → Deploy → Run workflow → Branch: main
 
 ### 러너
 
-배포는 GitHub-hosted 러너에서 돈다. 짧게 끝나고 x64라 amd64가
-네이티브라 크로스컴파일도 필요 없다. ARC는 최대 3대라 짧은 작업이
-자리를 차지하면 다른 작업을 밀어낸다. 조직 기본값인 ARC arm64 라우팅을
-여기서만 의도적으로 벗어난다.
+빌드와 배포 모두 ARC `seorilabs-rpi-arm64`에서 돈다. 이미지는 Cloud Build가
+만들고 두 job은 gcloud만 호출하므로 러너 성능이 배포 시간을 좌우하지 않는다.
+GitHub-hosted를 기본에 두면 Actions 분량을 쓰는데, 이 저장소 몫은 이미 무료
+한도를 넘겨 초과 과금 구간이다.
 
-GitHub Actions에 자동 fallback은 없다. 쿼타가 차면 명시적으로 넘긴다.
+ARC가 죽었을 때만 Run workflow의 `runner` 드롭다운에서 `github`를 고른다.
+그 경우 분량을 쓰므로 상시로 두지 않는다.
 
-| 상황 | 방법 |
-|---|---|
-| 일회성 | Run workflow의 `runner` 드롭다운에서 `arc` |
-| 지속 | 저장소 변수 `PLATFORM_DEPLOY_RUNNER=arc` |
-
-둘 중 하나라도 `arc`면 ARC로 간다. 쿼타가 풀리면 변수를 지운다.
-
-ARC로 넘어가도 빌드·배포 모두 `seorilabs-rpi-arm64`로 간다. 이미지는 Cloud
-Build가 만들고 러너는 `gcloud builds submit`으로 제출만 하므로 Docker가
-필요 없다.
+러너는 `gcloud builds submit`으로 제출만 하므로 Docker가 필요 없다.
 
 ARC RPi 러너에서 직접 빌드하는 경로는 무엇을 해도 30분 timeout에 걸렸다.
 DIND 안에서 빌드하면 golang 이미지 pull 6분과 `go mod download` 9분,
@@ -538,7 +530,8 @@ arm64에서 컴파일러까지 QEMU로 돌아 Go 어셈블러가 세그폴트한
 docker build -t platform server
 ```
 
-Go 체크(`checks-go.yml`)는 ARC에 그대로 둔다.
+Go 체크(`checks-go.yml`)는 `ubuntu-latest`에서 돈다. lint·test·build를 직접
+수행해 러너 성능이 곧 소요 시간이고, PR마다 4분대로 끝난다.
 
 배포 상태는 이렇게 본다.
 

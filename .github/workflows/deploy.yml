@@ -33,16 +33,13 @@
 #
 # ## 러너
 #
-# GitHub-hosted를 기본으로 쓴다. 두 job 모두 gcloud만 호출하고 짧게 끝난다.
-# ARC는 최대 3대라 짧은 작업이 자리를 차지하면 다른 작업을 밀어낸다. 조직
-# 기본값인 ARC arm64 라우팅을 여기서만 의도적으로 벗어난다.
+# ARC를 기본으로 쓴다. 이미지는 Cloud Build가 만들고 두 job 모두 gcloud만
+# 호출하므로 러너 성능이 배포 시간을 좌우하지 않는다. GitHub-hosted를 기본에
+# 두면 Actions 분량을 쓰는데, 이 저장소 몫은 이미 무료 한도를 넘겨 초과 과금
+# 구간이다.
 #
-# GitHub Actions에 자동 fallback은 없다. 쿼타가 차면 명시적으로 넘긴다.
-#
-#   일회성  Run workflow의 runner 드롭다운에서 arc 선택
-#   지속    저장소 변수 PLATFORM_DEPLOY_RUNNER=arc
-#
-# 둘 중 하나라도 arc면 ARC로 간다. 쿼타가 풀리면 변수를 지우면 된다.
+# ARC가 죽었을 때만 dispatch의 runner 드롭다운에서 github를 고른다. 그 경우
+# 분량을 쓰므로 상시로 두지 않는다.
 name: Deploy
 
 on:
@@ -51,11 +48,11 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: "러너. GitHub 쿼타가 소진됐으면 arc를 고른다"
+        description: "러너. ARC가 죽었을 때만 github를 고른다"
         type: choice
         required: false
-        default: github
-        options: [github, arc]
+        default: arc
+        options: [arc, github]
 
 permissions:
   contents: read
@@ -83,8 +80,7 @@ jobs:
   build:
     name: Build and push image
     # 빌드는 Cloud Build에서 돌므로 러너에는 gcloud만 있으면 된다.
-    # DIND가 필요 없어 일반 ARC 러너로 간다.
-    runs-on: ${{ (github.event.inputs.runner == 'arc' || vars.PLATFORM_DEPLOY_RUNNER == 'arc') && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner == 'github' && 'ubuntu-latest' || 'seorilabs-rpi-arm64' }}
     timeout-minutes: 30
     outputs:
       image: ${{ steps.meta.outputs.image }}
@@ -143,8 +139,8 @@ jobs:
   deploy:
     name: Deploy production runtime
     needs: build
-    # gcloud만 쓰므로 Docker가 필요 없다. ARC로 넘어가도 일반 러너면 된다.
-    runs-on: ${{ (github.event.inputs.runner == 'arc' || vars.PLATFORM_DEPLOY_RUNNER == 'arc') && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    # gcloud만 쓰므로 Docker가 필요 없다.
+    runs-on: ${{ github.event.inputs.runner == 'github' && 'ubuntu-latest' || 'seorilabs-rpi-arm64' }}
     timeout-minutes: 30
     # 보호 규칙은 못 걸지만 배포 이력이 environment에 남는다.
     environment: production
