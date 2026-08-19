@@ -48,8 +48,16 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	}
 
 	provider, ok := placement.Providers["admob"]
-	if !ok || provider.AndroidAdUnitID == "" {
-		t.Fatal("Android AdMob unit이 없다")
+	if !ok {
+		t.Fatal("AdMob provider 설정이 없다")
+	}
+	// unit 을 고정 비교한다. 반대편 원본은 코드가 아니라 seorilabs/jomul 의 google-play
+	// 환경 변수 ADMOB_REWARDED_AD_UNIT_ID 이고, v0.1.5 signed AAB 가 이 unit 으로 빌드됐다.
+	// 클라이언트가 요청한 unit 과 다르면 광고는 재생되고 SSV 만 CodeAdUnitMismatch 로 거부된다.
+	// 실제로 이 PR 의 첫 커밋이 iOS unit 을 넣었다가 바로잡았다.
+	const wantAndroidUnit = "ca-app-pub-2444587584524186/1396162476"
+	if provider.AndroidAdUnitID != wantAndroidUnit {
+		t.Fatalf("Android unit=%q, want %q", provider.AndroidAdUnitID, wantAndroidUnit)
 	}
 	// iOS 빌드는 Kids Category 대상이라 광고 SDK를 링크하지 않는다. AdMob 콘솔에는 iOS 앱과
 	// unit이 따로 있지만 레지스트리에 넣으면 그 경계가 흐려지고 SSV 대조 대상만 늘어난다.

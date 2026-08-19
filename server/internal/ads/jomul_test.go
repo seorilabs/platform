@@ -34,6 +34,10 @@ func TestJomulRejectsRewardsOutsideRegistryRange(t *testing.T) {
 	if !ok {
 		t.Fatal("hint_reward 지면이 없다")
 	}
+	// 아래에서 경계값을 Reward 에서 뽑는다. nil 이면 panic 으로 끝나 실패 이유가 묻힌다.
+	if placement.Reward == nil {
+		t.Fatal("rewarded 지면에 보상 계약이 없다")
+	}
 
 	svc, err := NewService(&fakeRepo{}, fakeApps{jomul.AppID: jomul}, fakeEntitlements{}, fakeUsers{})
 	if err != nil {
