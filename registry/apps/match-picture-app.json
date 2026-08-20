@@ -17,7 +17,7 @@
   },
   "platform_event_allowlist": [],
   "cors_origins": [
-    "http://localhost",
+    "http://localhost:5173",
     "capacitor://localhost",
     "https://match-picture-app.apps.tossmini.com",
     "https://match-picture-app.private-apps.tossmini.com"

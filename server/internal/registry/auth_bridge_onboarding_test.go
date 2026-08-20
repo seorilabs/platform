@@ -33,7 +33,7 @@ func TestAuthBridgeOnboardingRegistryContract(t *testing.T) {
 			firebaseProjectID: "match-picture-app",
 			serviceAccount:    "platform-auth@match-picture-app.iam.gserviceaccount.com",
 			corsOrigins: []string{
-				"http://localhost",
+				"http://localhost:5173",
 				"capacitor://localhost",
 				"https://match-picture-app.apps.tossmini.com",
 				"https://match-picture-app.private-apps.tossmini.com",
