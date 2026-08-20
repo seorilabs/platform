@@ -34,12 +34,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Validate image input
         env:
           IMAGE_SHA: ${{ inputs.image_sha }}
         run: |
           [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$IMAGE_SHA" origin/main
           echo "image=${REGISTRY}/${IMAGE_PATH}:${IMAGE_SHA}" >> "$GITHUB_ENV"
 
       - name: Authenticate to Google Cloud
@@ -78,12 +81,14 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" --format=json)"
           actual_image="$(jq -r '.spec.template.spec.containers[0].image' <<<"$service_json")"
           actual_prefix="$(jq -r '.spec.template.spec.containers[0].env[] | select(.name == "PLATFORM_FS_PREFIX") | .value' <<<"$service_json")"
+          actual_dataset="$(jq -r '.spec.template.spec.containers[0].env[] | select(.name == "PLATFORM_BQ_DATASET") | .value' <<<"$service_json")"
           actual_secret="$(jq -r '.spec.template.spec.containers[0].env[] | select(.name == "PLATFORM_SESSION_SECRET") | [.valueFrom.secretKeyRef.name, .valueFrom.secretKeyRef.key] | @tsv' <<<"$service_json")"
           invoker_disabled="$(jq -r '.metadata.annotations["run.googleapis.com/invoker-iam-disabled"] // ""' <<<"$service_json")"
           service_url="$(jq -r '.status.url' <<<"$service_json")"
 
           [ "$actual_image" = "$image" ]
           [ "$actual_prefix" = "stg_" ]
+          [ "$actual_dataset" = "platform_stg" ]
           [ "$actual_secret" = $'platform-stg-session-secret\tlatest' ]
           [ "$invoker_disabled" = "true" ]
           curl --fail --silent --show-error --retry 5 --retry-all-errors \
