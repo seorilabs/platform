@@ -1,0 +1,26 @@
+{
+  "app_id": "match-picture-app",
+  "display_name": "같은그림찾기",
+  "firebase_project_id": "match-picture-app",
+  "firebase_custom_token_service_account": "platform-auth@match-picture-app.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "ads": false,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "platform_event_allowlist": [],
+  "cors_origins": [
+    "http://localhost",
+    "capacitor://localhost",
+    "https://match-picture-app.apps.tossmini.com",
+    "https://match-picture-app.private-apps.tossmini.com"
+  ],
+  "blocked_uids": []
+}

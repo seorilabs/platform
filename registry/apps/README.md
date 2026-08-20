@@ -90,16 +90,20 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 
 ## 등록된 앱
 
-| app_id | 원장 환경 | Events | IAP | Ads | entitlements |
-|---|---|---|---|---|---|
-| `babycare` | 미사용 | 핵심 퍼널·광고 | 비활성 | 비활성 | — |
-| `cycle-pair` | production | 비활성 | 비활성 | 비활성 | — |
-| `happy-farm` | production | 활성 | 활성 | 활성 | `ad_free` |
-| `jomul` | 미사용 | 비활성 | 비활성 | 비활성 | — |
-| `lizard-tycoon` | production | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
-| `lucid-chess` | 미사용 | 핵심 퍼널·전면 광고 | 비활성 | 비활성 | — |
-| `slotmachine-game` | 미사용 | 비활성 | 비활성 | 활성 | — |
-| `spiritgate-defenders` | 미사용 | 활성 | 비활성 | 비활성 | — |
+| app_id | Auth bridge | 원장 환경 | Events | IAP | Ads | entitlements |
+|---|---|---|---|---|---|---|
+| `babycare` | 활성 | 미사용 | 핵심 퍼널·광고 | 비활성 | 비활성 | — |
+| `crossword-puzzle` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `cycle-pair` | 활성 | production | 비활성 | 비활성 | 비활성 | — |
+| `foam-party` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `happy-farm` | 비활성 | production | 활성 | 활성 | 활성 | `ad_free` |
+| `jomul` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `lizard-tycoon` | 비활성 | production | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
+| `lucid-chess` | 활성 | 미사용 | 핵심 퍼널·전면 광고 | 비활성 | 비활성 | — |
+| `lucid-reversi` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `match-picture-app` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `slotmachine-game` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
+| `spiritgate-defenders` | 활성 | 미사용 | 활성 | 비활성 | 활성 | — |
 
 ## ledger_environment가 서비스와 다르면
 
