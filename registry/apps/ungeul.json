@@ -1,0 +1,31 @@
+{
+  "app_id": "ungeul",
+  "display_name": "운글",
+  "firebase_project_id": "seorilabs-ungeul",
+  "firebase_custom_token_service_account": "platform-auth@seorilabs-ungeul.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "ads": false,
+    "content": true,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": true,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "content": {
+    "bucket": "seorilabs-ungeul-content",
+    "prefix": "ungeul",
+    "reading_daily_limit": 10,
+    "term_daily_limit": 100
+  },
+  "platform_event_allowlist": [],
+  "cors_origins": [
+    "https://localhost",
+    "capacitor://localhost"
+  ],
+  "blocked_uids": []
+}

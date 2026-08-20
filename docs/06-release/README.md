@@ -6,11 +6,17 @@
 PR / push→main  → static-checks   golangci-lint · go vet · go test · conformance
 push→main       → deploy          Cloud Build 이미지 → 여섯 대상 배포 → readback · 스모크
 운영자 dispatch  → deploy          같은 commit 재배포용
+운영자 dispatch  → deploy-staging  검증된 main 이미지 → `platform-api-stg` → 경계 readback
 ```
 
 배포는 `production` 고정이며 병합과 함께 자동으로 돈다. 승인 게이트 대신
 배포 후 검증(이미지 태그 일치, secret·환경 경계 readback, `health/ready`)이
 실패하면 워크플로가 실패한다.
+
+staging API는 `Deploy staging`을 명시적으로 dispatch할 때만 바뀐다. 입력은 이미
+Artifact Registry에 존재하는 40자리 main commit SHA만 허용하고, `stg_` Firestore
+prefix·`platform_stg` BigQuery dataset·별도 `platform-stg-session-secret`을 사용한다.
+production 서비스나 원장에는 traffic과 설정을 쓰지 않는다.
 
 ## 러너
 
