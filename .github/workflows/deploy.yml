@@ -70,6 +70,7 @@ env:
   IMAGE_PATH: seorilabs-platform/platform/platform
   DEPLOYER_SA: platform-deployer@seorilabs-platform.iam.gserviceaccount.com
   API_RUNTIME_SA: platform-api@seorilabs-platform.iam.gserviceaccount.com
+  INGEST_RUNTIME_SA: platform-ingest@seorilabs-platform.iam.gserviceaccount.com
   ADS_RUNTIME_SA: platform-ads@seorilabs-platform.iam.gserviceaccount.com
   BACKOFFICE_OPERATIONAL_EVENTS_URL: https://backoffice.vzyx.xyz/api/internal/platform/operational-events
   # 실거래만 배포한다. registry의 기존 원장 앱이 이 값과 다르면 배포를
@@ -205,18 +206,21 @@ jobs:
             --image="${{ needs.build.outputs.image }}" \
             --service-account="$API_RUNTIME_SA" \
             --update-env-vars="BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
-            --update-secrets="BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
           gcloud run deploy platform-ingest \
             --project="$PROJECT_ID" --region="$REGION" \
-            --image="${{ needs.build.outputs.image }}" --quiet
+            --image="${{ needs.build.outputs.image }}" \
+            --service-account="$INGEST_RUNTIME_SA" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest" \
+            --quiet
 
           gcloud run deploy platform-iap \
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
-            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
           gcloud run deploy platform-admin \
@@ -266,6 +270,31 @@ jobs:
           printf '%-18s %s\n' "platform-worker" "$actual"
           [ "$actual" = "$expected" ] || { echo "  기대: $expected" >&2; fail=1; }
           [ "$fail" -eq 0 ] || { echo "배포 대상이 서로 다른 이미지로 돈다." >&2; exit 1; }
+
+      # 세션을 발급하는 role과 이벤트에 신원을 붙이는 ingest만 같은 세션
+      # secret을 쓴다. 값은 읽지 않고 Secret Manager 참조 이름만 확인한다.
+      - name: Assert session secret boundary
+        run: |
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r '[.spec.template.spec.containers[0].env[]?
+                | select(.name == "PLATFORM_SESSION_SECRET")
+                | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          fail=0
+          for target in platform-api platform-iap platform-ingest platform-ads; do
+            actual=$(service_secret "$target")
+            printf '%-18s PLATFORM_SESSION_SECRET=%s\n' "$target" "${actual:-<absent>}"
+            [ "$actual" = "platform-session-secret" ] || fail=1
+          done
+
+          actual=$(service_secret platform-admin)
+          printf '%-18s PLATFORM_SESSION_SECRET=%s\n' platform-admin "${actual:-<absent>}"
+          [ -z "$actual" ] || fail=1
+
+          [ "$fail" -eq 0 ] || { echo "세션 secret role 경계가 올바르지 않다." >&2; exit 1; }
 
       # 조직 DRS는 allUsers IAM binding을 막는다. 공개 callback 서비스는
       # Cloud Run invoker IAM 검사 자체를 끄고 애플리케이션 검증을 사용한다.

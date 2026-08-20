@@ -64,6 +64,25 @@ def command_block(marker: str) -> str:
     return text[start:end]
 
 
+session_secret = "PLATFORM_SESSION_SECRET=platform-session-secret:latest"
+for target in ("platform-api", "platform-iap", "platform-ingest", "platform-ads"):
+    block = command_block(f"gcloud run deploy {target}")
+    require(session_secret in block, f"{target}에 Platform 세션 secret이 없다.")
+
+admin_block = command_block("gcloud run deploy platform-admin")
+require(session_secret not in admin_block, "platform-admin에 세션 secret을 마운트하면 안 된다.")
+require(
+    text.count(session_secret) == 4,
+    "Platform 세션 secret은 API, IAP, Ingest, Ads 네 대상에만 마운트해야 한다.",
+)
+ingest_block = command_block("gcloud run deploy platform-ingest")
+require(
+    '--service-account="$INGEST_RUNTIME_SA"' in ingest_block,
+    "platform-ingest runtime service account가 명시되지 않았다.",
+)
+require("Assert session secret boundary" in text, "세션 secret readback gate가 없다.")
+
+
 operational_url = "BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}"
 operational_secret = (
     "BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest"

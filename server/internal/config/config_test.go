@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,29 @@ func TestAdminDoesNotRequirePlatformSessionSecret(t *testing.T) {
 	}
 	if len(cfg.IAP.CatalogJSON) == 0 {
 		t.Error("admin role이 entitlement 카탈로그를 읽지 않았다")
+	}
+}
+
+// ingest는 인증이 없는 이벤트도 받지만, 세션 토큰이 있으면 검증해
+// platform_user_id를 붙인다. 키가 없으면 인증 이벤트가 조용히 익명으로
+// 적재되므로 부팅 단계에서 실패해야 한다.
+func TestIngestRequiresPlatformSessionSecret(t *testing.T) {
+	t.Setenv("PLATFORM_ROLE", string(RoleIngest))
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
+	t.Setenv("PLATFORM_SESSION_SECRET", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("ingest가 세션 서명키 없이 부팅됐다")
+	}
+
+	want := strings.Repeat("s", 32)
+	t.Setenv("PLATFORM_SESSION_SECRET", base64.StdEncoding.EncodeToString([]byte(want)))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("ingest config load 실패: %v", err)
+	}
+	if got := string(cfg.SessionSecret); got != want {
+		t.Fatalf("ingest 세션 서명키가 달라졌다: 길이=%d", len(got))
 	}
 }
 

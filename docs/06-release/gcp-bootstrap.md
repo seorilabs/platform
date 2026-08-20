@@ -139,7 +139,7 @@ done
 |---|---|
 | `platform-api` | `datastore.user`, `bigquery.dataEditor` |
 | `platform-iap` | `datastore.user`, `bigquery.dataEditor`, **`secretmanager.secretAccessor`** |
-| `platform-ingest` | `bigquery.dataEditor`, `bigquery.jobUser` |
+| `platform-ingest` | `bigquery.dataEditor`, `bigquery.jobUser` + `platform-session-secret`의 **resource-level** `secretmanager.secretAccessor` |
 | `platform-admin` | `datastore.user`, `bigquery.dataEditor` |
 | `platform-worker` | `datastore.user` + 환불 검토 keyring의 **resource-level** `secretAccessor` |
 | `platform-deployer` | `run.admin`, `artifactregistry.writer`, `iam.serviceAccountUser` |
@@ -152,6 +152,16 @@ done
 > `platform-worker`에는 ADR 0014의 `iap-refund-review-encryption-keys`처럼
 > 실제 작업에 필요한 개별 secret resource만 accessor를 부여한다. Admin·API·ingest와
 > Backoffice에는 환불 token 복호화 권한을 주지 않는다.
+
+`platform-ingest`는 결제 secret을 받지 않는다. 인증된 이벤트의 세션 검증에 필요한
+`platform-session-secret` 하나만 resource-level로 허용한다.
+
+```bash
+gcloud secrets add-iam-policy-binding platform-session-secret \
+  --project=seorilabs-platform \
+  --member="serviceAccount:platform-ingest@seorilabs-platform.iam.gserviceaccount.com" \
+  --role=roles/secretmanager.secretAccessor
+```
 
 ### 6-1. Babycare Firebase custom token bridge IAM
 

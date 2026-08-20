@@ -84,9 +84,10 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config: PLATFORM_FS_PREFIX에 슬래시를 넣을 수 없다: %q", c.FirestorePrefix)
 	}
 
-	// worker는 HTTP를 열지 않으므로 세션 비밀키가 필요 없다.
-	// ingest도 세션 없이 익명 수집을 허용한다.
-	if role == RoleAPI || role == RoleIAP || role == RoleAds {
+	// worker는 HTTP를 열지 않고 admin은 최종 사용자 세션을 다루지 않으므로
+	// 세션 비밀키가 필요 없다. ingest는 익명 이벤트도 허용하지만, 토큰이
+	// 들어온 이벤트에 platform_user_id를 붙이려면 같은 키로 검증해야 한다.
+	if role == RoleAPI || role == RoleIAP || role == RoleIngest || role == RoleAds {
 		secret, err := loadSessionSecret()
 		if err != nil {
 			return Config{}, err
