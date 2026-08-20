@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestLucidChessRegistryEventContract(t *testing.T) {
+func TestLucidChessRegistryAuthAndEventContract(t *testing.T) {
 	source := NewFSSource(os.DirFS("../../../registry"), "apps")
 	apps, err := source.LoadApps(context.Background())
 	if err != nil {
@@ -25,13 +25,29 @@ func TestLucidChessRegistryEventContract(t *testing.T) {
 		t.Fatal("lucid-chess registry가 없다")
 	}
 
+	if err := lucidChess.Validate(); err != nil {
+		t.Fatalf("레지스트리 항목이 유효하지 않다: %v", err)
+	}
 	if lucidChess.FirebaseProjectID != "lucid-chess-dbb9d" || lucidChess.RequireAppCheck {
 		t.Fatalf("Firebase/App Check 계약이 다르다: %#v", lucidChess)
 	}
+	if lucidChess.FirebaseCustomTokenServiceAccount !=
+		"platform-auth@lucid-chess-dbb9d.iam.gserviceaccount.com" {
+		t.Fatalf("custom token service account가 다르다: %q",
+			lucidChess.FirebaseCustomTokenServiceAccount)
+	}
 	if !lucidChess.FeatureEnabled("events") || lucidChess.FeatureEnabled("config") ||
 		lucidChess.FeatureEnabled("iap") || lucidChess.FeatureEnabled("ads") ||
-		lucidChess.FeatureEnabled("firebase_custom_token_bridge") {
-		t.Fatalf("Events 외 기능이 활성화됐다: %#v", lucidChess.Features)
+		!lucidChess.FeatureEnabled("firebase_custom_token_bridge") {
+		t.Fatalf("인증과 Events 기능 경계가 다르다: %#v", lucidChess.Features)
+	}
+
+	wantOrigins := []string{
+		"https://lucid-chess.apps.tossmini.com",
+		"https://lucid-chess.private-apps.tossmini.com",
+	}
+	if !reflect.DeepEqual(lucidChess.CORSOrigins, wantOrigins) {
+		t.Fatalf("AIT origin이 다르다\n got: %#v\nwant: %#v", lucidChess.CORSOrigins, wantOrigins)
 	}
 
 	wantAllowlist := []string{

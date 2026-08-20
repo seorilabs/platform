@@ -2,13 +2,14 @@
   "app_id": "lucid-chess",
   "display_name": "루시드 체스",
   "firebase_project_id": "lucid-chess-dbb9d",
+  "firebase_custom_token_service_account": "platform-auth@lucid-chess-dbb9d.iam.gserviceaccount.com",
   "status": "active",
   "features": {
     "config": false,
     "events": true,
     "iap": false,
     "ads": false,
-    "firebase_custom_token_bridge": false
+    "firebase_custom_token_bridge": true
   },
   "require_app_check": false,
   "ga4": {
@@ -23,6 +24,9 @@
     "ad_interstitial_shown",
     "ad_interstitial_skip"
   ],
-  "cors_origins": [],
+  "cors_origins": [
+    "https://lucid-chess.apps.tossmini.com",
+    "https://lucid-chess.private-apps.tossmini.com"
+  ],
   "blocked_uids": []
 }

@@ -1,0 +1,24 @@
+{
+  "app_id": "foam-party",
+  "display_name": "버블 버블 거품 세차",
+  "firebase_project_id": "foam-party",
+  "firebase_custom_token_service_account": "platform-auth@foam-party.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "ads": false,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "platform_event_allowlist": [],
+  "cors_origins": [
+    "https://foam-party.apps.tossmini.com",
+    "https://foam-party.private-apps.tossmini.com"
+  ],
+  "blocked_uids": []
+}
