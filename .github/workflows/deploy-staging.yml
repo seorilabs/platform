@@ -1,0 +1,97 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "staging에 배포할 검증된 main 이미지 commit SHA"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-platform-staging
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: seorilabs-platform
+  REGION: asia-northeast3
+  REGISTRY: asia-northeast3-docker.pkg.dev
+  IMAGE_PATH: seorilabs-platform/platform/platform
+  DEPLOYER_SA: platform-deployer@seorilabs-platform.iam.gserviceaccount.com
+  API_RUNTIME_SA: platform-api@seorilabs-platform.iam.gserviceaccount.com
+  SERVICE: platform-api-stg
+
+jobs:
+  deploy:
+    name: Deploy staging API
+    runs-on: seorilabs-rpi-arm64
+    timeout-minutes: 15
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate image input
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+        run: |
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$IMAGE_SHA" origin/main
+          echo "image=${REGISTRY}/${IMAGE_PATH}:${IMAGE_SHA}" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Assert approved image exists
+        run: |
+          gcloud artifacts docker images describe "$image" \
+            --project="$PROJECT_ID" \
+            --format='value(image_summary.fully_qualified_digest)'
+
+      - name: Deploy isolated staging API
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --image="$image" \
+            --service-account="$API_RUNTIME_SA" \
+            --set-env-vars="PLATFORM_ROLE=api,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},PLATFORM_FS_PREFIX=stg_,PLATFORM_BQ_DATASET=platform_stg" \
+            --set-secrets="PLATFORM_SESSION_SECRET=platform-stg-session-secret:latest" \
+            --min-instances=0 \
+            --max-instances=3 \
+            --cpu-boost \
+            --no-invoker-iam-check \
+            --quiet
+
+      - name: Verify staging boundary and readiness
+        run: |
+          service_json="$(gcloud run services describe "$SERVICE" \
+            --project="$PROJECT_ID" --region="$REGION" --format=json)"
+          actual_image="$(jq -r '.spec.template.spec.containers[0].image' <<<"$service_json")"
+          actual_prefix="$(jq -r '.spec.template.spec.containers[0].env[] | select(.name == "PLATFORM_FS_PREFIX") | .value' <<<"$service_json")"
+          actual_dataset="$(jq -r '.spec.template.spec.containers[0].env[] | select(.name == "PLATFORM_BQ_DATASET") | .value' <<<"$service_json")"
+          actual_secret="$(jq -r '.spec.template.spec.containers[0].env[] | select(.name == "PLATFORM_SESSION_SECRET") | [.valueFrom.secretKeyRef.name, .valueFrom.secretKeyRef.key] | @tsv' <<<"$service_json")"
+          invoker_disabled="$(jq -r '.metadata.annotations["run.googleapis.com/invoker-iam-disabled"] // ""' <<<"$service_json")"
+          service_url="$(jq -r '.status.url' <<<"$service_json")"
+
+          [ "$actual_image" = "$image" ]
+          [ "$actual_prefix" = "stg_" ]
+          [ "$actual_dataset" = "platform_stg" ]
+          [ "$actual_secret" = $'platform-stg-session-secret\tlatest' ]
+          [ "$invoker_disabled" = "true" ]
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            "$service_url/health/ready" >/dev/null
+          printf 'service=%s\nurl=%s\nimage=%s\n' \
+            "$SERVICE" "$service_url" "$actual_image" >> "$GITHUB_STEP_SUMMARY"
