@@ -72,6 +72,10 @@ for target in ("platform-api", "platform-iap", "platform-ingest", "platform-ads"
 admin_block = command_block("gcloud run deploy platform-admin")
 require(session_secret not in admin_block, "platform-admin에 세션 secret을 마운트하면 안 된다.")
 require(
+    '--remove-secrets="PLATFORM_SESSION_SECRET"' in admin_block,
+    "platform-admin의 기존 세션 secret을 제거해야 한다.",
+)
+require(
     text.count(session_secret) == 4,
     "Platform 세션 secret은 API, IAP, Ingest, Ads 네 대상에만 마운트해야 한다.",
 )
@@ -93,6 +97,11 @@ for target in ("platform-api", "platform-iap", "platform-ads"):
     require(operational_secret in block, f"{target}에 Backoffice 운영 secret이 없다.")
 
 worker_block = command_block("gcloud run jobs update platform-worker")
+require(session_secret not in worker_block, "platform-worker에 세션 secret을 마운트하면 안 된다.")
+require(
+    '--remove-secrets="PLATFORM_SESSION_SECRET"' in worker_block,
+    "platform-worker의 기존 세션 secret을 제거해야 한다.",
+)
 require(operational_url in worker_block, "platform-worker에 Backoffice 운영 URL이 없다.")
 require(operational_secret in worker_block, "platform-worker에 Backoffice 운영 secret이 없다.")
 
