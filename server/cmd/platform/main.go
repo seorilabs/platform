@@ -130,9 +130,9 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		d.operational = operational.NewDispatcher(repo, sender)
 	}
 
-	// 최종 사용자 세션을 발급하는 role만 identity issuer를 조립한다.
-	// Admin은 Config에 비밀이 잘못 들어와도 issuer를 만들지 않는다.
-	if cfg.Role == config.RoleAPI || cfg.Role == config.RoleIAP || cfg.Role == config.RoleAds {
+	// 세션을 발급하는 role과 이벤트 세션을 검증하는 ingest만 identity를
+	// 조립한다. Admin은 Config에 비밀이 잘못 들어와도 issuer를 만들지 않는다.
+	if roleUsesIdentity(cfg.Role) {
 		if len(cfg.SessionSecret) == 0 {
 			closeStore()
 			return nil, errors.New("identity role에 세션 비밀키가 필요하다")
@@ -254,6 +254,11 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	}
 
 	return d, nil
+}
+
+func roleUsesIdentity(role config.Role) bool {
+	return role == config.RoleAPI || role == config.RoleIAP ||
+		role == config.RoleIngest || role == config.RoleAds
 }
 
 func drainOperationalAfter(next http.Handler, dispatcher *operational.Dispatcher) http.Handler {

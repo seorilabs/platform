@@ -18,6 +18,17 @@
 플랫폼의 AIT GA4 서버 릴레이는 아직 구현되지 않았다. 릴레이가 구현·검증되기
 전에는 기존 Measurement Protocol과 비밀값 검증 게이트를 제거하지 않는다.
 
+## 인증된 이벤트 경계
+
+`platform-ingest`는 세션이 없는 이벤트도 기존 호환을 위해 수락하지만, 유효한
+`Authorization: Bearer <platformToken>`이 있으면 `platform_user_id`를 반드시 붙인다.
+이를 위해 세션 발급 role과 동일한 `platform-session-secret`을 ingest runtime에
+resource-level로 마운트한다. secret이 없으면 인증 이벤트가 오류 없이 익명 적재되므로
+ingest는 부팅 단계에서 실패하고 배포 workflow가 secret 참조를 readback한다.
+
+앱은 세션 확립 전 이벤트를 보내지 않는다. 운영 스모크는 응답의 `accepted`만 보지 않고
+BigQuery의 해당 `event_id` 행에서 `platform_user_id IS NOT NULL`까지 확인한다.
+
 ## 순수 릴레이를 채택하지 않은 이유
 
 **GA4 Measurement Protocol은 요청 IP로 geo를 판정한다.**
