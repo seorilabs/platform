@@ -25,6 +25,8 @@
 이를 위해 세션 발급 role과 동일한 `platform-session-secret`을 ingest runtime에
 resource-level로 마운트한다. secret이 없으면 인증 이벤트가 오류 없이 익명 적재되므로
 ingest는 부팅 단계에서 실패하고 배포 workflow가 secret 참조를 readback한다.
+최종 사용자 세션을 다루지 않는 Admin과 Worker에는 과거 배포에서 남은 참조까지
+명시적으로 제거한다.
 
 앱은 세션 확립 전 이벤트를 보내지 않는다. 운영 스모크는 응답의 `accepted`만 보지 않고
 BigQuery의 해당 `event_id` 행에서 `platform_user_id IS NOT NULL`까지 확인한다.

@@ -227,6 +227,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT}" \
+            --remove-secrets="PLATFORM_SESSION_SECRET" \
             --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest" \
             --quiet
 
@@ -248,6 +249,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
+            --remove-secrets="PLATFORM_SESSION_SECRET" \
             --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
@@ -283,6 +285,14 @@ jobs:
                 | .valueFrom.secretKeyRef.name] | first // ""'
           }
 
+          job_secret() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r '[.spec.template.spec.template.spec.containers[0].env[]?
+                | select(.name == "PLATFORM_SESSION_SECRET")
+                | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
           fail=0
           for target in platform-api platform-iap platform-ingest platform-ads; do
             actual=$(service_secret "$target")
@@ -292,6 +302,10 @@ jobs:
 
           actual=$(service_secret platform-admin)
           printf '%-18s PLATFORM_SESSION_SECRET=%s\n' platform-admin "${actual:-<absent>}"
+          [ -z "$actual" ] || fail=1
+
+          actual=$(job_secret platform-worker)
+          printf '%-18s PLATFORM_SESSION_SECRET=%s\n' platform-worker "${actual:-<absent>}"
           [ -z "$actual" ] || fail=1
 
           [ "$fail" -eq 0 ] || { echo "세션 secret role 경계가 올바르지 않다." >&2; exit 1; }
