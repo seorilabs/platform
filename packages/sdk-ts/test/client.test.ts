@@ -216,6 +216,7 @@ describe("SessionManager", () => {
     platformToken: "pt-1",
     refreshToken: "rt-1",
     platformUserId: "pu_01J",
+    supportCode: "TEST-00000000",
     appUserId: "uid-1",
     isAnonymous: false,
     expiresIn: 3600,
@@ -299,6 +300,27 @@ describe("SessionManager", () => {
     assert.equal(await sm.token(), "pt-3");
     // 마지막 호출은 재로그인이다
     assert.equal(f.calls[2]!.url, "https://platform.test/v1/auth/session");
+  });
+
+  it("연결 세션은 refresh 실패 때 이전 guest로 자동 강등하지 않는다", async () => {
+    let now = 1_000_000;
+    const f = fakeFetch([ok(sessionBody), fail(401, "auth_invalid")]);
+    const sm = new SessionManager(newTransport(f.impl), new MemorySessionStore(), () => now);
+    await sm.signIn({ kind: "firebase-id-token", value: "guest-id-token" });
+    await sm.adopt({
+      ...sessionBody,
+      platformToken: "linked-token",
+      refreshToken: "linked-refresh",
+      isLinkedAccount: true,
+    });
+    now += 3600 * 1000;
+
+    await assert.rejects(() => sm.token(), (err: unknown) => {
+      assert.ok(err instanceof PlatformError);
+      assert.equal(err.code, "auth_invalid");
+      return true;
+    });
+    assert.equal(f.count, 2, "이전 guest credential 재로그인을 시도했다");
   });
 
   it("세션이 없으면 auth_required를 던진다", async () => {
@@ -834,5 +856,43 @@ describe("Content와 Identity", () => {
     assert.deepEqual(f.calls[0]!.body, {
       appId: "ungeul", existingFirebaseIdToken: "existing-id-token",
     });
+  });
+
+  it("계정 연결은 현재 세션과 App Check를 쓰고 linked 세션으로 교체한다", async () => {
+    const f = fakeFetch([
+      ok({
+        platformToken: "guest-token", refreshToken: "guest-refresh",
+        platformUserId: "pu-guest", supportCode: "UG-GUEST",
+        appUserId: "guest-uid", isAnonymous: true, isLinkedAccount: false, expiresIn: 3600,
+      }),
+      ok({ provider: "kakao", nonce: "server-nonce", expiresAt: "2026-08-23T01:07:03Z" }),
+      ok({
+        firebaseCustomToken: "firebase-custom", provider: "kakao", restored: true,
+        session: {
+          platformToken: "linked-token", refreshToken: "linked-refresh",
+          platformUserId: "pu-existing", supportCode: "UG-EXISTING",
+          appUserId: "existing-uid", isAnonymous: false, isLinkedAccount: true, expiresIn: 3600,
+        },
+      }),
+    ]);
+    const platform = new Platform({
+      baseUrl: "https://platform.test", appId: "ungeul", fetchImpl: f.impl,
+      appCheckToken: async () => "attested-content",
+    });
+    await platform.signIn({ kind: "firebase-id-token", value: "guest-id-token" });
+    const challenge = await platform.identity.beginAccountLink("kakao");
+    const linked = await platform.identity.completeAccountLink(
+      "kakao", "kakao-id-token", challenge.nonce,
+    );
+
+    assert.equal(f.calls[1]!.headers.Authorization, "Bearer guest-token");
+    assert.equal(f.calls[2]!.headers.Authorization, "Bearer guest-token");
+    assert.equal(f.calls[2]!.headers["X-Firebase-AppCheck"], "attested-content");
+    assert.deepEqual(f.calls[2]!.body, {
+      provider: "kakao", idToken: "kakao-id-token", nonce: "server-nonce",
+    });
+    assert.equal(linked.restored, true);
+    assert.equal(linked.session.isLinkedAccount, true);
+    assert.equal((await platform.session.current())?.platformToken, "linked-token");
   });
 });

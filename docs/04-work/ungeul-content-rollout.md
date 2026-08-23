@@ -12,12 +12,17 @@
 - Android/iOS Firebase 앱 등록 파일과 App Check provider 설정
 - 콘텐츠용 AdMob rewarded placement와 reward key
 - 소모성 열람권 entitlement ID와 마켓별 SKU
+- 카카오 OIDC audience와 Android/iOS redirect 설정
+- Sign in with Apple client audience와 authorization code 교환·삭제 시 철회 설정
 
 확정 뒤 `registry/apps/ungeul.json`에 다음 계약을 실제 값으로 등록한다.
 
 - `features.content`, `features.firebase_custom_token_bridge`: `true`
 - 광고/IAP을 실제로 사용할 때만 각각 `features.ads`, `features.iap`: `true`
 - `require_app_check`: `true`
+- provider SDK, Apple 철회, 개인정보 문서와 실기기 복원이 준비된 뒤에만
+  `auth.account_providers.kakao|apple.audience` 등록
+- native IAP 활성 시 `iap.require_linked_account`: `true`. AppsInToss는 Toss Login과 AIT IAP만 사용
 - `content.reading_daily_limit`: `10`
 - `content.term_daily_limit`: `100`
 - `content.bucket`, `content.prefix`
@@ -41,6 +46,9 @@
 - 운글 workflow로 staging immutable 릴리스를 게시한 뒤 `active.json` generation readback과
   Platform `/v1/content/version` SHA 일치를 확인한다.
 - production은 Platform 승인 배포, production 릴리스 게시, 코퍼스 없는 앱 산출물 순서다.
+- `auth_link_challenges.ttlAt` Firestore TTL이 활성 상태인지 확인한다.
+- 카카오 로그인과 Apple 로그인 각각에서 새 guest 연결, 기존 계정 복원, 다른 연결 계정 충돌을
+  실기기로 검증한다. Apple은 앱 계정 삭제 시 authorization token 철회까지 확인한다.
 
 ## 실패 폐쇄 검증
 

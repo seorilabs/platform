@@ -84,7 +84,12 @@ export type {
   SipseongFact,
   UnseongFact,
 } from "./content.ts";
-export type { FirebaseCustomTokenResult } from "./identity.ts";
+export type {
+  AccountLinkChallenge,
+  AccountLinkResult,
+  AccountProvider,
+  FirebaseCustomTokenResult,
+} from "./identity.ts";
 export type {
   AdsPolicy,
   AdReward,
@@ -177,7 +182,12 @@ export class Platform {
     });
     this.ads = new Ads(adsTransport, () => this.session.token());
     this.content = new Content(this.transport, () => this.session.token());
-    this.identity = new Identity(this.transport, opts.appId);
+    this.identity = new Identity(
+      this.transport,
+      opts.appId,
+      () => this.session.token(),
+      (session) => this.session.adopt(session),
+    );
 
     this.config = new Config({
       transport: this.transport,

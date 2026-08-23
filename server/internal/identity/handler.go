@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/platformerr"
@@ -28,6 +29,8 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/session", httpx.Wrap(h.createSession))
 	mux.HandleFunc("POST /v1/auth/firebase-custom-token", httpx.Wrap(h.createFirebaseCustomToken))
+	mux.HandleFunc("POST /v1/auth/account-link-challenges", httpx.Wrap(h.createAccountLinkChallenge))
+	mux.HandleFunc("POST /v1/auth/account-links", httpx.Wrap(h.createAccountLink))
 	mux.HandleFunc("DELETE /v1/auth/firebase-account", httpx.Wrap(h.deleteFirebaseAccount))
 	mux.HandleFunc("POST /v1/auth/refresh", httpx.Wrap(h.refresh))
 	mux.HandleFunc("DELETE /v1/users/me", httpx.Wrap(h.deleteMe))
@@ -130,11 +133,12 @@ type sessionResponse struct {
 	PlatformUserID string `json:"platformUserId"`
 	// 앱이 설정 화면에 보여줄 식별자다. Firebase uid를 보여주면 CS가
 	// 그걸로 우리 원장을 찾을 수 없다.
-	SupportCode    string `json:"supportCode"`
-	AppUserID      string `json:"appUserId,omitempty"`
-	IsAnonymous    bool   `json:"isAnonymous"`
-	ExpiresIn      int    `json:"expiresIn"`
-	ServerTimeUnix int64  `json:"serverTimeUnix"`
+	SupportCode     string `json:"supportCode"`
+	AppUserID       string `json:"appUserId,omitempty"`
+	IsAnonymous     bool   `json:"isAnonymous"`
+	IsLinkedAccount bool   `json:"isLinkedAccount"`
+	ExpiresIn       int    `json:"expiresIn"`
+	ServerTimeUnix  int64  `json:"serverTimeUnix"`
 }
 
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
@@ -159,15 +163,86 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	httpx.WriteOK(w, http.StatusOK, sessionResponse{
-		PlatformToken:  res.PlatformToken,
-		RefreshToken:   res.RefreshToken,
-		PlatformUserID: res.PlatformUserID,
-		SupportCode:    res.SupportCode,
-		AppUserID:      res.AppUserID,
-		IsAnonymous:    res.IsAnonymous,
-		ExpiresIn:      res.ExpiresIn,
-		ServerTimeUnix: h.svc.now().Unix(),
+	httpx.WriteOK(w, http.StatusOK, h.sessionResponse(res))
+	return nil
+}
+
+type createAccountLinkChallengeRequest struct {
+	Provider string `json:"provider"`
+}
+
+type accountLinkChallengeResponse struct {
+	Provider  string    `json:"provider"`
+	Nonce     string    `json:"nonce"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func (h *Handler) createAccountLinkChallenge(w http.ResponseWriter, r *http.Request) error {
+	var req createAccountLinkChallengeRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if req.Provider == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid, "로그인 공급자가 필요해요")
+	}
+	sess, err := h.Authenticate(r)
+	if err != nil {
+		return err
+	}
+	if err := h.VerifyAppCheck(
+		r.Context(), sess.AppID, r.Header.Get("X-Firebase-AppCheck"),
+	); err != nil {
+		return err
+	}
+	challenge, err := h.svc.BeginAccountLink(r.Context(), sess, req.Provider)
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusCreated, accountLinkChallengeResponse{
+		Provider: challenge.Provider, Nonce: challenge.Nonce, ExpiresAt: challenge.ExpiresAt,
+	})
+	return nil
+}
+
+type createAccountLinkRequest struct {
+	Provider string `json:"provider"`
+	IDToken  string `json:"idToken"`
+	Nonce    string `json:"nonce"`
+}
+
+type accountLinkResponse struct {
+	Session             sessionResponse `json:"session"`
+	FirebaseCustomToken string          `json:"firebaseCustomToken"`
+	Provider            string          `json:"provider"`
+	Restored            bool            `json:"restored"`
+}
+
+func (h *Handler) createAccountLink(w http.ResponseWriter, r *http.Request) error {
+	var req createAccountLinkRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if req.Provider == "" || req.IDToken == "" || req.Nonce == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid, "로그인 정보가 필요해요")
+	}
+	sess, err := h.Authenticate(r)
+	if err != nil {
+		return err
+	}
+	if err := h.VerifyAppCheck(
+		r.Context(), sess.AppID, r.Header.Get("X-Firebase-AppCheck"),
+	); err != nil {
+		return err
+	}
+	result, err := h.svc.CompleteAccountLink(
+		r.Context(), sess, req.Provider, req.IDToken, req.Nonce,
+	)
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusOK, accountLinkResponse{
+		Session: h.sessionResponse(result.Session), FirebaseCustomToken: result.FirebaseCustomToken,
+		Provider: result.Provider, Restored: result.Restored,
 	})
 	return nil
 }
@@ -203,17 +278,17 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	httpx.WriteOK(w, http.StatusOK, sessionResponse{
-		PlatformToken:  res.PlatformToken,
-		RefreshToken:   res.RefreshToken,
-		PlatformUserID: res.PlatformUserID,
-		SupportCode:    res.SupportCode,
-		AppUserID:      res.AppUserID,
-		IsAnonymous:    res.IsAnonymous,
-		ExpiresIn:      res.ExpiresIn,
-		ServerTimeUnix: h.svc.now().Unix(),
-	})
+	httpx.WriteOK(w, http.StatusOK, h.sessionResponse(res))
 	return nil
+}
+
+func (h *Handler) sessionResponse(res Result) sessionResponse {
+	return sessionResponse{
+		PlatformToken: res.PlatformToken, RefreshToken: res.RefreshToken,
+		PlatformUserID: res.PlatformUserID, SupportCode: res.SupportCode, AppUserID: res.AppUserID,
+		IsAnonymous: res.IsAnonymous, IsLinkedAccount: res.IsLinkedAccount,
+		ExpiresIn: res.ExpiresIn, ServerTimeUnix: h.svc.now().Unix(),
+	}
 }
 
 func (h *Handler) deleteMe(w http.ResponseWriter, r *http.Request) error {

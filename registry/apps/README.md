@@ -22,8 +22,17 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   "firebase_project_id": "lizard-tycoon",
   "firebase_custom_token_service_account": "platform-auth@lizard-tycoon.iam.gserviceaccount.com",
   "status": "active",                    // active | paused
-  "features": { "iap": true, "ads": false, "events": true, "config": true },
-  "require_app_check": false,
+  "features": {
+    "iap": true, "ads": false, "events": true, "config": true,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": true,
+  "auth": {
+    "account_providers": {
+      "kakao": { "audience": "123456789" },
+      "apple": { "audience": "com.seorilabs.lizardtycoon" }
+    }
+  },
   "ga4": { "event_prefix": "" },
   "platform_event_allowlist": ["purchase_verified", "..."],
   "iap": {
@@ -32,7 +41,8 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
     "markets": ["google_play", "app_store", "apps_in_toss"],
     "google_play_package_name": "com.seorilabs.lizardtycoon",
     "app_store_bundle_id": "com.seorilabs.lizardtycoon",
-    "entitlement_ids": ["sp_galaxy_gecko"]
+    "entitlement_ids": ["sp_galaxy_gecko"],
+    "require_linked_account": true
   },
   "cors_origins": [
     "http://localhost:5173",
@@ -54,6 +64,14 @@ AppsInToss WebView 앱은 실제 서비스와 콘솔 QR 테스트 origin을 각�
 `require_app_check`는 custom-token과 Firebase 계정 매핑 삭제 경계에서
 `X-Firebase-AppCheck` 검증을 강제한다. 새 클라이언트 후보의 attestation을 실기기에서
 확인하고 registry sync할 때만 true로 전환한다.
+
+`auth.account_providers`는 카카오·Apple OIDC ID token의 공개 audience allowlist다.
+secret이나 authorization token을 넣지 않는다. 계정 연결은 App Check와 Firebase custom-token
+bridge를 함께 요구한다. `iap.require_linked_account=true`이면 구매, entitlement 복원,
+account reference 발급이 모두 연결 세션에서만 가능하며 활성 IAP와 account provider가 필수다.
+AppsInToss는 mTLS Toss Login 세션을 연결 계정으로 보므로 이 provider 목록을 사용하지 않는다.
+실제 provider 콘솔 등록, Apple token 철회, 앱 SDK와 실기기 복원 검증 전에 값을 등록하거나
+sync하지 않는다.
 
 `features.iap`가 `true`이면 `iap.entitlement_ids`는 비어 있을 수 없다.
 `IAP_CATALOG_JSON`은 `(appId, market, productId)`를 entitlement에 연결하는

@@ -29,6 +29,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/iap"
 	"github.com/seorilabs/platform/server/internal/identity"
+	"github.com/seorilabs/platform/server/internal/identity/providers/oidc"
 	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/remoteconfig"
@@ -159,6 +160,20 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			}
 			svc.WithCustomTokenIssuer(customTokens)
 			svc.WithAppCheckVerifier(identity.NewFirebaseAppCheckVerifier())
+			kakao, err := oidc.NewKakao(nil)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			apple, err := oidc.NewApple(nil)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			if err := svc.ConfigureAccountProviders(users, kakao, apple); err != nil {
+				closeStore()
+				return nil, err
+			}
 		}
 		// Toss Login의 authorization code 교환도 AppsInToss mTLS를 쓴다.
 		// 결제 앱은 자격증명이 이미 격리된 iap role에서 세션을 열고,
@@ -357,7 +372,7 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		// AIT 앱은 appLogin authorization code를 이 role의 mTLS
 		// 자격증명으로 교환한 뒤 같은 호스트에서 구매를 검증한다.
 		d.identity.RegisterSession(mux)
-		iap.NewHandler(d.iap.service, d.identity).Register(mux)
+		iap.NewHandler(d.iap.service, d.identity).WithApps(d.registry).Register(mux)
 
 		// 웹훅은 마켓별로 자격증명이 있을 때만 연다.
 		// 없는 마켓의 엔드포인트를 열면 인증도 못 하고 알림만 쌓인다.

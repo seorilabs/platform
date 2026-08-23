@@ -97,11 +97,12 @@ type Result struct {
 	// 앱이 Firebase uid를 화면에 보여주면 CS가 그걸로 우리 원장을 찾을
 	// 수 없다. 플랫폼은 앱의 uid를 조회 키로 두지 않고, PII도 저장하지
 	// 않아 이메일 검색이 성립하지 않는다. ADR 0005다.
-	SupportCode string
-	AppUserID   string
-	IsAnonymous bool
-	ExpiresIn   int
-	ExpiresAt   time.Time
+	SupportCode     string
+	AppUserID       string
+	IsAnonymous     bool
+	IsLinkedAccount bool
+	ExpiresIn       int
+	ExpiresAt       time.Time
 }
 
 // FirebaseCustomTokenResult는 custom token bridge 응답이다.
@@ -114,15 +115,17 @@ type FirebaseCustomTokenResult struct {
 
 // Service는 세션 교환 유스케이스다.
 type Service struct {
-	registry     *registry.Registry
-	verifier     TokenVerifier
-	aitLogin     AITLoginVerifier
-	users        UserRepository
-	issuer       *SessionIssuer
-	customTokens CustomTokenIssuer
-	appCheck     AppCheckVerifier
-	refreshTTL   time.Duration
-	now          func() time.Time
+	registry         *registry.Registry
+	verifier         TokenVerifier
+	aitLogin         AITLoginVerifier
+	users            UserRepository
+	issuer           *SessionIssuer
+	customTokens     CustomTokenIssuer
+	appCheck         AppCheckVerifier
+	accounts         AccountRepository
+	accountProviders map[string]AccountProvider
+	refreshTTL       time.Duration
+	now              func() time.Time
 }
 
 func (s *Service) WithAITLoginVerifier(verifier AITLoginVerifier) *Service {
@@ -337,12 +340,21 @@ func (s *Service) CreateSession(ctx context.Context, appID string, cred Credenti
 	if err != nil {
 		return Result{}, err
 	}
+	linked := authType == "apps_in_toss"
+	if s.accounts != nil {
+		storedLinked, linkErr := s.accounts.IsAccountLinked(ctx, app.AppID, puid)
+		if linkErr != nil {
+			return Result{}, linkErr
+		}
+		linked = linked || storedLinked
+	}
 
 	return s.issue(ctx, Session{
-		PlatformUserID: puid,
-		AppID:          app.AppID,
-		AppUserID:      uid,
-		IsAnonymous:    anonymous,
+		PlatformUserID:  puid,
+		AppID:           app.AppID,
+		AppUserID:       uid,
+		IsAnonymous:     anonymous,
+		IsLinkedAccount: linked,
 	})
 }
 
@@ -483,14 +495,15 @@ func (s *Service) issue(ctx context.Context, sess Session) (Result, error) {
 	// 하나뿐이라 갈라질 수 없다. refreshDoc에 필드를 더하는 방법도 있지만
 	// 이미 발급된 갱신 토큰에는 값이 없어, 재로그인 전까지 빈 코드가 나간다.
 	return Result{
-		PlatformToken:  token,
-		RefreshToken:   refresh,
-		PlatformUserID: sess.PlatformUserID,
-		SupportCode:    NewSupportCode(sess.AppID, sess.PlatformUserID),
-		AppUserID:      sess.AppUserID,
-		IsAnonymous:    sess.IsAnonymous,
-		ExpiresIn:      int(s.issuer.TTL().Seconds()),
-		ExpiresAt:      exp,
+		PlatformToken:   token,
+		RefreshToken:    refresh,
+		PlatformUserID:  sess.PlatformUserID,
+		SupportCode:     NewSupportCode(sess.AppID, sess.PlatformUserID),
+		AppUserID:       sess.AppUserID,
+		IsAnonymous:     sess.IsAnonymous,
+		IsLinkedAccount: sess.IsLinkedAccount,
+		ExpiresIn:       int(s.issuer.TTL().Seconds()),
+		ExpiresAt:       exp,
 	}, nil
 }
 

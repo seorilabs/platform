@@ -22,13 +22,17 @@ import (
 //	identities/{app_id}__{firebase_uid}  → platform_user_id 매핑
 //	users/{platform_user_id}             → 사용자 문서
 //	refresh_tokens/{sha256(token)}       → 갱신 토큰
+//	auth_link_challenges/{sha256(nonce)} → 일회성 provider nonce
+//	auth_provider_identities/{app}__{provider}__{sha256(subject)} → platform_user_id
 //
 // identities 문서 ID를 복합키로 만드는 이유는 쿼리가 아니라 직접 읽기로
 // 끝내기 위해서다. 인덱스가 필요 없고 읽기 1회로 해결된다.
 const (
-	identitiesCollection = "identities"
-	usersCollection      = "users"
-	refreshCollection    = "refresh_tokens"
+	identitiesCollection       = "identities"
+	usersCollection            = "users"
+	refreshCollection          = "refresh_tokens"
+	accountChallengeCollection = "auth_link_challenges"
+	providerIdentityCollection = "auth_provider_identities"
 )
 
 type identityDoc struct {
@@ -42,13 +46,14 @@ type identityDoc struct {
 }
 
 type userDoc struct {
-	AppID       string    `firestore:"appId"`
-	AppUserID   string    `firestore:"appUserId"`
-	Anonymous   bool      `firestore:"anonymous"`
-	AuthType    string    `firestore:"authType,omitempty"`
-	CreatedAt   time.Time `firestore:"createdAt"`
-	LastSeenAt  time.Time `firestore:"lastSeenAt"`
-	SupportCode string    `firestore:"supportCode"`
+	AppID           string            `firestore:"appId"`
+	AppUserID       string            `firestore:"appUserId"`
+	Anonymous       bool              `firestore:"anonymous"`
+	AuthType        string            `firestore:"authType,omitempty"`
+	CreatedAt       time.Time         `firestore:"createdAt"`
+	LastSeenAt      time.Time         `firestore:"lastSeenAt"`
+	SupportCode     string            `firestore:"supportCode"`
+	LinkedProviders map[string]string `firestore:"linkedProviders,omitempty"`
 }
 
 // SupportUser는 Admin API에 노출해도 되는 PII 없는 사용자 요약이다.
@@ -68,8 +73,29 @@ type refreshDoc struct {
 	AppID          string    `firestore:"appId"`
 	AppUserID      string    `firestore:"appUserId"`
 	Anonymous      bool      `firestore:"anonymous"`
+	LinkedAccount  bool      `firestore:"linkedAccount,omitempty"`
 	ExpiresAt      time.Time `firestore:"expiresAt"`
 	CreatedAt      time.Time `firestore:"createdAt"`
+}
+
+type accountChallengeDoc struct {
+	AppID          string    `firestore:"appId"`
+	PlatformUserID string    `firestore:"platformUserId"`
+	Provider       string    `firestore:"provider"`
+	ExpiresAt      time.Time `firestore:"expiresAt"`
+	CreatedAt      time.Time `firestore:"createdAt"`
+	ConsumedAt     time.Time `firestore:"consumedAt,omitempty"`
+	SubjectHash    string    `firestore:"subjectHash,omitempty"`
+	TargetUserID   string    `firestore:"targetPlatformUserId,omitempty"`
+	TTLAt          time.Time `firestore:"ttlAt"`
+}
+
+type providerIdentityDoc struct {
+	AppID          string    `firestore:"appId"`
+	Provider       string    `firestore:"provider"`
+	SubjectHash    string    `firestore:"subjectHash"`
+	PlatformUserID string    `firestore:"platformUserId"`
+	LinkedAt       time.Time `firestore:"linkedAt"`
 }
 
 // StoreRepository는 Firestore 기반 identity 저장소다.
@@ -110,6 +136,14 @@ func userPath(puid string) (fspath.Path, error) {
 func refreshPath(token string) (fspath.Path, error) {
 	// 갱신 토큰 원문을 저장하지 않는다. 유출 시 그대로 쓸 수 있게 된다.
 	return fspath.Parse(refreshCollection + "/" + hashHex(token))
+}
+
+func accountChallengePath(nonce string) (fspath.Path, error) {
+	return fspath.Parse(accountChallengeCollection + "/" + hashHex(nonce))
+}
+
+func providerIdentityPath(appID, provider, subjectHash string) (fspath.Path, error) {
+	return fspath.Parse(providerIdentityCollection + "/" + appID + "__" + provider + "__" + subjectHash)
 }
 
 func hashHex(s string) string {
@@ -474,6 +508,208 @@ func supportPrefix(appID string) string {
 	return string(out)
 }
 
+func (r *StoreRepository) CreateAccountLinkChallenge(
+	ctx context.Context,
+	appID, platformUserID, provider, nonce string,
+	expiresAt time.Time,
+) error {
+	path, err := accountChallengePath(nonce)
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "로그인 요청을 저장하지 못했어요")
+	}
+	now := r.now().UTC()
+	if err := r.store.Set(ctx, path, accountChallengeDoc{
+		AppID: appID, PlatformUserID: platformUserID, Provider: provider,
+		ExpiresAt: expiresAt.UTC(), CreatedAt: now, TTLAt: expiresAt.UTC().Add(24 * time.Hour),
+	}); err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "로그인 요청을 저장하지 못했어요")
+	}
+	return nil
+}
+
+func (r *StoreRepository) IsAccountLinked(
+	ctx context.Context,
+	appID, platformUserID string,
+) (bool, error) {
+	path, err := userPath(platformUserID)
+	if err != nil {
+		return false, platformerr.Wrap(err, platformerr.CodeInternal, "계정 연결을 확인하지 못했어요")
+	}
+	snap, err := r.store.Get(ctx, path)
+	if err != nil {
+		return false, platformerr.Wrap(err, platformerr.CodeInternal, "계정 연결을 확인하지 못했어요")
+	}
+	var user userDoc
+	if err := snap.DataTo(&user); err != nil || user.AppID != appID {
+		return false, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"계정 연결 정보가 올바르지 않아요")
+	}
+	return len(user.LinkedProviders) > 0, nil
+}
+
+func (r *StoreRepository) ConnectAccount(
+	ctx context.Context,
+	appID, currentPlatformUserID, provider, subject, nonce string,
+	now time.Time,
+) (ConnectedAccount, error) {
+	challengePath, err := accountChallengePath(nonce)
+	if err != nil {
+		return ConnectedAccount{}, platformerr.New(platformerr.CodeAuthInvalid, "로그인 요청이 올바르지 않아요")
+	}
+	subjectHash := hashHex(subject)
+	providerPath, err := providerIdentityPath(appID, provider, subjectHash)
+	if err != nil {
+		return ConnectedAccount{}, platformerr.New(platformerr.CodeAuthInvalid, "로그인 정보가 올바르지 않아요")
+	}
+	currentPath, err := userPath(currentPlatformUserID)
+	if err != nil {
+		return ConnectedAccount{}, platformerr.New(platformerr.CodeAuthInvalid, "현재 사용자가 올바르지 않아요")
+	}
+
+	var result ConnectedAccount
+	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		challengeExists, challengeSnap, err := tx.Exists(challengePath)
+		if err != nil {
+			return err
+		}
+		if !challengeExists {
+			return platformerr.New(platformerr.CodeAuthInvalid, "로그인 요청을 찾을 수 없어요")
+		}
+		var challenge accountChallengeDoc
+		if err := challengeSnap.DataTo(&challenge); err != nil {
+			return err
+		}
+		if challenge.AppID != appID || challenge.PlatformUserID != currentPlatformUserID ||
+			challenge.Provider != provider {
+			return platformerr.New(platformerr.CodeAuthInvalid, "다른 로그인 요청이에요")
+		}
+
+		if !challenge.ConsumedAt.IsZero() {
+			if challenge.SubjectHash != subjectHash || challenge.TargetUserID == "" {
+				return platformerr.New(platformerr.CodeAccountLinkConflict, "이미 사용한 로그인 요청이에요")
+			}
+			targetPath, err := userPath(challenge.TargetUserID)
+			if err != nil {
+				return err
+			}
+			targetExists, targetSnap, err := tx.Exists(targetPath)
+			if err != nil || !targetExists {
+				if err != nil {
+					return err
+				}
+				return platformerr.New(platformerr.CodeUserNotFound, "연결된 사용자를 찾을 수 없어요")
+			}
+			var target userDoc
+			if err := targetSnap.DataTo(&target); err != nil {
+				return err
+			}
+			result = ConnectedAccount{PlatformUserID: challenge.TargetUserID, AppUserID: target.AppUserID,
+				Provider: provider, Restored: challenge.TargetUserID != currentPlatformUserID}
+			return nil
+		}
+		if now.After(challenge.ExpiresAt) {
+			return platformerr.New(platformerr.CodeAuthInvalid, "로그인 요청이 만료됐어요")
+		}
+
+		currentExists, currentSnap, err := tx.Exists(currentPath)
+		if err != nil {
+			return err
+		}
+		if !currentExists {
+			return platformerr.New(platformerr.CodeUserNotFound, "현재 사용자를 찾을 수 없어요")
+		}
+		var current userDoc
+		if err := currentSnap.DataTo(&current); err != nil {
+			return err
+		}
+		if current.AppID != appID || current.AppUserID == "" {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid, "현재 사용자 정보가 올바르지 않아요")
+		}
+
+		providerExists, providerSnap, err := tx.Exists(providerPath)
+		if err != nil {
+			return err
+		}
+		targetID := currentPlatformUserID
+		target := current
+		restored := false
+		if providerExists {
+			var mapping providerIdentityDoc
+			if err := providerSnap.DataTo(&mapping); err != nil {
+				return err
+			}
+			if mapping.AppID != appID || mapping.Provider != provider || mapping.SubjectHash != subjectHash ||
+				mapping.PlatformUserID == "" {
+				return platformerr.New(platformerr.CodeLedgerStateInvalid, "공급자 계정 매핑이 올바르지 않아요")
+			}
+			targetID = mapping.PlatformUserID
+			if targetID != currentPlatformUserID {
+				if len(current.LinkedProviders) > 0 {
+					return platformerr.New(platformerr.CodeAccountLinkConflict,
+						"서로 다른 연결 계정을 합칠 수 없어요")
+				}
+				targetPath, err := userPath(targetID)
+				if err != nil {
+					return err
+				}
+				targetExists, targetSnap, err := tx.Exists(targetPath)
+				if err != nil {
+					return err
+				}
+				if !targetExists {
+					return platformerr.New(platformerr.CodeLedgerStateInvalid,
+						"연결 계정의 사용자가 없어요")
+				}
+				if err := targetSnap.DataTo(&target); err != nil {
+					return err
+				}
+				restored = true
+			}
+		} else {
+			if existing := current.LinkedProviders[provider]; existing != "" && existing != subjectHash {
+				return platformerr.New(platformerr.CodeAccountLinkConflict,
+					"이미 다른 공급자 계정이 연결돼 있어요")
+			}
+			if current.LinkedProviders == nil {
+				current.LinkedProviders = map[string]string{}
+			}
+			current.LinkedProviders[provider] = subjectHash
+			if err := tx.Set(providerPath, providerIdentityDoc{
+				AppID: appID, Provider: provider, SubjectHash: subjectHash,
+				PlatformUserID: currentPlatformUserID, LinkedAt: now,
+			}); err != nil {
+				return err
+			}
+			if err := tx.Set(currentPath, current); err != nil {
+				return err
+			}
+			target = current
+		}
+
+		if target.LinkedProviders[provider] != subjectHash {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"연결 계정의 공급자 정보가 올바르지 않아요")
+		}
+		challenge.ConsumedAt = now
+		challenge.SubjectHash = subjectHash
+		challenge.TargetUserID = targetID
+		if err := tx.Set(challengePath, challenge); err != nil {
+			return err
+		}
+		result = ConnectedAccount{PlatformUserID: targetID, AppUserID: target.AppUserID,
+			Provider: provider, Restored: restored}
+		return nil
+	})
+	if err != nil {
+		if platformerr.CodeOf(err) != platformerr.CodeInternal {
+			return ConnectedAccount{}, err
+		}
+		return ConnectedAccount{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"계정을 연결하지 못했어요")
+	}
+	return result, nil
+}
+
 func (r *StoreRepository) SaveRefresh(
 	ctx context.Context,
 	token string,
@@ -490,6 +726,7 @@ func (r *StoreRepository) SaveRefresh(
 		AppID:          sess.AppID,
 		AppUserID:      sess.AppUserID,
 		Anonymous:      sess.IsAnonymous,
+		LinkedAccount:  sess.IsLinkedAccount,
 		ExpiresAt:      expiresAt,
 		CreatedAt:      r.now(),
 	})
@@ -525,10 +762,11 @@ func (r *StoreRepository) LoadRefresh(ctx context.Context, token string) (Sessio
 	}
 
 	return Session{
-		PlatformUserID: doc.PlatformUserID,
-		AppID:          doc.AppID,
-		AppUserID:      doc.AppUserID,
-		IsAnonymous:    doc.Anonymous,
+		PlatformUserID:  doc.PlatformUserID,
+		AppID:           doc.AppID,
+		AppUserID:       doc.AppUserID,
+		IsAnonymous:     doc.Anonymous,
+		IsLinkedAccount: doc.LinkedAccount,
 	}, nil
 }
 
@@ -559,6 +797,45 @@ func (r *StoreRepository) DeleteUser(ctx context.Context, appID, uid, puid strin
 	}
 
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		providerPaths := make([]fspath.Path, 0)
+		uExists, uSnap, err := tx.Exists(uPath)
+		if err != nil {
+			return err
+		}
+		if uExists {
+			var user userDoc
+			if err := uSnap.DataTo(&user); err != nil {
+				return err
+			}
+			for provider, subjectHash := range user.LinkedProviders {
+				providerPath, err := providerIdentityPath(appID, provider, subjectHash)
+				if err != nil {
+					return err
+				}
+				exists, snap, err := tx.Exists(providerPath)
+				if err != nil {
+					return err
+				}
+				if !exists {
+					continue
+				}
+				var mapping providerIdentityDoc
+				if err := snap.DataTo(&mapping); err != nil {
+					return err
+				}
+				if mapping.AppID != appID || mapping.Provider != provider ||
+					mapping.SubjectHash != subjectHash || mapping.PlatformUserID != puid {
+					return platformerr.New(platformerr.CodeLedgerStateInvalid,
+						"계정 연결 정보가 사용자와 일치하지 않아요")
+				}
+				providerPaths = append(providerPaths, providerPath)
+			}
+		}
+		for _, providerPath := range providerPaths {
+			if err := tx.Delete(providerPath); err != nil {
+				return err
+			}
+		}
 		if err := tx.Delete(idPath); err != nil {
 			return err
 		}

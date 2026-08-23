@@ -7,7 +7,8 @@ POST /v1/auth/session
 { "appId": "lizard-tycoon",
   "credential": { "kind": "firebase-id-token" | "ait-login" | "anonymous", "value": "..." } }
 → { "platformToken": "<JWT TTL 1h>", "refreshToken": "<opaque TTL 90d>",
-    "platformUserId": "pu_...", "appUserId": "...", "expiresIn": 3600 }
+    "platformUserId": "pu_...", "appUserId": "...",
+    "isLinkedAccount": false, "expiresIn": 3600 }
 ```
 
 이후 모든 호출은 `Authorization: Bearer <platformToken>`.
@@ -73,6 +74,56 @@ POST /v1/auth/firebase-custom-token
 앱 backend가 이어서 수행한다.
 
 세부 보안 결정은 ADR 0013을 따른다.
+
+## 외부 계정 연결 어댑터
+
+무료 사용은 Firebase anonymous guest로 시작한다. 카카오 또는 Apple 연결은 결제 이력을 복원할
+수 있는 선택적 신원이며, 앱 도메인이 공급자 SDK나 JWT 형식을 직접 알지 않는다.
+
+```
+앱 어댑터
+  → POST /v1/auth/account-link-challenges
+  → 카카오 또는 Apple SDK - 서버 nonce 포함
+  → POST /v1/auth/account-links - provider ID token과 같은 nonce
+  → 새 linked Platform session + 대상 uid Firebase custom token
+```
+
+### Clean Architecture 경계
+
+| 계층 | 책임 |
+|---|---|
+| HTTP adapter | Platform bearer와 App Check 확인, 엄격한 요청 decode, envelope 응답 |
+| account-link use case | challenge 발급, provider 포트 호출, 연결 결과로 새 세션 발급 |
+| OIDC provider adapter | Kakao와 Apple issuer, audience, JWKS, RS256, exp, iat, nonce 검증 |
+| Firestore repository adapter | nonce 소비와 subject 매핑을 한 transaction으로 커밋 |
+| 앱 provider adapter | native SDK 호출. AIT는 Toss Login adapter를 그대로 사용 |
+
+challenge는 앱, 현재 `platform_user_id`, provider에 5분 동안 묶인다. 저장 문서 ID는 raw nonce의
+SHA-256이고, 만료 24시간 뒤 기존 `ttlAt` Firestore TTL 정책으로 정리한다. 완료 transaction은
+challenge 소비 결과의 subject hash와 대상 사용자를 함께 저장하므로 custom token 또는 session
+응답이 끊겨도 같은 요청을 멱등 재시도할 수 있다.
+
+카카오는 ID token의 raw nonce를, Apple은 raw nonce의 SHA-256 hex를 검증한다. 두 공급자 모두
+레지스트리의 공개 `auth.account_providers.{provider}.audience`와 고정 issuer를 사용한다. provider
+subject 원문과 이메일은 저장·로그하지 않고 저장소 경계에서 즉시 SHA-256 처리한다.
+
+### 연결과 복원 규칙
+
+- 처음 보는 provider subject는 현재 guest Platform 사용자에 연결한다.
+- 같은 매핑 재요청은 멱등 성공한다.
+- 새 설치의 아직 연결되지 않은 guest가 기존 subject를 증명하면 기존 Platform 사용자와 Firebase
+  uid를 복원한다.
+- 현재 사용자와 대상 사용자가 각각 연결 계정을 가졌으면 자동 병합하지 않고 409를 반환한다.
+- `iap.require_linked_account=true`인 앱은 구매, 복원, account reference 발급을 모두
+  `isLinkedAccount=true` session에만 허용한다.
+- AppsInToss는 mTLS로 교환한 Toss Login을 연결 계정으로 보고 별도 카카오·Apple 연결을 열지 않는다.
+
+### 활성화 gate
+
+코드가 존재하는 것과 운글 로그인이 운영 가능한 것은 다르다. provider audience와 앱 등록,
+Firebase custom-token service account, App Check 실기기 검증, 개인정보 문서, 카카오·Apple SDK,
+Apple authorization code 교환 및 계정 삭제 시 token 철회, 복원 QA가 모두 끝나야 레지스트리를
+활성화한다. 네이버 로그인은 초기 범위에 없다.
 
 ### 운영 상태
 
@@ -192,6 +243,8 @@ orphan은 Firestore TTL로 `lastSeenAt + 400일`에 자동 삭제한다.
 | 개인정보 처리방침 갱신 | "플랫폼 서버로 전송" 반영 |
 | support code 파생 규칙 | `확정 필요` |
 
-### 2단계 — 지금 만들지 않음
+### 계정 연결 이후에도 이메일은 저장하지 않음
 
-계정 연동으로 이메일이 필요해지면 **저장하지 않는 방식**을 쓴다. 플랫폼이 각 앱 프로젝트에 `roles/firebaseauth.viewer`를 갖고, CS 조회 **시점에만** Admin SDK로 가져와 화면에 표시만 하고 저장·로깅하지 않는다.
+카카오·Apple 계정 연결은 provider의 안정적인 `sub`를 해시한 매핑만 사용한다. 이메일이 없어도
+로그인과 복원이 가능하므로 `roles/firebaseauth.viewer`나 공급자 프로필 조회 권한을 추가하지 않는다.
+CS는 계속 support code로 사용자를 찾는다.
