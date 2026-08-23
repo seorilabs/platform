@@ -281,7 +281,8 @@ paths:
         좌표만 선택한다. 임의 article ID 배열은 받지 않는다.
 
         같은 파생 사실은 같은 `readingKey`를 만들며 재조회는 신규 명식 일일 한도에서
-        제외한다. `unlock`은 `reward_claim` 또는 `ticket`만 허용한다. 서버 권한 근거가
+        제외한다. `unlock`은 `reward_claim` 또는 `ticket`만 허용한다. 한 번 해금한
+        `flow:{year}`는 같은 명식의 세운과 12개월 월운을 함께 연다. 서버 권한 근거가
         없으면 오류로 우회하지 않고 해당 심화 섹션을 `locked`로 반환한다.
       operationId: resolveContentReading
       security: [{ PlatformToken: [] }]
@@ -439,7 +440,9 @@ paths:
       description: |
         마켓 3종을 한 엔드포인트로 받는다. `platform`이 어느 마켓인지 정한다.
 
-        **Apple은 NON_CONSUMABLE이 아닌 상품을 422로 거부한다.**
+        상품 유형은 서버 카탈로그가 정한다. Google Play 소모성은 지급 뒤 consume하고,
+        Apple은 `CONSUMABLE` 또는 `NON_CONSUMABLE` 거래가 카탈로그 유형과 일치해야 한다.
+        구독 상품은 422로 거부한다.
         **production과 sandbox 사이의 자동 fallback은 없다.**
 
         응답의 `granted`와 `alreadyGranted`는 항상 배타적이다. 둘 다
@@ -1861,7 +1864,7 @@ components:
             additionalProperties: false
             required: [deepKey, section, year]
             properties:
-              deepKey: { type: string, pattern: '^(seun|wolun):[0-9]{4}$' }
+              deepKey: { type: string, pattern: '^flow:[0-9]{4}$' }
               section: { type: string, enum: [seun, wolun] }
               year: { type: integer, minimum: 1900, maximum: 2200 }
 

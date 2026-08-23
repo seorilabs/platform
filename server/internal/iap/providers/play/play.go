@@ -1,6 +1,7 @@
 // Package play는 Google Play 구매를 검증한다.
 //
-// Play Developer API의 productsv2 엔드포인트를 쓴다.
+// 비소모성은 Play Developer API의 productsv2 엔드포인트를 쓰고,
+// 소모성은 consumptionState와 consume 경로가 있는 products 엔드포인트를 쓴다.
 // 자격증명은 ADC다. SA JSON 키를 배포하지 않는다는 조직 원칙을 지킨다.
 // 런타임 SA에 Play Console 권한을 부여하는 방식이다.
 package play
@@ -13,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/iap/domain"
@@ -59,6 +61,17 @@ type productsV2Response struct {
 	} `json:"productLineItem"`
 	PurchaseCompletionTime string `json:"purchaseCompletionTime"`
 	AcknowledgementState   string `json:"acknowledgementState"`
+}
+
+// productPurchaseResponse는 purchases.products.get 응답이다.
+// 소모성 상품의 소비 여부를 확인하는 데 필요한 필드만 받는다.
+type productPurchaseResponse struct {
+	PurchaseTimeMillis          string `json:"purchaseTimeMillis"`
+	PurchaseState               *int   `json:"purchaseState"`
+	ConsumptionState            *int   `json:"consumptionState"`
+	OrderID                     string `json:"orderId"`
+	ObfuscatedExternalAccountID string `json:"obfuscatedExternalAccountId"`
+	Quantity                    int64  `json:"quantity"`
 }
 
 // Verifier는 Play 구매 검증기다.
@@ -122,6 +135,17 @@ func (v *Verifier) Verify(ctx context.Context, proof domain.Proof) (domain.Verif
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProofInvalid,
 			"구매 정보가 비어 있어요")
 	}
+	if !proof.ProductType.Valid() {
+		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProductTypeMismatch,
+			"지원하지 않는 Play 상품 유형이에요")
+	}
+	if proof.ProductType.Normalize() == domain.ProductConsumable {
+		return v.verifyConsumable(ctx, proof)
+	}
+	return v.verifyNonConsumable(ctx, proof)
+}
+
+func (v *Verifier) verifyNonConsumable(ctx context.Context, proof domain.Proof) (domain.VerifiedPurchase, error) {
 
 	observedAt := v.now().UTC()
 
@@ -174,7 +198,51 @@ func (v *Verifier) Verify(ctx context.Context, proof domain.Proof) (domain.Verif
 	}, nil
 }
 
-// CompleteGrant는 Play에 acknowledge를 보낸다.
+func (v *Verifier) verifyConsumable(ctx context.Context, proof domain.Proof) (domain.VerifiedPurchase, error) {
+	if proof.ProductID == "" {
+		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProofInvalid,
+			"소모성 상품 ID가 비어 있어요")
+	}
+
+	endpoint := fmt.Sprintf("%s/androidpublisher/v3/applications/%s/purchases/products/%s/tokens/%s",
+		v.baseURL, url.PathEscape(v.packageName), url.PathEscape(proof.ProductID), url.PathEscape(proof.Token))
+	var resp productPurchaseResponse
+	if err := v.doJSON(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
+		return domain.VerifiedPurchase{}, err
+	}
+
+	if resp.PurchaseState == nil || resp.ConsumptionState == nil {
+		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProviderResponseInvalid,
+			"Play 소모성 구매 응답이 올바르지 않아요")
+	}
+	if resp.Quantity > 1 {
+		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProviderResponseInvalid,
+			"여러 개를 한 번에 구매한 소모성 상품은 아직 처리할 수 없어요")
+	}
+	state := mapLegacyPurchaseState(*resp.PurchaseState)
+	if state == domain.StateInvalid {
+		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodePurchaseInvalid,
+			"구매 상태를 확인할 수 없어요")
+	}
+	completion := domain.CompletionNone
+	if state == domain.StateActive && *resp.ConsumptionState == 0 {
+		completion = domain.CompletionGoogleConsume
+	}
+
+	return domain.VerifiedPurchase{
+		Platform:          domain.PlatformGooglePlay,
+		ProductID:         proof.ProductID,
+		CanonicalID:       proof.Token,
+		ProviderOrderID:   resp.OrderID,
+		PlatformAccountID: resp.ObfuscatedExternalAccountID,
+		PurchasedAt:       parseMillis(resp.PurchaseTimeMillis),
+		ObservedAt:        v.now().UTC(),
+		State:             state,
+		Completion:        completion,
+	}, nil
+}
+
+// CompleteGrant는 상품 유형에 맞춰 Play에 acknowledge 또는 consume을 보낸다.
 //
 // 3일 안에 하지 않으면 Play가 자동 환불한다.
 // 실패해도 지급은 롤백하지 않고 워커가 재시도한다. 불변식 7이다.
@@ -183,20 +251,33 @@ func (v *Verifier) CompleteGrant(ctx context.Context, p domain.VerifiedPurchase)
 		return platformerr.New(platformerr.CodePlatformMismatch,
 			"Play 완료 처리에 다른 마켓 구매가 왔어요")
 	}
-	if p.Completion != domain.CompletionGoogleAcknowledge {
+	var suffix string
+	var body []byte
+	switch p.Completion {
+	case domain.CompletionGoogleAcknowledge:
+		suffix = ":acknowledge"
+		body = []byte(`{}`)
+	case domain.CompletionGoogleConsume:
+		suffix = ":consume"
+	default:
 		return platformerr.New(platformerr.CodeCompletionMismatch,
 			"완료 처리 방식이 올바르지 않아요")
 	}
+	if p.ProductID == "" || p.CanonicalID == "" {
+		return platformerr.New(platformerr.CodeCompletionMismatch,
+			"완료 처리할 구매 정보가 비어 있어요")
+	}
 
 	endpoint := fmt.Sprintf(
-		"%s/androidpublisher/v3/applications/%s/purchases/products/%s/tokens/%s:acknowledge",
+		"%s/androidpublisher/v3/applications/%s/purchases/products/%s/tokens/%s%s",
 		v.baseURL,
 		url.PathEscape(v.packageName),
 		url.PathEscape(p.ProductID),
 		url.PathEscape(p.CanonicalID),
+		suffix,
 	)
 
-	return v.doJSON(ctx, http.MethodPost, endpoint, []byte(`{}`), nil)
+	return v.doJSON(ctx, http.MethodPost, endpoint, body, nil)
 }
 
 // ReviewRefund는 Google Play 환불 검토 의견을 제출한다.
@@ -336,6 +417,19 @@ func mapPurchaseState(s string) domain.State {
 	}
 }
 
+func mapLegacyPurchaseState(s int) domain.State {
+	switch s {
+	case 0:
+		return domain.StateActive
+	case 1:
+		return domain.StateRevoked
+	case 2:
+		return domain.StatePending
+	default:
+		return domain.StateInvalid
+	}
+}
+
 func parseRFC3339(s string) time.Time {
 	if s == "" {
 		return time.Time{}
@@ -345,4 +439,12 @@ func parseRFC3339(s string) time.Time {
 		return time.Time{}
 	}
 	return t.UTC()
+}
+
+func parseMillis(s string) time.Time {
+	ms, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || ms <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms).UTC()
 }

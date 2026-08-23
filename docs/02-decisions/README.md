@@ -36,3 +36,4 @@ ADR과 장기 의사결정을 관리한다.
 | [0015](0015-platform-ads-boundary.md) | 광고 검증을 platform-ads 경계로 분리한다 | Accepted |
 | [0016](0016-iap-app-scoped-ledger.md) | 신규 IAP 원장을 앱 범위로 격리한다 | Accepted |
 | [0018](0018-private-versioned-content-delivery.md) | 보호 콘텐츠는 private GCS 릴리스와 Platform 선택 API로 전달한다 | Accepted |
+| [0019](0019-consumable-content-ticket-and-flow-unlock.md) | 콘텐츠 열람권은 소모성 상품으로 검증하고 연간 흐름을 한 번에 해금한다 | Accepted |

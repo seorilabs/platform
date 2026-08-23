@@ -35,9 +35,16 @@ var placeholders = map[string]bool{
 
 // Entry는 entitlement 하나의 마켓별 SKU다.
 type Entry struct {
-	GooglePlay string `json:"google_play,omitempty"`
-	AppStore   string `json:"app_store,omitempty"`
-	AppsInToss string `json:"apps_in_toss,omitempty"`
+	Type       domain.ProductType `json:"type,omitempty"`
+	GooglePlay string             `json:"google_play,omitempty"`
+	AppStore   string             `json:"app_store,omitempty"`
+	AppsInToss string             `json:"apps_in_toss,omitempty"`
+}
+
+// Product는 서버가 허용한 SKU의 지급 대상과 상품 유형이다.
+type Product struct {
+	EntitlementID string
+	Type          domain.ProductType
 }
 
 // SKU는 마켓에 해당하는 SKU를 돌려준다.
@@ -150,6 +157,10 @@ func (c *Catalog) addEntries(appID string, entries map[string]Entry, requiredPla
 				"entitlement 이름이 올바르지 않아요: %s", id)
 		}
 		entry := entries[id]
+		if !entry.Type.Valid() {
+			return platformerr.Newf(platformerr.CodeCatalogInvalid,
+				"%s의 상품 유형이 올바르지 않아요: %s", id, entry.Type)
+		}
 
 		for _, p := range requiredPlatforms {
 			sku := entry.SKU(p)
@@ -189,16 +200,32 @@ func (c *Catalog) EntitlementFor(p domain.Platform, sku string) (string, error) 
 // 앱별 항목이 없을 때만 기존 단일 앱 카탈로그를 읽어 lizard SDK와 배포
 // 환경변수의 마이그레이션을 끊지 않는다.
 func (c *Catalog) EntitlementForApp(appID string, p domain.Platform, sku string) (string, error) {
+	product, err := c.ProductForApp(appID, p, sku)
+	if err != nil {
+		return "", err
+	}
+	return product.EntitlementID, nil
+}
+
+// ProductForApp은 허용된 SKU의 entitlement와 서버 신뢰 상품 유형을 찾는다.
+func (c *Catalog) ProductForApp(appID string, p domain.Platform, sku string) (Product, error) {
 	id, ok := c.bySKU[appSKUKey(appID, p, strings.TrimSpace(sku))]
+	resolvedAppID := appID
 	if !ok {
 		id, ok = c.bySKU[appSKUKey("", p, strings.TrimSpace(sku))]
+		resolvedAppID = ""
 	}
 	if !ok {
 		// 어떤 SKU가 존재하는지 알려주지 않는다.
-		return "", platformerr.New(platformerr.CodeProductNotAllowed,
+		return Product{}, platformerr.New(platformerr.CodeProductNotAllowed,
 			"판매하지 않는 상품이에요")
 	}
-	return id, nil
+	entry, ok := c.entriesByApp[resolvedAppID][id]
+	if !ok {
+		return Product{}, platformerr.New(platformerr.CodeCatalogInvalid,
+			"상품 카탈로그 역인덱스가 올바르지 않아요")
+	}
+	return Product{EntitlementID: id, Type: entry.Type.Normalize()}, nil
 }
 
 func (c *Catalog) HasForApp(appID, entitlementID string) bool {

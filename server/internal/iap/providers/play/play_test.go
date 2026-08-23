@@ -2,6 +2,7 @@ package play
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,11 +63,21 @@ const purchasedBody = `{
 
 func testProof() domain.Proof {
 	return domain.Proof{
-		Platform:  domain.PlatformGooglePlay,
-		ProductID: "gecko_galaxy",
-		Token:     "purchase-token-xyz",
+		Platform:    domain.PlatformGooglePlay,
+		ProductID:   "gecko_galaxy",
+		ProductType: domain.ProductNonConsumable,
+		Token:       "purchase-token-xyz",
 	}
 }
+
+const consumableBody = `{
+  "purchaseTimeMillis": "1785495600000",
+  "purchaseState": 0,
+  "consumptionState": 0,
+  "orderId": "GPA.9876-5432",
+  "obfuscatedExternalAccountId": "account-ref-abc",
+  "quantity": 1
+}`
 
 func TestVerifyPurchased(t *testing.T) {
 	v, _ := newFakeServer(t, jsonResponse(http.StatusOK, purchasedBody))
@@ -97,6 +108,57 @@ func TestVerifyPurchased(t *testing.T) {
 	}
 	if got.PurchasedAt.IsZero() {
 		t.Error("purchasedAt이 비었다")
+	}
+}
+
+func TestVerifyConsumableUsesKnownProductEndpoint(t *testing.T) {
+	var gotPath string
+	v, _ := newFakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		jsonResponse(http.StatusOK, consumableBody)(w, r)
+	})
+	proof := testProof()
+	proof.ProductType = domain.ProductConsumable
+
+	got, err := v.Verify(context.Background(), proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(gotPath, "productsv2") || !strings.Contains(gotPath, "/products/gecko_galaxy/tokens/") {
+		t.Fatalf("path=%q", gotPath)
+	}
+	if got.Completion != domain.CompletionGoogleConsume {
+		t.Fatalf("completion=%q, want google_consume", got.Completion)
+	}
+	if got.CanonicalID != proof.Token || got.ProductID != proof.ProductID || got.PurchasedAt.IsZero() {
+		t.Fatalf("purchase=%+v", got)
+	}
+}
+
+func TestVerifyConsumedPurchaseDoesNotConsumeAgain(t *testing.T) {
+	body := strings.Replace(consumableBody, `"consumptionState": 0`, `"consumptionState": 1`, 1)
+	v, _ := newFakeServer(t, jsonResponse(http.StatusOK, body))
+	proof := testProof()
+	proof.ProductType = domain.ProductConsumable
+
+	got, err := v.Verify(context.Background(), proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Completion != domain.CompletionNone {
+		t.Fatalf("completion=%q, want none", got.Completion)
+	}
+}
+
+func TestVerifyConsumableRejectsMultipleQuantity(t *testing.T) {
+	body := strings.Replace(consumableBody, `"quantity": 1`, `"quantity": 2`, 1)
+	v, _ := newFakeServer(t, jsonResponse(http.StatusOK, body))
+	proof := testProof()
+	proof.ProductType = domain.ProductConsumable
+
+	_, err := v.Verify(context.Background(), proof)
+	if platformerr.CodeOf(err) != platformerr.CodeProviderResponseInvalid {
+		t.Fatalf("code=%q err=%v", platformerr.CodeOf(err), err)
 	}
 }
 
@@ -265,6 +327,30 @@ func TestCompleteGrantCallsAcknowledge(t *testing.T) {
 	}
 	if !strings.Contains(gotPath, "purchase-token-xyz") {
 		t.Errorf("path = %q, 토큰이 없다", gotPath)
+	}
+}
+
+func TestCompleteGrantCallsConsume(t *testing.T) {
+	var gotPath, gotMethod, gotBody string
+	v, _ := newFakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	err := v.CompleteGrant(context.Background(), domain.VerifiedPurchase{
+		Platform: domain.PlatformGooglePlay, ProductID: "gecko_galaxy",
+		CanonicalID: "purchase-token-xyz", Completion: domain.CompletionGoogleConsume,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || !strings.HasSuffix(gotPath, ":consume") {
+		t.Fatalf("method=%s path=%q", gotMethod, gotPath)
+	}
+	if gotBody != "" {
+		t.Fatalf("consume body=%q, want empty", gotBody)
 	}
 }
 

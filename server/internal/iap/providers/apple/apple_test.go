@@ -15,8 +15,8 @@ import (
 // 도메인 판단 로직을 Apple 자격증명 없이 검증한다.
 //
 // JWS 서명 검증은 richzw/appstore가 하고 그건 라이브러리의 책임이다.
-// 여기서 지키는 것은 우리 불변식이다 — 불변식 9의 NON_CONSUMABLE 강제와
-// 환경 fallback 금지, 불변식 1의 originalTransactionId.
+// 여기서 지키는 것은 우리 불변식이다 — 카탈로그 상품 유형 대조와
+// 환경 fallback 금지, 상품 유형별 canonicalId 선택.
 
 const (
 	testBundleID = "com.seorilabs.lizardtycoon"
@@ -68,9 +68,10 @@ func validTx() *appstore.JWSTransaction {
 
 func appleProof() domain.Proof {
 	return domain.Proof{
-		Platform:  domain.PlatformAppStore,
-		ProductID: testProduct,
-		Token:     "2000000900000001",
+		Platform:    domain.PlatformAppStore,
+		ProductID:   testProduct,
+		ProductType: domain.ProductNonConsumable,
+		Token:       "2000000900000001",
 	}
 }
 
@@ -159,30 +160,34 @@ func TestEnvironmentIsolation(t *testing.T) {
 	}
 }
 
-// 불변식 9의 나머지 절반. 1단계는 비소비성만 취급한다.
-func TestNonConsumableOnly(t *testing.T) {
+func TestProductTypeMustMatchCatalog(t *testing.T) {
 	tests := []struct {
-		iapType appstore.IAPType
-		wantOK  bool
+		name        string
+		productType domain.ProductType
+		iapType     appstore.IAPType
+		wantOK      bool
 	}{
-		{appstore.NonConsumable, true},
-		{appstore.Consumable, false},
-		{appstore.AutoRenewable, false},
-		{appstore.NonRenewable, false},
-		{"", false},
+		{"비소모성 일치", domain.ProductNonConsumable, appstore.NonConsumable, true},
+		{"소모성 일치", domain.ProductConsumable, appstore.Consumable, true},
+		{"카탈로그와 불일치", domain.ProductNonConsumable, appstore.Consumable, false},
+		{"자동 갱신 구독", domain.ProductConsumable, appstore.AutoRenewable, false},
+		{"비갱신 구독", domain.ProductConsumable, appstore.NonRenewable, false},
+		{"빈 제공자 유형", domain.ProductNonConsumable, "", false},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.iapType), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			tx := validTx()
 			tx.Type = tt.iapType
 			v := newVerifier(t, &fakeSource{tx: tx}, false)
+			proof := appleProof()
+			proof.ProductType = tt.productType
 
-			_, err := v.Verify(context.Background(), appleProof())
+			_, err := v.Verify(context.Background(), proof)
 
 			if tt.wantOK {
 				if err != nil {
-					t.Fatalf("비소비성인데 거부했다: %v", err)
+					t.Fatalf("지원 유형인데 거부했다: %v", err)
 				}
 				return
 			}
@@ -190,6 +195,49 @@ func TestNonConsumableOnly(t *testing.T) {
 				t.Errorf("code = %q, want product_type_mismatch", code)
 			}
 		})
+	}
+}
+
+func TestConsumableUsesTransactionIDAsCanonicalID(t *testing.T) {
+	tx := validTx()
+	tx.Type = appstore.Consumable
+	proof := appleProof()
+	proof.ProductType = domain.ProductConsumable
+
+	got, err := newVerifier(t, &fakeSource{tx: tx}, false).Verify(context.Background(), proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CanonicalID != tx.TransactionID {
+		t.Fatalf("canonicalId=%q, want transactionId=%q", got.CanonicalID, tx.TransactionID)
+	}
+}
+
+func TestConsumableRejectsMultipleQuantity(t *testing.T) {
+	tx := validTx()
+	tx.Type = appstore.Consumable
+	tx.Quantity = 2
+	proof := appleProof()
+	proof.ProductType = domain.ProductConsumable
+
+	_, err := newVerifier(t, &fakeSource{tx: tx}, false).Verify(context.Background(), proof)
+	if platformerr.CodeOf(err) != platformerr.CodeProviderResponseInvalid {
+		t.Fatalf("code=%q err=%v", platformerr.CodeOf(err), err)
+	}
+}
+
+func TestWebhookCanInferSignedConsumableType(t *testing.T) {
+	tx := validTx()
+	tx.Type = appstore.Consumable
+	proof := appleProof()
+	proof.ProductType = ""
+
+	got, err := newVerifier(t, &fakeSource{tx: tx}, false).Verify(context.Background(), proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CanonicalID != tx.TransactionID {
+		t.Fatalf("canonicalId=%q", got.CanonicalID)
 	}
 }
 

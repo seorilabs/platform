@@ -5,8 +5,8 @@
 // 실제로 검증한다. 우리가 더한 것은 OCSP 폐기 확인이다.
 //
 // 라이브러리는 transactionSource 인터페이스 뒤에 둔다.
-// 도메인 판단 로직 — 불변식 9의 NON_CONSUMABLE 강제, 환경 대조,
-// canonicalId 선택 — 은 전부 이 패키지의 순수 함수에 있어서
+// 도메인 판단 로직 — 카탈로그 상품 유형 대조, 환경 대조,
+// 상품 유형별 canonicalId 선택 — 은 전부 이 패키지의 순수 함수에 있어서
 // Apple 자격증명 없이 테스트할 수 있다.
 package apple
 
@@ -113,7 +113,7 @@ func (v *Verifier) Verify(ctx context.Context, proof domain.Proof) (domain.Verif
 // mapTransaction은 검증된 거래를 도메인 구매로 옮긴다.
 //
 // 순수 함수다. 네트워크도 시계도 건드리지 않는다.
-// 불변식 9가 여기 전부 들어 있다.
+// App Store 검증 불변식이 여기 전부 들어 있다.
 func (v *Verifier) mapTransaction(
 	tx *appstore.JWSTransaction,
 	proof domain.Proof,
@@ -141,11 +141,14 @@ func (v *Verifier) mapTransaction(
 			"구매한 상품이 요청과 달라요")
 	}
 
-	// 불변식 9의 나머지 절반. 1단계는 비소비성만 취급한다.
-	// 구독이 소비성으로 잘못 들어오면 영구 지급이 되어버린다.
-	if tx.Type != appstore.NonConsumable {
+	expectedType, ok := expectedAppleType(proof.ProductType, tx.Type)
+	if !ok || tx.Type != expectedType {
 		return domain.VerifiedPurchase{}, platformerr.Newf(platformerr.CodeProductTypeMismatch,
-			"%s 유형은 아직 지원하지 않아요", tx.Type)
+			"%s 유형은 카탈로그 상품 유형과 일치하지 않아요", tx.Type)
+	}
+	if expectedType == appstore.Consumable && tx.Quantity > 1 {
+		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProviderResponseInvalid,
+			"여러 개를 한 번에 구매한 소모성 상품은 아직 처리할 수 없어요")
 	}
 
 	// 가족 공유로 받은 구매는 구매자 본인 것이 아니다.
@@ -155,9 +158,12 @@ func (v *Verifier) mapTransaction(
 			"본인이 구매한 상품이 아니에요")
 	}
 
-	// canonicalId는 originalTransactionId다. 불변식 1이다.
-	// transactionId는 복원할 때마다 바뀌므로 멱등키가 될 수 없다.
+	// 비소모성은 복원에도 같은 originalTransactionId를 쓰고, 소모성은
+	// 재구매 건마다 다른 transactionId를 써야 각각 한 번씩 지급된다.
 	canonicalID := tx.OriginalTransactionId
+	if expectedType == appstore.Consumable {
+		canonicalID = tx.TransactionID
+	}
 	if canonicalID == "" {
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProviderResponseInvalid,
 			"App Store 거래 식별자가 없어요")
@@ -183,6 +189,26 @@ func (v *Verifier) mapTransaction(
 		State:             state,
 		Completion:        completion,
 	}, nil
+}
+
+// expectedAppleType은 서버 카탈로그 유형을 Apple 유형으로 바꾼다.
+//
+// 빈 유형은 마켓 웹훅 재검증 경로다. 서명 검증된 Apple 거래가 지원하는
+// 일회성 유형이면 그 유형을 따른다. 클라이언트 검증 경로는 서비스가 항상
+// 카탈로그 유형을 명시적으로 주입한다.
+func expectedAppleType(configured domain.ProductType, provider appstore.IAPType) (appstore.IAPType, bool) {
+	switch configured {
+	case domain.ProductNonConsumable:
+		return appstore.NonConsumable, true
+	case domain.ProductConsumable:
+		return appstore.Consumable, true
+	case "":
+		switch provider {
+		case appstore.NonConsumable, appstore.Consumable:
+			return provider, true
+		}
+	}
+	return "", false
 }
 
 // ownershipPurchased는 본인이 직접 산 구매다.

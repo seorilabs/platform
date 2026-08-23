@@ -24,6 +24,27 @@ type serviceAccess struct {
 	unlockCall int
 }
 
+type flowServiceAccess struct {
+	authorized map[string]bool
+	checked    []string
+	unlocked   []string
+}
+
+func (a *flowServiceAccess) Authorized(
+	_ context.Context, _ registry.App, _, _, deepKey string, _ int,
+) (bool, error) {
+	a.checked = append(a.checked, deepKey)
+	return a.authorized[deepKey], nil
+}
+
+func (a *flowServiceAccess) Unlock(
+	_ context.Context, _ registry.App, _, _, deepKey string, _ UnlockRequest,
+) error {
+	a.unlocked = append(a.unlocked, deepKey)
+	a.authorized[deepKey] = true
+	return nil
+}
+
 func (a *serviceAccess) Authorized(
 	context.Context, registry.App, string, string, string, int,
 ) (bool, error) {
@@ -122,6 +143,38 @@ func TestResolveDoesNotConsumeUnlockWhenAlreadyAuthorized(t *testing.T) {
 	}
 	if access.unlockCall != 0 {
 		t.Fatalf("이미 열린 항목에 권한을 %d회 차감했다", access.unlockCall)
+	}
+}
+
+func TestResolveUnlocksAnnualAndMonthlyFlowTogether(t *testing.T) {
+	req := validResolveRequest()
+	req.Unlock = &UnlockRequest{Section: "seun", Kind: "ticket"}
+	access := &flowServiceAccess{authorized: map[string]bool{}}
+
+	result, err := newTestService(t, req, serviceUsage{}, access).
+		Resolve(t.Context(), "ungeul", "puid", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(access.unlocked) != 1 || access.unlocked[0] != "flow:2026" {
+		t.Fatalf("unlock keys=%v, want [flow:2026]", access.unlocked)
+	}
+	for _, key := range access.checked {
+		if key != "flow:2026" {
+			t.Fatalf("authorization key=%q, want flow:2026", key)
+		}
+	}
+	if len(result.Locked) != 0 {
+		t.Fatalf("한 번 해금한 흐름이 다시 잠겼다: %+v", result.Locked)
+	}
+	deep := 0
+	for _, article := range result.Articles {
+		if article.Access == AccessDeep {
+			deep++
+		}
+	}
+	if deep == 0 {
+		t.Fatal("해금 후 세운·월운 심화 본문이 없다")
 	}
 }
 
