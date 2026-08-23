@@ -1,0 +1,26 @@
+{
+  "app_id": "lord-ledger",
+  "display_name": "삼국지 풍운록",
+  "firebase_project_id": "lord-ledger",
+  "firebase_custom_token_service_account": "platform-auth@lord-ledger.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "ads": false,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "platform_event_allowlist": [],
+  "cors_origins": [
+    "http://localhost:5173",
+    "https://lord-ledger.apps.tossmini.com",
+    "https://lord-ledger.private-apps.tossmini.com",
+    "https://seorilabs.github.io"
+  ],
+  "blocked_uids": []
+}
