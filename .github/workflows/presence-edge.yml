@@ -1,0 +1,87 @@
+name: RPI Presence Edge
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "이미지 push 뒤 RPI 클러스터에도 배포"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rpi-presence-edge
+  cancel-in-progress: false
+
+env:
+  IMAGE: registry.vzyx.xyz/seorilabs/platform-presence-edge
+
+jobs:
+  verify:
+    name: Verify edge
+    runs-on: seorilabs-rpi-arm64
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: go test ./internal/presence ./internal/presenceedge ./cmd/presence-edge
+      - run: go build ./cmd/presence-edge
+
+  build:
+    name: Build ARM64 image
+    needs: verify
+    runs-on: seorilabs-rpi-arm64-dind
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver: remote
+          endpoint: tcp://buildkitd.platform.svc.cluster.local:1234
+      - uses: docker/login-action@v4
+        with:
+          registry: registry.vzyx.xyz
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: server
+          file: server/Dockerfile.edge
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+
+  deploy:
+    name: Deploy to RPI
+    if: ${{ inputs.deploy }}
+    needs: build
+    runs-on: seorilabs-rpi-arm64
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - name: Apply fixed SHA and verify rollout
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl"
+          chmod +x /tmp/kubectl
+          printf '%s' "$KUBECONFIG_B64" | base64 -d > /tmp/presence-kubeconfig
+          export KUBECONFIG=/tmp/presence-kubeconfig
+          sed "s|${IMAGE}:latest|${IMAGE}:${GITHUB_SHA}|" deploy/rpi/presence-edge.yaml \
+            | /tmp/kubectl apply -f -
+          /tmp/kubectl -n platform rollout status deployment/platform-presence-edge --timeout=180s
+          /tmp/kubectl -n platform get ingress platform-presence-edge

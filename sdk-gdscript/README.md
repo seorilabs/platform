@@ -49,6 +49,8 @@ platform.configure({
             "appVersion": "1.2.3",
             "locale": "ko-KR",
         },
+    # 명시적으로 켠 앱만 별도 2초 timeout의 RPI heartbeat를 시작한다.
+    "presence_enabled": true,
 })
 add_child(platform)
 

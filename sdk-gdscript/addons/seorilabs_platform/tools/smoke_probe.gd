@@ -9,6 +9,7 @@ extends SceneTree
 const PlatformClient := preload("res://addons/seorilabs_platform/platform_client.gd")
 const HttpTransport := preload("res://addons/seorilabs_platform/core/http_transport.gd")
 const Normalizer := preload("res://addons/seorilabs_platform/core/param_normalizer.gd")
+const PresenceClient := preload("res://addons/seorilabs_platform/core/presence_client.gd")
 const AtomicJsonStore := preload("res://addons/seorilabs_platform/core/atomic_json_store.gd")
 const FirebaseIdentityAdapter := preload("res://addons/seorilabs_platform/adapters/firebase_identity_adapter.gd")
 const RewardedClaimAdapter := preload("res://addons/seorilabs_platform/adapters/rewarded_claim_adapter.gd")
@@ -87,6 +88,7 @@ func _check_loads() -> void:
 		"res://addons/seorilabs_platform/core/param_normalizer.gd",
 		"res://addons/seorilabs_platform/core/backoff.gd",
 		"res://addons/seorilabs_platform/core/envelope.gd",
+		"res://addons/seorilabs_platform/core/presence_client.gd",
 		"res://addons/seorilabs_platform/core/atomic_json_store.gd",
 		"res://addons/seorilabs_platform/adapters/firebase_identity_adapter.gd",
 		"res://addons/seorilabs_platform/adapters/rewarded_claim_adapter.gd",
@@ -96,6 +98,10 @@ func _check_loads() -> void:
 		var script: Variant = load(path)
 		if script == null:
 			_fail("스크립트를 로드하지 못했다: %s" % path)
+
+	_expect(PresenceClient._backoff_base_ms(1, 60_000) == 60_000, "presence 첫 실패 backoff")
+	_expect(PresenceClient._backoff_base_ms(2, 60_000) == 120_000, "presence 둘째 실패 backoff")
+	_expect(PresenceClient._backoff_base_ms(3, 60_000) == 300_000, "presence 셋째 실패 backoff")
 
 
 func _check_client_defaults() -> void:

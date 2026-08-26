@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-presence-edge
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: platform-presence-edge
+    app.kubernetes.io/part-of: seorilabs-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: platform-presence-edge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: platform-presence-edge
+        app.kubernetes.io/part-of: seorilabs-platform
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: registry-pull-cred
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: edge
+          image: registry.vzyx.xyz/seorilabs/platform-presence-edge:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: PRESENCE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: presence-edge-secrets
+                  key: PRESENCE_DATABASE_URL
+            - name: PRESENCE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: presence-edge-secrets
+                  key: PRESENCE_PUBLIC_KEY
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 20m
+              memory: 24Mi
+            limits:
+              cpu: 250m
+              memory: 96Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-presence-edge
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: platform-presence-edge
+spec:
+  selector:
+    app.kubernetes.io/name: platform-presence-edge
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: platform-presence-edge
+  namespace: platform
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1k"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "2"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "2"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "2"
+spec:
+  ingressClassName: public
+  tls:
+    - secretName: edge-vzyx-xyz-tls
+      hosts:
+        - edge.vzyx.xyz
+  rules:
+    - host: edge.vzyx.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: platform-presence-edge
+                port:
+                  name: http

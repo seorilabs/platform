@@ -18,9 +18,10 @@ extends Node
 # res:// 절대 경로를 쓰면 소비자가 game/addons/ 아래에 두는 순간 깨진다.
 const HttpTransport := preload("core/http_transport.gd")
 const Normalizer := preload("core/param_normalizer.gd")
+const PresenceClient := preload("core/presence_client.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.6.4"
+const SDK_VERSION := "0.6.5"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -45,6 +46,7 @@ const MAX_LOCALE_LENGTH := 16
 const MAX_GA4_CLIENT_ID_LENGTH := 64
 
 var _transport: HttpTransport
+var _presence: PresenceClient
 var _session: Dictionary = {}
 var _api_base_url := ""
 var _app_id := ""
@@ -76,6 +78,7 @@ func _ready() -> void:
 	if _transport == null:
 		_transport = HttpTransport.new()
 		add_child(_transport)
+	_ensure_presence()
 
 
 ## 설정한다. add_child 전에 불러도 된다.
@@ -89,6 +92,7 @@ func _ready() -> void:
 ##   app_id          : String (필수)
 ##   event_context   : Dictionary | Callable (선택) — platform/appVersion/locale/ga4ClientId
 ##   max_retries     : int (선택, 기본 3)
+##   presence_enabled: bool (선택, 기본 false) — fail-open RPI Edge heartbeat
 ##
 ## 역할마다 Cloud Run 서비스가 다르다. 마켓 자격증명을 결제 서비스
 ## 하나에만 마운트하는 것이 경계라서 한 호스트로 합칠 수 없다.
@@ -121,6 +125,26 @@ func configure(options: Dictionary) -> void:
 		_app_id,
 		int(options.get("max_retries", 3)),
 	)
+	_ensure_presence()
+	_presence.configure({
+		"enabled": bool(options.get("presence_enabled", false)),
+		"token_base_url": _ingest_base_url,
+		"app_id": _app_id,
+		"context": _event_context_source,
+	})
+
+
+func _ensure_presence() -> void:
+	if is_instance_valid(_presence):
+		return
+	_presence = PresenceClient.new()
+	add_child(_presence)
+
+
+## 앱 foreground 복귀를 직접 감지하는 host는 이 메서드로 fresh heartbeat를 요청한다.
+func resume_presence() -> void:
+	if is_instance_valid(_presence):
+		_presence.resume()
 
 
 # ---------------------------------------------------------------- 인증
