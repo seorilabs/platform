@@ -60,6 +60,9 @@ func _initialize() -> void:
 	_check_iap_refresh_single_flight()
 	_check_iap_strict_refresh_failure()
 	_check_proactive_refresh_sign_in_fallback()
+	_check_refresh_cancelled_by_sign_out()
+	_check_refresh_cancelled_by_account_switch()
+	_check_internal_fallback_cancelled_by_sign_out()
 	_check_iap_non_auth_failures()
 	_check_standard_adapters()
 	_check_guards()
@@ -519,44 +522,51 @@ func _check_iap_refresh_single_flight() -> void:
 ## strict IAP refresh 실패가 재로그인이나 원 요청 replay를 만들지 않는지 검증한다.
 func _check_iap_strict_refresh_failure() -> void:
 	_probe_unix_ms = 1_700_300_000_000
-	var transport := ScriptedTransport.new()
-	var client := PlatformClient.new()
-	client.add_child(transport)
-	client._transport = transport
-	client._unix_time_ms_source = Callable(self, "_probe_time_unix_ms")
-	client.configure({
-		"base_url": "https://api.platform.invalid",
-		"auth_base_url": "https://auth.platform.invalid",
-		"iap_base_url": "https://iap.platform.invalid",
-		"app_id": "probe",
-	})
-	root.add_child(client)
-	client._credential = {"kind": "firebase-id-token", "value": "credential"}
-	client._store_session(_session_result("token-old", "refresh-revoked", 3600))
+	var failures: Array[Dictionary] = [
+		_failure_response(401, "refresh_token_invalid"),
+		_failure_response(403, "refresh_forbidden"),
+		_failure_response(503, "refresh_unavailable"),
+	]
+	for failure in failures:
+		var transport := ScriptedTransport.new()
+		var client := PlatformClient.new()
+		client.add_child(transport)
+		client._transport = transport
+		client._unix_time_ms_source = Callable(self, "_probe_time_unix_ms")
+		client.configure({
+			"base_url": "https://api.platform.invalid",
+			"auth_base_url": "https://auth.platform.invalid",
+			"iap_base_url": "https://iap.platform.invalid",
+			"app_id": "probe",
+		})
+		root.add_child(client)
+		client._credential = {"kind": "firebase-id-token", "value": "credential"}
+		client._store_session(_session_result("token-old", "refresh-revoked", 3600))
 
-	var results: Array[Dictionary] = []
-	client.list_entitlements(func(response: Dictionary) -> void: results.append(response))
-	transport.respond(0, _failure_response(401, "session_expired"))
-	if transport.requests.size() != 2:
-		_fail("strict 실패 probe에서 refresh 요청이 만들어지지 않았다")
+		var results: Array[Dictionary] = []
+		client.list_entitlements(func(response: Dictionary) -> void: results.append(response))
+		transport.respond(0, _failure_response(401, "session_expired"))
+		if transport.requests.size() != 2:
+			_fail("strict 실패 probe에서 refresh 요청이 만들어지지 않았다")
+			client.free()
+			continue
+		_expect(
+			bool(transport.requests[1].get("no_retry", false)),
+			"strict IAP refresh 요청의 일반 재시도가 열려 있다",
+		)
+		transport.respond(1, failure)
+		_expect(
+			transport.requests.size() == 2,
+			"strict IAP refresh %s 뒤 재로그인 또는 replay가 발생했다"
+				% failure.get("http_status", 0),
+		)
+		_expect(
+			results.size() == 1 and results[0] == failure,
+			"strict refresh 오류 envelope가 보존되지 않았다: got=%s want=%s"
+				% [results, failure],
+		)
+
 		client.free()
-		return
-	_expect(
-		bool(transport.requests[1].get("no_retry", false)),
-		"strict IAP refresh 요청의 일반 재시도가 열려 있다",
-	)
-	transport.respond(1, _failure_response(401, "refresh_token_invalid"))
-	_expect(
-		transport.requests.size() == 2,
-		"strict IAP refresh 401 뒤 재로그인 또는 원 요청 replay가 발생했다",
-	)
-	_expect(
-		results.size() == 1
-			and String(results[0].get("code", "")) == "refresh_token_invalid",
-		"strict IAP refresh 실패 callback이 정확히 한 번 오지 않았다: %s" % results,
-	)
-
-	client.free()
 
 
 ## 일반 선제 갱신은 기존 보관 자격증명 재로그인 정책을 유지한다.
@@ -625,6 +635,147 @@ func _check_proactive_refresh_sign_in_fallback() -> void:
 		"선제 refresh 재로그인 callback이 정확히 한 번 오지 않았다: %s" % token_results,
 	)
 	_expect(strict_results.size() == 1, "strict waiter가 재로그인 결과를 추가로 받았다")
+
+	client.free()
+
+
+## refresh 중 sign_out이 늦은 응답의 세션 복원과 IAP replay를 막는지 검증한다.
+func _check_refresh_cancelled_by_sign_out() -> void:
+	_probe_unix_ms = 1_700_360_000_000
+	var transport := ScriptedTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client._unix_time_ms_source = Callable(self, "_probe_time_unix_ms")
+	client.configure({
+		"base_url": "https://api.platform.invalid",
+		"auth_base_url": "https://auth.platform.invalid",
+		"iap_base_url": "https://iap.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+	client._store_session(_session_result("token-old", "refresh-old", 3600))
+
+	var results: Array[Dictionary] = []
+	client.list_entitlements(func(response: Dictionary) -> void: results.append(response))
+	transport.respond(0, _failure_response(401, "session_expired"))
+	if transport.requests.size() != 2:
+		_fail("sign_out 취소 probe에서 refresh 요청이 만들어지지 않았다")
+		client.free()
+		return
+
+	client.sign_out()
+	_expect(
+		results.size() == 1 and String(results[0].get("code", "")) == "auth_state_changed",
+		"sign_out이 refresh waiter를 정확히 한 번 취소하지 않았다: %s" % results,
+	)
+	_expect(client.current_session().is_empty(), "sign_out 뒤 세션이 남았다")
+	transport.respond(1, _session_response("token-stale", "refresh-stale", 3600))
+	_expect(client.current_session().is_empty(), "늦은 refresh 응답이 sign_out 세션을 복원했다")
+	_expect(results.size() == 1, "늦은 refresh 응답이 callback을 다시 호출했다")
+	_expect(transport.requests.size() == 2, "늦은 refresh 응답이 IAP 요청을 replay했다")
+
+	client.free()
+
+
+## 다른 sign_in이 시작되면 이전 refresh가 새 신원을 덮지 않는지 검증한다.
+func _check_refresh_cancelled_by_account_switch() -> void:
+	_probe_unix_ms = 1_700_370_000_000
+	var transport := ScriptedTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client._unix_time_ms_source = Callable(self, "_probe_time_unix_ms")
+	client.configure({
+		"base_url": "https://api.platform.invalid",
+		"auth_base_url": "https://auth.platform.invalid",
+		"iap_base_url": "https://iap.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+	client._store_session(_session_result("token-old", "refresh-old", 3600))
+
+	var iap_results: Array[Dictionary] = []
+	var sign_in_results: Array[Dictionary] = []
+	client.list_entitlements(func(response: Dictionary) -> void: iap_results.append(response))
+	transport.respond(0, _failure_response(401, "session_expired"))
+	if transport.requests.size() != 2:
+		_fail("계정 전환 probe에서 refresh 요청이 만들어지지 않았다")
+		client.free()
+		return
+
+	client.sign_in(
+		{"kind": "firebase-id-token", "value": "new-credential"},
+		func(response: Dictionary) -> void: sign_in_results.append(response),
+	)
+	if transport.requests.size() != 3:
+		_fail("계정 전환 세션 요청이 만들어지지 않았다")
+		client.free()
+		return
+	_expect(
+		iap_results.size() == 1
+			and String(iap_results[0].get("code", "")) == "auth_state_changed",
+		"계정 전환이 이전 IAP waiter를 정확히 한 번 취소하지 않았다: %s" % iap_results,
+	)
+	_expect(client.current_session().is_empty(), "계정 전환 시작 뒤 이전 세션이 남았다")
+
+	# 새 sign_in보다 이전 refresh 응답을 먼저 반환해도 저장되면 안 된다.
+	transport.respond(1, _session_response("token-stale", "refresh-stale", 3600))
+	_expect(client.current_session().is_empty(), "이전 refresh가 전환 중 세션을 복원했다")
+	_expect(iap_results.size() == 1, "이전 refresh가 IAP callback을 다시 호출했다")
+	_expect(transport.requests.size() == 3, "이전 refresh가 IAP 요청을 replay했다")
+
+	transport.respond(2, _session_response("token-new", "refresh-new", 3600))
+	_expect(
+		String(client.current_session().get("platformToken", "")) == "token-new",
+		"새 sign_in 세션이 저장되지 않았다: %s" % client.current_session(),
+	)
+	_expect(
+		sign_in_results.size() == 1 and bool(sign_in_results[0].get("ok", false)),
+		"새 sign_in callback이 정확히 한 번 오지 않았다: %s" % sign_in_results,
+	)
+
+	client.free()
+
+
+## 내부 fallback sign_in 중 sign_out도 늦은 세션 응답을 폐기하는지 검증한다.
+func _check_internal_fallback_cancelled_by_sign_out() -> void:
+	_probe_unix_ms = 1_700_380_000_000
+	var transport := ScriptedTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client._unix_time_ms_source = Callable(self, "_probe_time_unix_ms")
+	client.configure({
+		"base_url": "https://api.platform.invalid",
+		"auth_base_url": "https://auth.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+	client._credential = {"kind": "firebase-id-token", "value": "credential"}
+	client._store_session(_session_result("token-old", "refresh-revoked", 30))
+
+	var token_results: Array[Dictionary] = []
+	client.with_token(func(token: String, error: Dictionary) -> void:
+		token_results.append({"token": token, "error": error})
+	)
+	transport.respond(0, _failure_response(401, "refresh_token_invalid"))
+	if transport.requests.size() != 2:
+		_fail("내부 fallback sign_in 요청이 만들어지지 않았다")
+		client.free()
+		return
+
+	client.sign_out()
+	_expect(
+		token_results.size() == 1
+			and String(token_results[0].get("error", {}).get("code", ""))
+				== "auth_state_changed",
+		"sign_out이 내부 fallback waiter를 정확히 한 번 취소하지 않았다: %s"
+			% token_results,
+	)
+	transport.respond(1, _session_response("token-stale", "refresh-stale", 3600))
+	_expect(client.current_session().is_empty(), "늦은 내부 fallback 응답이 세션을 복원했다")
+	_expect(token_results.size() == 1, "늦은 내부 fallback 응답이 callback을 다시 호출했다")
 
 	client.free()
 
@@ -712,6 +863,7 @@ func _check_iap_non_auth_failures() -> void:
 			"token-no-retry",
 			func(response: Dictionary) -> void: replay_results.append(response),
 			true,
+			client._auth_generation,
 		)
 		if transport.requests.size() != replay_index + 1:
 			_fail("인증 replay 요청이 정확히 하나 만들어지지 않았다")
@@ -848,6 +1000,12 @@ func _check_guards() -> void:
 		_fail("미로그인 조회가 즉시 거부되지 않았다")
 	elif String(got[0].get("code", "")) != "auth_required":
 		_fail("미로그인 코드가 다르다: %s" % got[0].get("code", ""))
+	elif (
+		bool(got[0].get("valid", true))
+		or not bool(got[0].get("local", false))
+		or int(got[0].get("http_status", -1)) != 0
+	):
+		_fail("불완전한 로컬 인증 오류가 SDK envelope로 보정되지 않았다: %s" % got[0])
 
 	# 정규화가 클라이언트를 거쳐도 같은 결과를 낸다
 	var normalized := Normalizer.normalize({"is_new": true, "email": "x@y.z", "level": 3})

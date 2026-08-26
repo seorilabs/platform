@@ -170,6 +170,11 @@ timeout은 그대로 한 번 반환한다. 이 strict IAP 복구 경로는 refre
 뒤 보관 자격증명으로 다시 로그인하지 않는다. 일반 `with_token`의 선제
 refresh는 기존 재로그인 정책을 유지한다.
 
+refresh 중 public `sign_in` 또는 `sign_out`이 호출되면 이전 인증 세대의
+waiter를 `auth_state_changed`로 한 번 끝내고, 늦게 도착한 refresh·내부
+재로그인 응답은 세션에 저장하거나 IAP 요청에 재사용하지 않는다. refresh
+실패 응답은 `http_status`, `local`, `valid`를 포함한 원래 envelope를 보존한다.
+
 ## 계약
 
 응답 해석·정규화·백오프는 `spec/conformance/*.json`이 정본이고
