@@ -20,7 +20,7 @@ const HttpTransport := preload("core/http_transport.gd")
 const Normalizer := preload("core/param_normalizer.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.6.3"
+const SDK_VERSION := "0.6.4"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -60,7 +60,12 @@ var _event_buffer: Array = []
 var _event_outbox: Array = []
 var _flushing := false
 var _refreshing := false
-var _refresh_waiters: Array[Callable] = []
+var _refresh_waiters: Array[Dictionary] = []
+var _refresh_reauthenticating := false
+var _refresh_failure: Dictionary = {}
+# 테스트는 wall clock만 전진시켜 기기 sleep을 재현한다. 제품에서는
+# 항상 Time.get_unix_time_from_system()을 사용한다.
+var _unix_time_ms_source: Callable = Callable()
 
 
 func _ready() -> void:
@@ -200,6 +205,7 @@ func sign_out() -> void:
 
 
 ## 현재 세션. 없으면 빈 Dictionary다.
+## expiresAt은 Unix epoch millisecond다.
 func current_session() -> Dictionary:
 	return _session.duplicate(true)
 
@@ -233,9 +239,28 @@ func with_token(callback: Callable) -> void:
 		callback.call(String(_session.get("platformToken", "")), {})
 		return
 
-	# 갱신이 겹치지 않게 묶는다. 겹치면 서버가 refresh token을
-	# 회전시키는 순간 나머지가 무효 토큰을 들고 실패한다.
-	_refresh_waiters.append(callback)
+	_queue_refresh(callback, true)
+
+
+## refresh 요청을 single-flight로 묶는다.
+##
+## 겹치면 서버가 refresh token을 회전시키는 순간 나머지가 무효 토큰을
+## 들고 실패하므로 proactive refresh와 401 복구가 같은 큐를 써야 한다.
+## 다만 IAP 401 waiter는 refresh 실패 뒤 자격증명 재로그인에 참여하지 않는다.
+func _queue_refresh(
+	callback: Callable,
+	allow_sign_in_fallback: bool,
+) -> void:
+	# proactive refresh의 재로그인이 이미 진행 중이면 strict IAP waiter는
+	# 그 재로그인 토큰으로 원 요청을 replay하지 않는다.
+	if _refresh_reauthenticating and not allow_sign_in_fallback:
+		callback.call("", _refresh_failure)
+		return
+
+	_refresh_waiters.append({
+		"callback": callback,
+		"allow_sign_in_fallback": allow_sign_in_fallback,
+	})
 	if _refreshing:
 		return
 
@@ -245,29 +270,79 @@ func with_token(callback: Callable) -> void:
 
 func _needs_refresh() -> bool:
 	var expires_at := int(_session.get("expiresAt", 0))
-	return Time.get_ticks_msec() + REFRESH_MARGIN_MS >= expires_at
+	return _now_unix_ms() + REFRESH_MARGIN_MS >= expires_at
+
+
+func _now_unix_ms() -> int:
+	if _unix_time_ms_source.is_valid():
+		return int(_unix_time_ms_source.call())
+	return int(Time.get_unix_time_from_system() * 1000.0)
+
+
+## 서버가 방금 거부한 토큰을 강제로 갱신한다.
+##
+## 다른 요청이 이미 같은 토큰을 갱신했다면 새 토큰을 재사용한다. 그렇지
+## 않으면 proactive refresh와 같은 single-flight 큐에 합류한다.
+func _refresh_after_session_expired(failed_token: String, callback: Callable) -> void:
+	if _session.is_empty():
+		callback.call("", _client_error("auth_required", "로그인이 필요해요"))
+		return
+
+	var current_token := String(_session.get("platformToken", ""))
+	if not current_token.is_empty() and current_token != failed_token:
+		callback.call(current_token, {})
+		return
+
+	# IAP 401 복구는 refresh 자체의 5xx/timeout도 재시도하지 않으며,
+	# refresh 401/403 뒤 보관 자격증명으로 다시 로그인하지 않는다.
+	_queue_refresh(callback, false)
 
 
 func _refresh() -> void:
+	var request_data := {
+		"method": "POST",
+		"path": "/v1/auth/refresh",
+		"base_url": _auth_base_url,
+		"body": {"refreshToken": String(_session.get("refreshToken", ""))},
+		# strict waiter가 이미 진행 중인 proactive flight에 합류해도
+		# refresh 5xx/timeout backoff를 기다리지 않도록 항상 한 번만 보낸다.
+		"no_retry": true,
+	}
+
 	_transport.request(
-		{
-			"method": "POST",
-			"path": "/v1/auth/refresh",
-			"base_url": _auth_base_url,
-			"body": {"refreshToken": String(_session.get("refreshToken", ""))},
-		},
+		request_data,
 		func(response: Dictionary) -> void:
 			if response.get("ok", false):
 				_store_session(response["result"])
 				_resolve_refresh(String(_session.get("platformToken", "")), {})
 				return
 
-			# refresh가 만료됐거나 폐기됐다.
-			# 자격증명이 있으면 다시 로그인한다.
+			# proactive waiter만 refresh token 폐기 뒤 자격증명으로 다시 로그인한다.
+			# strict IAP waiter는 먼저 실패시켜 원 요청 replay를 막는다.
 			var status := int(response.get("http_status", 0))
-			if not _credential.is_empty() and (status == 401 or status == 403):
+			var fallback_waiters: Array[Dictionary] = []
+			var strict_waiters: Array[Dictionary] = []
+			for waiter in _refresh_waiters:
+				if bool(waiter.get("allow_sign_in_fallback", false)):
+					fallback_waiters.append(waiter)
+				else:
+					strict_waiters.append(waiter)
+
+			if (
+				not _credential.is_empty()
+				and (status == 401 or status == 403)
+				and not fallback_waiters.is_empty()
+			):
+				var fallback_credential := _credential.duplicate(true)
+				_refresh_waiters = fallback_waiters
+				_refresh_reauthenticating = true
+				_refresh_failure = response.duplicate(true)
+				# strict callback이 동기적으로 새 요청을 시작해도 폐기된 토큰을
+				# 다시 받지 않도록 세션을 먼저 비운다.
 				_session = {}
-				sign_in(_credential, func(retry: Dictionary) -> void:
+				for waiter in strict_waiters:
+					_invoke_refresh_waiter(waiter, "", response)
+				sign_in(fallback_credential, func(retry: Dictionary) -> void:
 					if retry.get("ok", false):
 						_resolve_refresh(String(_session.get("platformToken", "")), {})
 					else:
@@ -281,12 +356,19 @@ func _refresh() -> void:
 
 func _resolve_refresh(token: String, error: Dictionary) -> void:
 	_refreshing = false
+	_refresh_reauthenticating = false
+	_refresh_failure = {}
 	var waiters := _refresh_waiters.duplicate()
 	_refresh_waiters.clear()
 
 	for waiter in waiters:
-		if waiter.is_valid():
-			waiter.call(token, error)
+		_invoke_refresh_waiter(waiter, token, error)
+
+
+func _invoke_refresh_waiter(waiter: Dictionary, token: String, error: Dictionary) -> void:
+	var callback: Callable = waiter.get("callback", Callable())
+	if callback.is_valid():
+		callback.call(token, error)
 
 
 func _store_session(result: Dictionary) -> void:
@@ -299,7 +381,8 @@ func _store_session(result: Dictionary) -> void:
 		"supportCode": String(result.get("supportCode", "")),
 		"appUserId": String(result.get("appUserId", "")),
 		"isAnonymous": bool(result.get("isAnonymous", false)),
-		"expiresAt": Time.get_ticks_msec() + int(result.get("expiresIn", 3600)) * 1000,
+		# 공개 current_session의 expiresAt은 기기 sleep과 무관한 Unix epoch ms다.
+		"expiresAt": _now_unix_ms() + int(result.get("expiresIn", 3600)) * 1000,
 	}
 	session_changed.emit(current_session())
 
@@ -525,9 +608,10 @@ static func _fallback_config() -> Dictionary:
 
 ## 구매를 검증하고 지급받는다.
 ##
-## 재시도하지 않는다. 결제 경로에서 같은 요청을 자동으로 반복하면
-## 서버가 멱등이라 해도 응답을 기다리는 사이 사용자가 두 번
-## 결제한 것처럼 보이는 상황을 만든다.
+## 일반 전송 실패는 재시도하지 않는다. 인증 미들웨어가 원장에 닿기 전에
+## 반환한 첫 401 session_expired만 refresh 후 한 번 replay한다. 결제 경로에서
+## 다른 실패를 자동으로 반복하면 서버가 멱등이라 해도 응답을 기다리는 사이
+## 사용자가 두 번 결제한 것처럼 보이는 상황을 만든다.
 ##
 ## proof 키: platform, product_id, token
 func verify_purchase(proof: Dictionary, callback: Callable) -> void:
@@ -544,29 +628,17 @@ func verify_purchase(proof: Dictionary, callback: Callable) -> void:
 		callback.call(_client_error("anonymous_not_allowed", "로그인 후에 구매할 수 있어요"))
 		return
 
-	with_token(func(session_token: String, error: Dictionary) -> void:
-		if session_token.is_empty():
-			callback.call(_client_error(
-				String(error.get("code", "auth_required")),
-				String(error.get("message", "로그인이 필요해요")),
-			))
-			return
-
-		_transport.request(
-			{
-				"method": "POST",
-				"path": "/v1/iap/verify",
-				"base_url": _iap_base_url,
-				"token": session_token,
-				"no_retry": true,
-				"body": {
-					"platform": platform,
-					"productId": product_id,
-					"token": token,
-				},
+	_iap_request(
+		{
+			"method": "POST",
+			"path": "/v1/iap/verify",
+			"body": {
+				"platform": platform,
+				"productId": product_id,
+				"token": token,
 			},
-			callback,
-		)
+		},
+		callback,
 	)
 
 
@@ -574,28 +646,27 @@ func verify_purchase(proof: Dictionary, callback: Callable) -> void:
 ##
 ## 마켓 SDK 없이도 환불 반영을 확인할 수 있는 경로다.
 func list_entitlements(callback: Callable) -> void:
-	with_token(func(session_token: String, error: Dictionary) -> void:
-		if session_token.is_empty():
-			callback.call(_client_error(
-				String(error.get("code", "auth_required")),
-				String(error.get("message", "로그인이 필요해요")),
-			))
-			return
-
-		_transport.request(
-			{
-				"method": "GET",
-				"path": "/v1/iap/entitlements",
-				"base_url": _iap_base_url,
-				"token": session_token,
-			},
-			callback,
-		)
+	_iap_request(
+		{"method": "GET", "path": "/v1/iap/entitlements"},
+		callback,
 	)
 
 
 ## 신규 구매 전에 마켓 결제 화면에 넣을 계정 참조.
 func account_references(callback: Callable) -> void:
+	_iap_request(
+		{"method": "POST", "path": "/v1/iap/account-references"},
+		callback,
+	)
+
+
+## 인증이 필요한 IAP 요청의 단일 경로다.
+##
+## 전송 계층의 일반 재시도는 모두 끈다. 인증 미들웨어가 원장에 닿기 전에
+## 거부한 첫 401 session_expired만 refresh 후 한 번 재전송한다. 다른 실패를
+## 반복하지 않아 IAP 불변식 1·2의 멱등 원장과 별개인 클라이언트 완료 모호성을
+## 만들지 않는다.
+func _iap_request(request_data: Dictionary, callback: Callable) -> void:
 	with_token(func(session_token: String, error: Dictionary) -> void:
 		if session_token.is_empty():
 			callback.call(_client_error(
@@ -604,15 +675,46 @@ func account_references(callback: Callable) -> void:
 			))
 			return
 
-		_transport.request(
-			{
-				"method": "POST",
-				"path": "/v1/iap/account-references",
-				"base_url": _iap_base_url,
-				"token": session_token,
-			},
-			callback,
+		_send_iap_request(request_data, session_token, callback, false)
+	)
+
+
+func _send_iap_request(
+	request_data: Dictionary,
+	session_token: String,
+	callback: Callable,
+	auth_replayed: bool,
+) -> void:
+	var authorized_request := request_data.duplicate(true)
+	authorized_request["base_url"] = _iap_base_url
+	authorized_request["token"] = session_token
+	# 5xx, timeout, 403은 그대로 반환한다. 아래의 명시적 인증 replay만 허용한다.
+	authorized_request["no_retry"] = true
+
+	_transport.request(authorized_request, func(response: Dictionary) -> void:
+		if auth_replayed or not _is_session_expired_response(response):
+			callback.call(response)
+			return
+
+		_refresh_after_session_expired(
+			session_token,
+			func(refreshed_token: String, error: Dictionary) -> void:
+				if refreshed_token.is_empty():
+					callback.call(_client_error(
+						String(error.get("code", "auth_required")),
+						String(error.get("message", "로그인이 필요해요")),
+					))
+					return
+				_send_iap_request(request_data, refreshed_token, callback, true)
 		)
+	)
+
+
+func _is_session_expired_response(response: Dictionary) -> bool:
+	return (
+		not bool(response.get("ok", false))
+		and int(response.get("http_status", 0)) == 401
+		and String(response.get("code", "")) == "session_expired"
 	)
 
 
