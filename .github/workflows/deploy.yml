@@ -73,6 +73,7 @@ env:
   INGEST_RUNTIME_SA: platform-ingest@seorilabs-platform.iam.gserviceaccount.com
   ADS_RUNTIME_SA: platform-ads@seorilabs-platform.iam.gserviceaccount.com
   BACKOFFICE_OPERATIONAL_EVENTS_URL: https://backoffice.vzyx.xyz/api/internal/platform/operational-events
+  PLATFORM_PRESENCE_EDGE_URL: https://edge.vzyx.xyz
   # 실거래만 배포한다. registry의 기존 원장 앱이 이 값과 다르면 배포를
   # 거부하므로, sandbox가 필요해지면 이 워크플로를 먼저 고쳐야 한다.
   IAP_ENVIRONMENT: production
@@ -213,7 +214,8 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --service-account="$INGEST_RUNTIME_SA" \
-            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest" \
+            --update-env-vars="PLATFORM_PRESENCE_EDGE_URL=${PLATFORM_PRESENCE_EDGE_URL}" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,PLATFORM_PRESENCE_PRIVATE_KEY=platform-presence-private-key:latest" \
             --quiet
 
           gcloud run deploy platform-iap \
@@ -309,6 +311,42 @@ jobs:
           [ -z "$actual" ] || fail=1
 
           [ "$fail" -eq 0 ] || { echo "세션 secret role 경계가 올바르지 않다." >&2; exit 1; }
+
+      # Presence token 서명키는 익명 이벤트 세션을 Edge token으로 바꾸는
+      # ingest role에만 둔다. URL과 키 중 하나만 있으면 프로세스가 시작을
+      # 거부하므로 같은 revision에서 함께 readback한다.
+      - name: Assert Presence secret boundary
+        run: |
+          service_env() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .value] | first // ""'
+          }
+
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          fail=0
+          actual_url=$(service_env platform-ingest PLATFORM_PRESENCE_EDGE_URL)
+          actual_secret=$(service_secret platform-ingest PLATFORM_PRESENCE_PRIVATE_KEY)
+          printf '%-18s presence_url=%s secret=%s\n' platform-ingest "$actual_url" "$actual_secret"
+          [ "$actual_url" = "$PLATFORM_PRESENCE_EDGE_URL" ] || fail=1
+          [ "$actual_secret" = "platform-presence-private-key" ] || fail=1
+
+          for target in platform-api platform-iap platform-admin platform-ads; do
+            actual_url=$(service_env "$target" PLATFORM_PRESENCE_EDGE_URL)
+            actual_secret=$(service_secret "$target" PLATFORM_PRESENCE_PRIVATE_KEY)
+            printf '%-18s presence_url=%s secret=%s\n' "$target" "${actual_url:-<absent>}" "${actual_secret:-<absent>}"
+            [ -z "$actual_url" ] || fail=1
+            [ -z "$actual_secret" ] || fail=1
+          done
+
+          [ "$fail" -eq 0 ] || { echo "Presence URL/secret role 경계가 올바르지 않다." >&2; exit 1; }
 
       # 조직 DRS는 allUsers IAM binding을 막는다. 공개 callback 서비스는
       # Cloud Run invoker IAM 검사 자체를 끄고 애플리케이션 검증을 사용한다.
