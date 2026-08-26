@@ -43,7 +43,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			slog.Warn("presence edge MySQL 종료 실패", "err", err)
+		}
+	}()
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := repository.Ping(startupCtx); err != nil {
