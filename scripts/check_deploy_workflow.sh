@@ -10,12 +10,13 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && pwd)"
 
-python3 - "$repo_root/.github/workflows/deploy.yml" <<'PY'
+python3 - "$repo_root/.github/workflows/deploy.yml" "$repo_root/deploy/rpi/presence-edge.yaml" <<'PY'
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
+presence_manifest = Path(sys.argv[2]).read_text(encoding="utf-8")
 
 
 def require(condition: bool, message: str) -> None:
@@ -85,6 +86,17 @@ require(
     "platform-ingest runtime service account가 명시되지 않았다.",
 )
 require("Assert session secret boundary" in text, "세션 secret readback gate가 없다.")
+
+presence_url = "PLATFORM_PRESENCE_EDGE_URL=${PLATFORM_PRESENCE_EDGE_URL}"
+presence_secret = "PLATFORM_PRESENCE_PRIVATE_KEY=platform-presence-private-key:latest"
+require(presence_url in ingest_block, "platform-ingest에 Presence Edge URL이 없다.")
+require(presence_secret in ingest_block, "platform-ingest에 Presence 서명키가 없다.")
+require(text.count(presence_url) == 1, "Presence Edge URL은 ingest 한 곳에만 마운트해야 한다.")
+require(text.count(presence_secret) == 1, "Presence 서명키는 ingest 한 곳에만 마운트해야 한다.")
+require("Assert Presence secret boundary" in text, "Presence URL/secret readback gate가 없다.")
+require("runAsNonRoot: true" in presence_manifest, "Presence Edge가 non-root 실행을 강제하지 않는다.")
+require("runAsUser: 65532" in presence_manifest, "Presence Edge의 숫자 non-root UID가 없다.")
+require("runAsGroup: 65532" in presence_manifest, "Presence Edge의 숫자 non-root GID가 없다.")
 
 
 operational_url = "BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}"
