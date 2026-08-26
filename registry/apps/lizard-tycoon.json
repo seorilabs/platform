@@ -7,7 +7,8 @@
     "config": true,
     "events": true,
     "iap": true,
-    "ads": false
+    "ads": false,
+    "presence": true
   },
   "require_app_check": false,
   "ga4": {
