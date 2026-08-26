@@ -26,20 +26,24 @@ on:
       - "server/**"
       - "spec/**"
       - "registry/**"
+      - "deploy/rpi/**"
       - "scripts/check_deploy_workflow.sh"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
       - ".github/workflows/deploy.yml"
+      - ".github/workflows/presence-edge.yml"
   push:
     branches: [main]
     paths:
       - "server/**"
       - "spec/**"
       - "registry/**"
+      - "deploy/rpi/**"
       - "scripts/check_deploy_workflow.sh"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
       - ".github/workflows/deploy.yml"
+      - ".github/workflows/presence-edge.yml"
 
 permissions:
   contents: read
