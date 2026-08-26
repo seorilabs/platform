@@ -60,6 +60,8 @@ func _initialize() -> void:
 	_check_iap_refresh_single_flight()
 	_check_iap_strict_refresh_failure()
 	_check_proactive_refresh_sign_in_fallback()
+	_check_sign_in_reentry_sign_out()
+	_check_sign_in_reentry_account_switch()
 	_check_refresh_cancelled_by_sign_out()
 	_check_refresh_cancelled_by_account_switch()
 	_check_internal_fallback_cancelled_by_sign_out()
@@ -635,6 +637,115 @@ func _check_proactive_refresh_sign_in_fallback() -> void:
 		"선제 refresh 재로그인 callback이 정확히 한 번 오지 않았다: %s" % token_results,
 	)
 	_expect(strict_results.size() == 1, "strict waiter가 재로그인 결과를 추가로 받았다")
+
+	client.free()
+
+
+## sign_in의 세션 초기화 signal에서 sign_out이 재진입해도 외부 요청을 막는지 검증한다.
+func _check_sign_in_reentry_sign_out() -> void:
+	_probe_unix_ms = 1_700_350_000_000
+	var transport := ScriptedTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client._unix_time_ms_source = Callable(self, "_probe_time_unix_ms")
+	client.configure({
+		"base_url": "https://api.platform.invalid",
+		"auth_base_url": "https://auth.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+	client._store_session(_session_result("token-old", "refresh-old", 3600))
+
+	var reentered := [false]
+	client.session_changed.connect(func(session: Dictionary) -> void:
+		if not session.is_empty() or bool(reentered[0]):
+			return
+		reentered[0] = true
+		client.sign_out()
+	)
+	var results: Array[Dictionary] = []
+	client.sign_in(
+		{"kind": "firebase-id-token", "value": "outer-credential"},
+		func(response: Dictionary) -> void: results.append(response),
+	)
+
+	_expect(bool(reentered[0]), "sign_in session_changed에서 sign_out이 재진입하지 않았다")
+	_expect(transport.requests.is_empty(), "sign_out 재진입 뒤 외부 sign_in 요청이 시작됐다")
+	_expect(
+		results.size() == 1
+			and String(results[0].get("code", "")) == "auth_state_changed",
+		"sign_out 재진입이 외부 callback을 정확히 한 번 종료하지 않았다: %s" % results,
+	)
+	_expect(client.current_session().is_empty(), "sign_out 재진입 뒤 세션이 남았다")
+
+	client.free()
+
+
+## sign_in의 세션 초기화 signal에서 다른 sign_in이 재진입하면 새 요청만 남는지 검증한다.
+func _check_sign_in_reentry_account_switch() -> void:
+	_probe_unix_ms = 1_700_355_000_000
+	var transport := ScriptedTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client._unix_time_ms_source = Callable(self, "_probe_time_unix_ms")
+	client.configure({
+		"base_url": "https://api.platform.invalid",
+		"auth_base_url": "https://auth.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+	client._store_session(_session_result("token-old", "refresh-old", 3600))
+
+	var reentered := [false]
+	var inner_results: Array[Dictionary] = []
+	client.session_changed.connect(func(session: Dictionary) -> void:
+		if not session.is_empty() or bool(reentered[0]):
+			return
+		reentered[0] = true
+		client.sign_in(
+			{"kind": "firebase-id-token", "value": "inner-credential"},
+			func(response: Dictionary) -> void: inner_results.append(response),
+		)
+	)
+	var outer_results: Array[Dictionary] = []
+	client.sign_in(
+		{"kind": "firebase-id-token", "value": "outer-credential"},
+		func(response: Dictionary) -> void: outer_results.append(response),
+	)
+
+	_expect(bool(reentered[0]), "sign_in session_changed에서 다른 sign_in이 재진입하지 않았다")
+	_expect(
+		outer_results.size() == 1
+			and String(outer_results[0].get("code", "")) == "auth_state_changed",
+		"계정 전환 재진입이 외부 callback을 정확히 한 번 종료하지 않았다: %s"
+			% outer_results,
+	)
+	_expect(inner_results.is_empty(), "응답 전 내부 sign_in callback이 호출됐다")
+	if transport.requests.size() != 1:
+		_fail("계정 전환 재진입에서 새 sign_in 요청만 남지 않았다: %s" % transport.requests)
+		client.free()
+		return
+	var request: Dictionary = transport.requests[0]
+	var body: Dictionary = request.get("body", {})
+	var requested_credential: Dictionary = body.get("credential", {})
+	_expect(
+		String(request.get("path", "")) == "/v1/auth/session"
+			and String(requested_credential.get("value", "")) == "inner-credential",
+		"계정 전환 재진입 요청이 내부 자격증명에 귀속되지 않았다: %s" % request,
+	)
+
+	transport.respond(0, _session_response("token-inner", "refresh-inner", 3600))
+	_expect(
+		inner_results.size() == 1 and bool(inner_results[0].get("ok", false)),
+		"내부 sign_in callback이 정확히 한 번 성공하지 않았다: %s" % inner_results,
+	)
+	_expect(outer_results.size() == 1, "내부 sign_in 응답이 외부 callback을 다시 호출했다")
+	_expect(
+		String(client.current_session().get("platformToken", "")) == "token-inner",
+		"내부 sign_in 세션이 저장되지 않았다: %s" % client.current_session(),
+	)
 
 	client.free()
 

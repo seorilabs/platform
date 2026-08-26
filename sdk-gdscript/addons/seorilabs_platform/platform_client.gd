@@ -180,14 +180,21 @@ func delete_firebase_account(
 ## 위해서다. 앱이 매번 Firebase 토큰을 다시 받아오게 하면 Godot에서
 ## 호출 앞에 왕복이 두 번씩 붙는다.
 func sign_in(credential: Dictionary, callback: Callable = Callable()) -> void:
+	var requested_credential := credential.duplicate(true)
 	var had_session := not _session.is_empty()
 	_auth_generation += 1
-	_credential = credential.duplicate(true)
+	var requested_generation := _auth_generation
+	_credential = requested_credential.duplicate(true)
 	_session = {}
 	if had_session:
 		session_changed.emit({})
+	# session_changed subscriber가 동기적으로 sign_out이나 다른 sign_in을
+	# 시작했으면 이 요청은 더 이상 현재 인증 세대에 속하지 않는다.
+	if requested_generation != _auth_generation:
+		_invoke(callback, _auth_state_changed_error())
+		return
 	_cancel_refresh_flight(_auth_state_changed_error())
-	_request_sign_in(_credential, _auth_generation, callback)
+	_request_sign_in(requested_credential, requested_generation, callback)
 
 
 ## 같은 인증 세대에서 세션을 발급한다.
