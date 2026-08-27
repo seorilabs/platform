@@ -38,3 +38,4 @@ ADR과 장기 의사결정을 관리한다.
 | [0018](0018-private-versioned-content-delivery.md) | 보호 콘텐츠는 private GCS 릴리스와 Platform 선택 API로 전달한다 | Accepted |
 | [0019](0019-rpi-edge-presence.md) | RPI Edge presence와 fail-open 경계 | Accepted |
 | [0020](0020-immutable-platform-fleet-release.md) | Platform Fleet release를 불변 manifest로 배포한다 | Accepted |
+| [0021](0021-platform-fleet-reconciler-boundary.md) | Platform Fleet fan-out은 서명된 dry-run 계획에서 시작한다 | Accepted |
