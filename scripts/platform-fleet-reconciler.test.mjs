@@ -555,17 +555,23 @@ describe('trusted adapter 실행 경계', () => {
     ]);
   });
 
-  it('재검증 누락, fixture, needs_input, stale preflight, 불일치 readback, 위조 plan을 write하지 않는다', async () => {
+  it('사전 검증 실패는 write 전 차단하고 불일치 action readback은 후속 write를 중단한다', async () => {
+    let guardedWrites = 0;
+    const guardedAdapter = {
+      async readPlanState() { throw new Error('호출되면 안 됩니다.'); },
+      async applyAction() { guardedWrites += 1; },
+      async readAction() { throw new Error('호출되면 안 됩니다.'); },
+    };
     const fixtureVerification = reconcileInputs();
     const fixturePlan = reconcilePlatformFleet(fixtureVerification);
     await assert.rejects(
-      executeFleetPlan({ plan: fixturePlan, adapter: {}, apply: true }),
+      executeFleetPlan({ plan: fixturePlan, adapter: guardedAdapter, apply: true }),
       /재검증 입력/u,
     );
     await assert.rejects(
       executeFleetPlan({
         plan: fixturePlan,
-        adapter: {},
+        adapter: guardedAdapter,
         apply: true,
         verification: fixtureVerification,
       }),
@@ -577,15 +583,28 @@ describe('trusted adapter 실행 경계', () => {
     await assert.rejects(
       executeFleetPlan({
         plan: blockedPlan,
-        adapter: {},
+        adapter: guardedAdapter,
         apply: true,
         verification: blockedVerification,
       }),
       /needs_input/u,
     );
+    assert.equal(guardedWrites, 0);
 
     const verification = reconcileInputs({
-      observations: [observation({ sourceType: 'backoffice' })],
+      expectedConsumers: [
+        expected(),
+        expected('202', 'seorilabs/second'),
+      ],
+      observations: [
+        observation({ sourceType: 'backoffice' }),
+        observation({
+          id: 'observation-2',
+          repositoryFullName: 'seorilabs/second',
+          repositoryId: '202',
+          sourceType: 'backoffice',
+        }),
+      ],
     });
     const plan = reconcilePlatformFleet(verification);
     let writes = 0;
@@ -633,6 +652,7 @@ describe('trusted adapter 실행 경계', () => {
       executeFleetPlan({ plan, adapter: mismatchAdapter, apply: true, verification }),
       /readback/u,
     );
+    assert.equal(writes, 1);
 
     const forged = structuredClone(plan);
     forged.actions[0].title = '위조된 작업';
@@ -641,6 +661,7 @@ describe('trusted adapter 실행 경계', () => {
       executeFleetPlan({ plan: forged, adapter: mismatchAdapter, apply: true, verification }),
       /재검증한 Fleet plan/u,
     );
+    assert.equal(writes, 1);
   });
 });
 
