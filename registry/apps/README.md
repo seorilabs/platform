@@ -104,6 +104,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `match-picture-app` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `slotmachine-game` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
 | `spiritgate-defenders` | 활성 | 미사용 | 활성 | 비활성 | 활성 | — |
+| `ungeul` | 활성 | production | 비활성 | 활성 | 비활성 | `deep_reading_ticket` |
 
 ## ledger_environment가 서비스와 다르면
 

@@ -7,7 +7,7 @@
   "features": {
     "config": false,
     "events": false,
-    "iap": false,
+    "iap": true,
     "ads": false,
     "content": true,
     "firebase_custom_token_bridge": true
@@ -20,12 +20,29 @@
     "bucket": "seorilabs-ungeul-content",
     "prefix": "ungeul",
     "reading_daily_limit": 10,
-    "term_daily_limit": 100
+    "term_daily_limit": 100,
+    "ticket_entitlement_id": "deep_reading_ticket",
+    "ticket_units_per_purchase": 5
+  },
+  "iap": {
+    "ledger_environment": "production",
+    "markets": [
+      "google_play",
+      "app_store",
+      "apps_in_toss"
+    ],
+    "google_play_package_name": "com.seorilabs.ungeul",
+    "app_store_bundle_id": "com.seorilabs.ungeul",
+    "entitlement_ids": [
+      "deep_reading_ticket"
+    ]
   },
   "platform_event_allowlist": [],
   "cors_origins": [
     "https://localhost",
-    "capacitor://localhost"
+    "capacitor://localhost",
+    "https://ungeul.apps.tossmini.com",
+    "https://ungeul.private-apps.tossmini.com"
   ],
   "blocked_uids": []
 }
