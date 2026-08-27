@@ -72,6 +72,36 @@ GDScript release가 필요할 때 `sdk-gdscript/VERSION`과 같은 `vX.Y.Z` tag�
 공개 Release는 immutable이다. 같은 이름의 asset이 다르거나 asset이 빠진 공개
 Release를 발견해도 자동으로 덮어쓰지 않는다.
 
+## Fleet 승인과 consumer 계획
+
+공개된 Release가 곧 조직 전체 탑재 승인을 뜻하지는 않는다. Fleet controller는
+`platform-release.json` 원문 byte와 별도 `fleet-approved` Ed25519 서명을 검증한 뒤에만
+consumer 계획을 만든다. private signing key는 이 저장소나 agent에 전달하지 않는다.
+
+```text
+immutable release byte
+  -> Fleet approval signature 검증
+  -> Backoffice consumer observation 검증
+  -> dry-run PR 또는 P1 Issue 계획
+  -> trusted adapter preflight
+  -> write
+  -> GitHub readback
+```
+
+`implementation-only` release는 뒤처진 official SDK를 exact version·digest로 갱신하는
+PR intent를 repo별 하나만 만든다. `contract-additive`와 `contract-breaking` release는
+`P1`, `autopilot`, `platform`, `platform-contract` Issue intent를 repo별 하나만 만든다.
+custom HTTP, unmanaged vendor, missing SDK와 상충 observation은 자동으로 추측하지 않는다.
+
+release build gate는 observed version, artifact SHA-256, contract revision과 GDScript
+tree checksum·고정 source가 승인 manifest와 모두 같아야 통과한다. stale 예외는 현재
+manifest digest와 `release-build` capability에 묶인 미래 만료 시각만 인정한다.
+
+순수 코어와 실행 포트는 `scripts/platform-fleet-reconciler.mjs`에 있다. 실행 기본값은
+dry-run이며, fixture observation과 `needs_input` plan은 write할 수 없다. 실제 Backoffice
+adapter, GitHub App fan-out, signer와 public key 배포, repository release required check
+연결은 별도 운영 배포가 필요하다.
+
 로컬 dry-run은 실제 Release를 만들지 않는다.
 
 ```bash
