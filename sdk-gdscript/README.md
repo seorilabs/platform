@@ -1,13 +1,20 @@
 # Seorilabs 플랫폼 GDScript SDK
 
 Godot 앱이 플랫폼을 쓰기 위한 애드온. 인증·이벤트·설정·결제와 보상 광고
-SSV adapter가 한 배포본에 있다. 원본 저장소는
-`https://github.com/seorilabs/platform/tree/main/sdk-gdscript`이고 vendored addon의
-`SOURCE`, `VERSION`, `CHECKSUM`으로 출처와 내용을 고정한다.
+SSV adapter가 한 배포본에 있다. 정식 배포본은
+`https://github.com/seorilabs/platform/releases/tag/v<VERSION>`의 고정 asset이며,
+vendored addon의 `SOURCE`, `VERSION`, `CHECKSUM`으로 출처와 전체 tree를 고정한다.
 
 ## 가져가기
 
-GDScript에는 패키지 매니저가 없다. **파일을 복사해 간다.**
+GDScript에는 패키지 매니저가 없다. 정식 소비자는 GitHub Release의
+`seorilabs-platform-gdscript-<VERSION>.tar.gz`와 같은 이름의 `.sha256`을 검증한
+뒤 Godot 프로젝트의 `addons/` 아래에 푼다. archive 안의 `SOURCE`는 `main`이 아니라
+다운로드한 Release asset URL을 가리킨다.
+
+아래 script는 Platform checkout의 미발행 source를 확인하는 로컬 개발용이다.
+결과의 floating `SOURCE`와 기존 source checksum을 정식 release provenance로
+사용하지 않는다.
 
 ```bash
 # 소비자 저장소에서. <platform>은 이 저장소의 checkout 경로다.
