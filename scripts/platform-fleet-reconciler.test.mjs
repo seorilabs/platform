@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
 
 import {
@@ -640,5 +641,22 @@ describe('trusted adapter 실행 경계', () => {
       executeFleetPlan({ plan: forged, adapter: mismatchAdapter, apply: true, verification }),
       /재검증한 Fleet plan/u,
     );
+  });
+});
+
+describe('순수 코어 의존성 경계', () => {
+  it('GitHub/provider mutation client와 secret 입력 경로를 포함하지 않는다', async () => {
+    const source = await readFile(
+      new URL('./platform-fleet-reconciler.mjs', import.meta.url),
+      'utf8',
+    );
+    const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/gu)]
+      .map((match) => match[1]);
+
+    assert.deepEqual(imports, ['node:crypto']);
+    assert.doesNotMatch(source, /\bfetch\s*\(/u);
+    assert.doesNotMatch(source, /node:(?:http|https|net|tls|child_process|fs)/u);
+    assert.doesNotMatch(source, /process\.env|GITHUB_TOKEN|Authorization/u);
+    assert.doesNotMatch(source, /\b(?:getSecret|printSecret|copyPassword)\b/u);
   });
 });
