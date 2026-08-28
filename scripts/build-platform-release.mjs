@@ -329,6 +329,7 @@ export async function buildPlatformRelease(options) {
   const outputDirectory = resolve(options['--output-dir']);
   await mkdir(outputDirectory, { recursive: true });
   const outputs = [
+    [basename(typescriptArtifactPath), typescriptArtifact],
     [gdscriptRelease.artifactName, gdscriptRelease.archive],
     [gdscriptRelease.checksumArtifactName, gdscriptRelease.checksumArtifact],
     ['platform-release.json', manifestContent],
