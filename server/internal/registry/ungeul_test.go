@@ -114,8 +114,10 @@ func TestUngeulIAPRegistryContract(t *testing.T) {
 	if !ungeul.IAP.RequireLinkedAccount {
 		t.Fatal("네이티브 구매의 연결 계정 요구가 비활성이다")
 	}
-	if got := ungeul.Auth.AccountProviders["kakao"].Audience; got != "1559177" {
-		t.Fatalf("Kakao audience=%q, want 1559177", got)
+	// 카카오 ID token의 aud는 앱 ID가 아니라 SDK 초기화에 쓴 앱 키다. 앱 ID를 넣으면
+	// 사용자가 카카오 동의까지 마친 뒤 검증에서만 떨어져 원인을 찾기 어렵다.
+	if got := ungeul.Auth.AccountProviders["kakao"].Audience; got != "4d309d86b98ea5db999bd1603b8c6c29" {
+		t.Fatalf("Kakao audience=%q, want 네이티브 앱 키", got)
 	}
 	if got := ungeul.Auth.AccountProviders["apple"].Audience; got != "com.seorilabs.ungeul" {
 		t.Fatalf("Apple audience=%q, want com.seorilabs.ungeul", got)
