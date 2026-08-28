@@ -710,6 +710,69 @@ func (r *StoreRepository) ConnectAccount(
 	return result, nil
 }
 
+// DisconnectAccount는 공급자 subject 매핑과 사용자 쪽 연결 표시를 함께 제거한다.
+// subject 원문은 이 함수 안에서만 해시되며 IAP 원장은 건드리지 않는다.
+func (r *StoreRepository) DisconnectAccount(
+	ctx context.Context,
+	appID, provider, subject string,
+) error {
+	subjectHash := hashHex(subject)
+	providerPath, err := providerIdentityPath(appID, provider, subjectHash)
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "계정 연결을 해제하지 못했어요")
+	}
+
+	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		mappingExists, mappingSnap, err := tx.Exists(providerPath)
+		if err != nil {
+			return err
+		}
+		if !mappingExists {
+			return nil
+		}
+		var mapping providerIdentityDoc
+		if err := mappingSnap.DataTo(&mapping); err != nil {
+			return err
+		}
+		if mapping.AppID != appID || mapping.Provider != provider ||
+			mapping.SubjectHash != subjectHash || mapping.PlatformUserID == "" {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"공급자 계정 매핑이 올바르지 않아요")
+		}
+
+		uPath, err := userPath(mapping.PlatformUserID)
+		if err != nil {
+			return err
+		}
+		userExists, userSnap, err := tx.Exists(uPath)
+		if err != nil {
+			return err
+		}
+		if userExists {
+			var user userDoc
+			if err := userSnap.DataTo(&user); err != nil {
+				return err
+			}
+			if user.AppID != appID || user.LinkedProviders[provider] != subjectHash {
+				return platformerr.New(platformerr.CodeLedgerStateInvalid,
+					"공급자 계정 매핑이 사용자와 일치하지 않아요")
+			}
+			delete(user.LinkedProviders, provider)
+			if err := tx.Set(uPath, user); err != nil {
+				return err
+			}
+		}
+		return tx.Delete(providerPath)
+	})
+	if err != nil {
+		if platformerr.CodeOf(err) != platformerr.CodeInternal {
+			return err
+		}
+		return platformerr.Wrap(err, platformerr.CodeInternal, "계정 연결을 해제하지 못했어요")
+	}
+	return nil
+}
+
 func (r *StoreRepository) SaveRefresh(
 	ctx context.Context,
 	token string,

@@ -50,6 +50,7 @@ type Config struct {
 	IAP         IAPConfig
 	Ads         AdsConfig
 	Operational OperationalConfig
+	KakaoUnlink KakaoUnlinkConfig
 }
 
 // OperationalConfig는 확정 이벤트를 Backoffice에 서명해 전달하는 설정이다.
@@ -57,6 +58,18 @@ type Config struct {
 type OperationalConfig struct {
 	URL    string
 	Secret []byte
+}
+
+// KakaoUnlinkConfig는 카카오 연결 해제 webhook을 한 Platform 앱에 연결한다.
+// AdminKey는 API role에만 주입하고 저장소나 로그에 남기지 않는다.
+type KakaoUnlinkConfig struct {
+	PlatformAppID string
+	KakaoAppID    string
+	AdminKey      []byte
+}
+
+func (c KakaoUnlinkConfig) Enabled() bool {
+	return c.PlatformAppID != "" && c.KakaoAppID != "" && len(c.AdminKey) > 0
 }
 
 func (c OperationalConfig) Enabled() bool { return c.URL != "" && len(c.Secret) >= 32 }
@@ -130,8 +143,73 @@ func Load() (Config, error) {
 		}
 		c.Operational = operational
 	}
+	if role == RoleAPI {
+		kakaoUnlink, err := loadKakaoUnlink()
+		if err != nil {
+			return Config{}, err
+		}
+		c.KakaoUnlink = kakaoUnlink
+	}
 
 	return c, nil
+}
+
+func loadKakaoUnlink() (KakaoUnlinkConfig, error) {
+	platformAppID := strings.TrimSpace(os.Getenv("KAKAO_UNLINK_PLATFORM_APP_ID"))
+	kakaoAppID := strings.TrimSpace(os.Getenv("KAKAO_UNLINK_APP_ID"))
+	adminKey := os.Getenv("KAKAO_UNLINK_ADMIN_KEY")
+	configured := 0
+	for _, value := range []string{platformAppID, kakaoAppID, adminKey} {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured == 0 {
+		return KakaoUnlinkConfig{}, nil
+	}
+	if configured != 3 {
+		return KakaoUnlinkConfig{}, errors.New(
+			"config: Kakao unlink platform app ID, Kakao app ID, Admin Key는 함께 필요하다",
+		)
+	}
+	if !isLowerKebabID(platformAppID) {
+		return KakaoUnlinkConfig{}, fmt.Errorf(
+			"config: KAKAO_UNLINK_PLATFORM_APP_ID가 올바르지 않다: %q", platformAppID,
+		)
+	}
+	if !isDigits(kakaoAppID) {
+		return KakaoUnlinkConfig{}, errors.New("config: KAKAO_UNLINK_APP_ID는 숫자여야 한다")
+	}
+	return KakaoUnlinkConfig{
+		PlatformAppID: platformAppID,
+		KakaoAppID:    kakaoAppID,
+		AdminKey:      []byte(adminKey),
+	}, nil
+}
+
+func isLowerKebabID(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for i, r := range value {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || i > 0 && r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func loadOperational() (OperationalConfig, error) {

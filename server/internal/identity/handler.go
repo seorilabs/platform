@@ -17,10 +17,18 @@ const AppHeader = "X-Seori-App"
 
 // Handler는 identity HTTP 핸들러다.
 type Handler struct {
-	svc *Service
+	svc         *Service
+	kakaoUnlink *KakaoUnlinkWebhookConfig
 }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithKakaoUnlinkWebhook은 카카오 연결 해제 webhook을 활성화한다.
+func (h *Handler) WithKakaoUnlinkWebhook(config KakaoUnlinkWebhookConfig) *Handler {
+	config.AdminKey = append([]byte(nil), config.AdminKey...)
+	h.kakaoUnlink = &config
+	return h
+}
 
 // Register는 라우트를 등록한다.
 //
@@ -31,6 +39,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/firebase-custom-token", httpx.Wrap(h.createFirebaseCustomToken))
 	mux.HandleFunc("POST /v1/auth/account-link-challenges", httpx.Wrap(h.createAccountLinkChallenge))
 	mux.HandleFunc("POST /v1/auth/account-links", httpx.Wrap(h.createAccountLink))
+	if h.kakaoUnlink != nil {
+		mux.HandleFunc("POST /v1/auth/webhooks/kakao/unlink", httpx.Wrap(h.kakaoUnlinkWebhook))
+	}
 	mux.HandleFunc("DELETE /v1/auth/firebase-account", httpx.Wrap(h.deleteFirebaseAccount))
 	mux.HandleFunc("POST /v1/auth/refresh", httpx.Wrap(h.refresh))
 	mux.HandleFunc("DELETE /v1/users/me", httpx.Wrap(h.deleteMe))

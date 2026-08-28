@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/seorilabs/platform/server/internal/registry"
@@ -238,6 +240,86 @@ func TestAccountLinkHandlers(t *testing.T) {
 	if appCheck.calls != 2 || appCheck.token != "attested-token" {
 		t.Fatalf("App Check calls = %d, token = %q", appCheck.calls, appCheck.token)
 	}
+}
+
+func TestKakaoUnlinkWebhook(t *testing.T) {
+	newHandler := func(t *testing.T, accounts *memoryAccountRepo) *http.ServeMux {
+		t.Helper()
+		service := newAccountTestService(t, accounts,
+			&fakeAccountProvider{name: "kakao", subject: "provider-subject"},
+			&fakeCustomTokenIssuer{token: "firebase-custom-token"},
+		)
+		mux := http.NewServeMux()
+		NewHandler(service).WithKakaoUnlinkWebhook(KakaoUnlinkWebhookConfig{
+			PlatformAppID: "ungeul",
+			KakaoAppID:    "1559177",
+			AdminKey:      []byte("primary-admin-key"),
+		}).Register(mux)
+		return mux
+	}
+	request := func(body url.Values, adminKey string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/v1/auth/webhooks/kakao/unlink",
+			bytes.NewBufferString(body.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Authorization", "KakaoAK "+adminKey)
+		return r
+	}
+	validBody := url.Values{
+		"app_id":        {"1559177"},
+		"user_id":       {"123456789"},
+		"referrer_type": {"UNLINK_FROM_APPS"},
+	}
+
+	t.Run("인증된 알림은 빈 200으로 멱등 처리", func(t *testing.T) {
+		accounts := newMemoryAccountRepo()
+		accounts.mappings["ungeul\x00kakao\x00123456789"] = ConnectedAccount{
+			PlatformUserID: "pu-linked", AppUserID: "firebase-user", Provider: "kakao",
+		}
+		accounts.linked["pu-linked"] = true
+		response := httptest.NewRecorder()
+		newHandler(t, accounts).ServeHTTP(response, request(validBody, "primary-admin-key"))
+		if response.Code != http.StatusOK || response.Body.Len() != 0 {
+			t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
+		}
+		if accounts.disconnectedApp != "ungeul" || accounts.disconnectedProvider != "kakao" ||
+			accounts.disconnectedSubject != "123456789" || accounts.linked["pu-linked"] {
+			t.Fatalf("disconnect = %#v", accounts)
+		}
+	})
+
+	t.Run("잘못된 Admin Key는 거부", func(t *testing.T) {
+		accounts := newMemoryAccountRepo()
+		response := httptest.NewRecorder()
+		newHandler(t, accounts).ServeHTTP(response, request(validBody, "wrong-key"))
+		if response.Code != http.StatusUnauthorized || accounts.disconnectedSubject != "" {
+			t.Fatalf("status = %d, disconnected subject = %q",
+				response.Code, accounts.disconnectedSubject)
+		}
+	})
+
+	t.Run("Kakao app ID 불일치는 거부", func(t *testing.T) {
+		accounts := newMemoryAccountRepo()
+		body := url.Values{
+			"app_id": {"9999999"}, "user_id": {"123456789"},
+			"referrer_type": {"UNLINK_FROM_APPS"},
+		}
+		response := httptest.NewRecorder()
+		newHandler(t, accounts).ServeHTTP(response, request(body, "primary-admin-key"))
+		if response.Code != http.StatusBadRequest || accounts.disconnectedSubject != "" {
+			t.Fatalf("status = %d, disconnected subject = %q",
+				response.Code, accounts.disconnectedSubject)
+		}
+	})
+
+	t.Run("인증 후 내부 오류도 Kakao 계약대로 빈 200", func(t *testing.T) {
+		accounts := newMemoryAccountRepo()
+		accounts.disconnectErr = errors.New("store unavailable")
+		response := httptest.NewRecorder()
+		newHandler(t, accounts).ServeHTTP(response, request(validBody, "primary-admin-key"))
+		if response.Code != http.StatusOK || response.Body.Len() != 0 {
+			t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
+		}
+	})
 }
 
 func setAccountLinkHeaders(request *http.Request, platformToken string) {

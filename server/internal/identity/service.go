@@ -465,6 +465,13 @@ func (s *Service) Refresh(ctx context.Context, appID, refreshToken string) (Resu
 	if app.UIDBlocked(sess.AppUserID) {
 		return Result{}, platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
 	}
+	if sess.IsLinkedAccount && s.accounts != nil {
+		linked, err := s.accounts.IsAccountLinked(ctx, app.AppID, sess.PlatformUserID)
+		if err != nil {
+			return Result{}, err
+		}
+		sess.IsLinkedAccount = linked
+	}
 
 	// 회전. 실패해도 새 토큰 발급은 진행한다.
 	// 옛 토큰이 남는 것보다 사용자가 로그아웃되는 게 더 나쁘다.

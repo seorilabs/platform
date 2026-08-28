@@ -206,6 +206,13 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			svc.WithAITLoginVerifier(client)
 		}
 		d.identity = identity.NewHandler(svc)
+		if cfg.KakaoUnlink.Enabled() {
+			d.identity.WithKakaoUnlinkWebhook(identity.KakaoUnlinkWebhookConfig{
+				PlatformAppID: cfg.KakaoUnlink.PlatformAppID,
+				KakaoAppID:    cfg.KakaoUnlink.KakaoAppID,
+				AdminKey:      cfg.KakaoUnlink.AdminKey,
+			})
+		}
 		d.adminUsers = users
 		d.keys = keys
 	}

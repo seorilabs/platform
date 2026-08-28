@@ -118,12 +118,37 @@ subject 원문과 이메일은 저장·로그하지 않고 저장소 경계에�
   `isLinkedAccount=true` session에만 허용한다.
 - AppsInToss는 mTLS로 교환한 Toss Login을 연결 계정으로 보고 별도 카카오·Apple 연결을 열지 않는다.
 
+### 카카오 연결 해제 webhook
+
+```
+POST /v1/auth/webhooks/kakao/unlink
+Authorization: KakaoAK <Primary Admin Key>
+Content-Type: application/x-www-form-urlencoded
+
+app_id=<Kakao app ID>&user_id=<Kakao user ID>&referrer_type=<reason>
+→ 200 OK - empty body
+```
+
+- API role에 `KAKAO_UNLINK_PLATFORM_APP_ID`, `KAKAO_UNLINK_APP_ID`,
+  `KAKAO_UNLINK_ADMIN_KEY` 세 값을 함께 주입할 때만 route를 연다. Admin Key는 API role 밖에
+  마운트하지 않는다.
+- Authorization은 constant-time으로 비교하고 `app_id`, 숫자형 `user_id`, 허용된
+  `referrer_type`, form 필드와 4KiB 본문 상한을 검증한다.
+- `user_id`는 repository 경계에서 즉시 SHA-256 처리한다. 원문·Admin Key·subject hash를
+  응답이나 운영 로그에 남기지 않는다.
+- 매핑과 사용자 문서의 provider 표시는 한 Firestore transaction에서 제거한다. 이미 없는 매핑은
+  멱등 성공하고 IAP 감사 원장은 보존한다.
+- 유효하고 인증된 callback은 Kakao 계약에 맞춰 내부 사용자 부재나 처리 오류에도 빈 200을 반환한다.
+  처리 오류는 app ID, referrer와 비식별 error code만 로그에 남긴다.
+- 기존 access token은 최대 1시간 TTL까지 남을 수 있다. refresh는 저장소 연결 상태를 다시 읽고
+  연결 해제된 세션을 `isLinkedAccount=false`로 강등한다.
+
 ### 활성화 gate
 
 코드가 존재하는 것과 운글 로그인이 운영 가능한 것은 다르다. provider audience와 앱 등록,
 Firebase custom-token service account, App Check 실기기 검증, 개인정보 문서, 카카오·Apple SDK,
-Apple authorization code 교환 및 계정 삭제 시 token 철회, 복원 QA가 모두 끝나야 레지스트리를
-활성화한다. 네이버 로그인은 초기 범위에 없다.
+Kakao Primary Admin Key 운영 주입과 unlink URL 콘솔 등록, Apple authorization code 교환 및 계정
+삭제 시 token 철회, 복원 QA가 모두 끝나야 레지스트리를 활성화한다. 네이버 로그인은 초기 범위에 없다.
 
 ### 운영 상태
 

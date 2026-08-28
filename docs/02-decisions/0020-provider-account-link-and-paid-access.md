@@ -43,6 +43,13 @@
 10. 실제 provider audience 등록, Firebase service account 권한, App Check 강제, 앱 SDK 설정,
     Apple authorization code 교환과 계정 삭제 시 token 철회, 개인정보 처리방침 갱신, 실기기
     복원 검증이 끝나기 전에는 운글 레지스트리에서 provider와 IAP를 활성화하지 않는다.
+11. 카카오 연결 해제 callback은 API role의 별도 `POST /v1/auth/webhooks/kakao/unlink` 경계에서
+    Primary Admin Key와 Kakao app ID를 모두 검증한다. `user_id` 원문은 저장·로그하지 않고 기존
+    subject 해시 매핑만 원자적으로 제거한다. 유효한 callback은 사용자 부재나 내부 처리 실패에도
+    카카오 계약에 따라 빈 200을 반환하고 오류 코드는 비식별 운영 로그로 남긴다.
+12. 연결 해제 전 발급된 access token은 기존 1시간 TTL까지 유효할 수 있다. refresh 시 저장소의
+    현재 연결 상태를 다시 확인해 `isLinkedAccount=false`로 강등하므로 새 유료 접근 세션은 발급되지
+    않는다. 즉시 access token 폐기가 필요해지면 별도 revocation 저장소를 설계한다.
 
 ## 결과
 
@@ -52,4 +59,6 @@
 - 앱 삭제나 재설치 후 같은 provider를 증명하면 소모성 잔여 열람권을 기존 원장에서 찾을 수 있다.
 - 자동 계정 병합을 하지 않으므로 두 계정의 결제 이력을 잘못 합치는 위험을 피한다. 필요한 병합은
   별도의 본인 확인과 운영 정책이 마련되기 전까지 지원하지 않는다.
+- 카카오 앱에서 연결을 해제하면 다음 Platform refresh부터 연결 계정 권한이 제거되지만, 구매 감사
+  원장과 잔여 열람권 자체는 삭제하지 않는다.
 - 코드 merge는 카카오·Apple 콘솔 등록, Apple 철회 경로, 배포, 실기기 로그인 성공을 의미하지 않는다.

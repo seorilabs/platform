@@ -39,11 +39,44 @@ type memoryChallenge struct {
 }
 
 type memoryAccountRepo struct {
-	mu         sync.Mutex
-	challenges map[string]memoryChallenge
-	users      map[string]string
-	linked     map[string]bool
-	mappings   map[string]ConnectedAccount
+	mu                   sync.Mutex
+	challenges           map[string]memoryChallenge
+	users                map[string]string
+	linked               map[string]bool
+	mappings             map[string]ConnectedAccount
+	disconnectErr        error
+	disconnectedApp      string
+	disconnectedProvider string
+	disconnectedSubject  string
+}
+
+func (m *memoryAccountRepo) DisconnectAccount(
+	_ context.Context,
+	appID, provider, subject string,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.disconnectedApp = appID
+	m.disconnectedProvider = provider
+	m.disconnectedSubject = subject
+	if m.disconnectErr != nil {
+		return m.disconnectErr
+	}
+	key := appID + "\x00" + provider + "\x00" + subject
+	mapping, exists := m.mappings[key]
+	if !exists {
+		return nil
+	}
+	delete(m.mappings, key)
+	linked := false
+	for _, remaining := range m.mappings {
+		if remaining.PlatformUserID == mapping.PlatformUserID {
+			linked = true
+			break
+		}
+	}
+	m.linked[mapping.PlatformUserID] = linked
+	return nil
 }
 
 func newMemoryAccountRepo() *memoryAccountRepo {
@@ -181,6 +214,20 @@ func TestAccountLinkIssuesLinkedSession(t *testing.T) {
 	)
 	if err != nil || !refreshed.IsLinkedAccount {
 		t.Fatalf("refreshed session = %#v, err = %v", refreshed, err)
+	}
+	if err := service.DisconnectExternalAccount(
+		context.Background(), "lizard-tycoon", "kakao", "provider-subject",
+	); err != nil {
+		t.Fatal(err)
+	}
+	downgraded, err := service.Refresh(
+		context.Background(), "lizard-tycoon", refreshed.RefreshToken,
+	)
+	if err != nil || downgraded.IsLinkedAccount {
+		t.Fatalf("연결 해제 후 갱신 세션 = %#v, err = %v", downgraded, err)
+	}
+	if accounts.disconnectedSubject != "provider-subject" {
+		t.Fatalf("연결 해제 subject = %q", accounts.disconnectedSubject)
 	}
 }
 

@@ -33,6 +33,7 @@ type AccountRepository interface {
 		appID, currentPlatformUserID, provider, subject, nonce string,
 		now time.Time,
 	) (ConnectedAccount, error)
+	DisconnectAccount(ctx context.Context, appID, provider, subject string) error
 	IsAccountLinked(ctx context.Context, appID, platformUserID string) (bool, error)
 }
 
@@ -158,6 +159,26 @@ func (s *Service) CompleteAccountLink(
 		Session: issued, FirebaseCustomToken: customToken,
 		Provider: connected.Provider, Restored: connected.Restored,
 	}, nil
+}
+
+// DisconnectExternalAccount는 공급자 webhook이 증명한 subject 매핑을 끊는다.
+// provider subject 원문은 저장소 경계에서 즉시 해시되고 영구 저장되지 않는다.
+func (s *Service) DisconnectExternalAccount(
+	ctx context.Context,
+	appID, provider, subject string,
+) error {
+	appID = strings.TrimSpace(appID)
+	provider = strings.TrimSpace(provider)
+	subject = strings.TrimSpace(subject)
+	if s.accounts == nil {
+		return platformerr.New(platformerr.CodePlatformUnavailable,
+			"계정 연결 서비스가 준비되지 않았어요")
+	}
+	if appID == "" || provider == "" || subject == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid,
+			"연결 해제 정보가 올바르지 않아요")
+	}
+	return s.accounts.DisconnectAccount(ctx, appID, provider, subject)
 }
 
 func (s *Service) accountProvider(
