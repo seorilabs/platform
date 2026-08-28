@@ -480,6 +480,78 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /content/deep-access:
+    get:
+      tags: [content]
+      summary: 심화 열람 현황 조회
+      description: |
+        남은 열람권과 이미 연 심화 항목을 함께 반환한다.
+
+        **표시 전용이다.** 열람 판정은 `readings:resolve`가 매번 서버에서
+        다시 한다. 이 응답을 캐시해 클라이언트가 스스로 열면 환불 뒤에도
+        열린 것처럼 보인다.
+
+        `readingKey`는 명식 파생값의 해시이며 플랫폼은 그것이 누구의
+        사주인지 모른다. 사람이 읽을 이름은 로컬 프로필을 가진 앱이 붙인다.
+
+        `ticket`은 레지스트리에 `content.ticket_entitlement_id`와
+        `content.ticket_units_per_purchase`가 설정된 앱에만 있다.
+      operationId: getContentDeepAccess
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/ContentAppCheck'
+      responses:
+        '200':
+          description: 심화 열람 현황
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [unlocks]
+                        properties:
+                          ticket:
+                            type: object
+                            required: [entitlementId, remaining, unitsPerPurchase]
+                            properties:
+                              entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+                              remaining:
+                                type: integer
+                                minimum: 0
+                                description: 남은 열람 가능 수. 한 장이 한 명식의 한 해를 연다.
+                              unitsPerPurchase:
+                                type: integer
+                                minimum: 1
+                                description: 1회 구매로 생기는 열람 수. 화면이 분모로 쓴다.
+                          unlocks:
+                            type: array
+                            items:
+                              type: object
+                              required: [readingKey, deepKey, source, unlockedAt]
+                              properties:
+                                readingKey:
+                                  type: string
+                                  description: 명식 파생값 해시. PII가 아니다.
+                                deepKey:
+                                  type: string
+                                  description: 열람 단위 키. 현재는 `flow:<연도>`뿐이다.
+                                year:
+                                  type: integer
+                                  description: deepKey에서 뽑은 연도. 형식이 다르면 생략된다.
+                                source:
+                                  type: string
+                                  enum: [ticket, reward_claim]
+                                unlockedAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /presence/token:
     post:
       tags: [presence]

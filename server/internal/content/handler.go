@@ -37,6 +37,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/content/version", httpx.Wrap(h.version))
 	mux.HandleFunc("POST /v1/content/readings:resolve", httpx.Wrap(h.resolve))
 	mux.HandleFunc("GET /v1/content/terms/{termId}", httpx.Wrap(h.term))
+	mux.HandleFunc("GET /v1/content/deep-access", httpx.Wrap(h.deepAccess))
 }
 
 func (h *Handler) authenticated(r *http.Request) (identity.Session, error) {
@@ -81,6 +82,26 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) error {
 	}
 	result, err := h.service.Resolve(
 		r.Context(), sess.AppID, sess.PlatformUserID, req,
+	)
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusOK, result)
+	return nil
+}
+
+// deepAccess는 남은 열람권과 이미 연 심화 항목을 준다.
+//
+// 표시 전용이라 열람 판정에 쓰지 않는다. 실제 열림 여부는 resolve가
+// 매번 서버에서 다시 판정한다 — 이 응답을 캐시해 화면이 스스로 열면
+// 환불 뒤에도 열린 것처럼 보인다.
+func (h *Handler) deepAccess(w http.ResponseWriter, r *http.Request) error {
+	sess, err := h.authenticated(r)
+	if err != nil {
+		return err
+	}
+	result, err := h.service.DeepAccess(
+		r.Context(), sess.AppID, sess.PlatformUserID, 0,
 	)
 	if err != nil {
 		return err
