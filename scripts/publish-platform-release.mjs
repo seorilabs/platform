@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { platformReleaseIdentity } from './platform-fleet-reconciler.mjs';
 import { sha256 } from './platform-release-lib.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,6 +24,13 @@ function safeAssetName(value, label) {
     throw new Error(`${label}이 안전한 asset 이름이 아닙니다: ${name}`);
   }
   return name;
+}
+
+function requiredPositiveSize(value, label) {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${label}가 올바르지 않습니다.`);
+  }
+  return value;
 }
 
 async function githubRequest(fetchImpl, url, token, options = {}) {
@@ -52,23 +60,30 @@ async function loadReleaseAssets(directory, tag) {
   } catch (error) {
     throw new Error('platform-release.json을 해석하지 못했습니다.', { cause: error });
   }
+  platformReleaseIdentity(manifestContent);
   if (manifest.schemaVersion !== 1 || manifest.release?.tag !== tag) {
     throw new Error(`manifest release tag가 실행 tag와 다릅니다: ${manifest.release?.tag}`);
   }
-  if (!/^[0-9a-f]{40}$/u.test(manifest.release?.sourceSha ?? '')) {
-    throw new Error('manifest sourceSha가 올바르지 않습니다.');
-  }
 
+  const typescript = manifest.sdk?.typescript;
   const gdscript = manifest.sdk?.gdscript;
   const declared = [
     {
+      name: safeAssetName(typescript?.artifact?.name, 'TypeScript artifact name'),
+      digest: requiredString(typescript?.artifact?.sha256, 'TypeScript artifact sha256'),
+      size: requiredPositiveSize(typescript?.artifact?.size, 'TypeScript artifact size'),
+      contentType: 'application/gzip',
+    },
+    {
       name: safeAssetName(gdscript?.artifact?.name, 'GDScript artifact name'),
       digest: requiredString(gdscript?.artifact?.sha256, 'GDScript artifact sha256'),
+      size: requiredPositiveSize(gdscript?.artifact?.size, 'GDScript artifact size'),
       contentType: 'application/gzip',
     },
     {
       name: safeAssetName(gdscript?.checksumArtifact?.name, 'checksum artifact name'),
       digest: requiredString(gdscript?.checksumArtifact?.sha256, 'checksum artifact sha256'),
+      size: requiredPositiveSize(gdscript?.checksumArtifact?.size, 'checksum artifact size'),
       contentType: 'text/plain; charset=utf-8',
     },
     {
@@ -83,6 +98,9 @@ async function loadReleaseAssets(directory, tag) {
       throw new Error(`${asset.name} sha256 형식이 올바르지 않습니다.`);
     }
     const content = await readFile(resolve(directory, asset.name));
+    if (asset.size !== undefined && content.length !== asset.size) {
+      throw new Error(`${asset.name} size가 manifest와 다릅니다.`);
+    }
     const actual = sha256(content);
     if (actual !== asset.digest) {
       throw new Error(`${asset.name} digest가 manifest와 다릅니다.`);

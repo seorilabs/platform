@@ -276,6 +276,12 @@ export async function buildPlatformRelease(options) {
     typescriptPackage.name,
     typescriptPackage.version,
   );
+  const typescriptArtifactName = `seorilabs-platform-sdk-${typescriptPackage.version}.tgz`;
+  if (basename(typescriptArtifactPath) !== typescriptArtifactName) {
+    throw new Error(
+      `TypeScript artifact 파일명 ${basename(typescriptArtifactPath)} != ${typescriptArtifactName}`,
+    );
+  }
   const gdscriptRelease = createGdscriptRelease({
     version: gdscriptVersion,
     releaseTag,
@@ -295,7 +301,7 @@ export async function buildPlatformRelease(options) {
         version: typescriptPackage.version,
         registry: 'https://npm.pkg.github.com',
         artifact: {
-          name: basename(typescriptArtifactPath),
+          name: typescriptArtifactName,
           sha256: sha256(typescriptArtifact),
           size: typescriptArtifact.length,
         },
@@ -329,6 +335,7 @@ export async function buildPlatformRelease(options) {
   const outputDirectory = resolve(options['--output-dir']);
   await mkdir(outputDirectory, { recursive: true });
   const outputs = [
+    [typescriptArtifactName, typescriptArtifact],
     [gdscriptRelease.artifactName, gdscriptRelease.archive],
     [gdscriptRelease.checksumArtifactName, gdscriptRelease.checksumArtifact],
     ['platform-release.json', manifestContent],

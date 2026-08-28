@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -10,8 +10,10 @@ import { publishPlatformRelease } from './publish-platform-release.mjs';
 async function releaseDirectory(test) {
   const directory = await mkdtemp(join(tmpdir(), 'platform-release-publish-test-'));
   test.after(() => rm(directory, { recursive: true, force: true }));
+  const typescriptName = 'seorilabs-platform-sdk-0.4.0.tgz';
   const artifactName = 'seorilabs-platform-gdscript-0.6.5.tar.gz';
   const checksumName = `${artifactName}.sha256`;
+  const typescript = Buffer.from('deterministic-typescript-artifact');
   const artifact = Buffer.from('deterministic-gdscript-artifact');
   const checksum = Buffer.from(`${sha256(artifact)}  ${artifactName}\n`);
   const manifest = {
@@ -22,16 +24,34 @@ async function releaseDirectory(test) {
       baseSourceSha: 'b'.repeat(40),
     },
     sdk: {
+      typescript: {
+        package: '@seorilabs/platform-sdk',
+        registry: 'https://npm.pkg.github.com',
+        version: '0.4.0',
+        artifact: {
+          name: typescriptName,
+          sha256: sha256(typescript),
+          size: typescript.length,
+        },
+      },
       gdscript: {
+        version: '0.6.5',
+        source: 'https://github.com/seorilabs/platform/releases/download/v0.6.5/seorilabs-platform-gdscript-0.6.5.tar.gz',
+        treeChecksum: 'd'.repeat(64),
         artifact: { name: artifactName, sha256: sha256(artifact), size: artifact.length },
         checksumArtifact: { name: checksumName, sha256: sha256(checksum), size: checksum.length },
       },
     },
     contract: {
+      affectedCapabilities: ['core'],
+      affectedTracks: ['gdscript'],
+      baseRevision: `sha256:${'d'.repeat(64)}`,
       classification: 'implementation-only',
       revision: `sha256:${'c'.repeat(64)}`,
+      supportedApiMajor: 1,
     },
   };
+  await writeFile(join(directory, typescriptName), typescript);
   await writeFile(join(directory, artifactName), artifact);
   await writeFile(join(directory, checksumName), checksum);
   await writeFile(join(directory, 'platform-release.json'), canonicalJson(manifest));
@@ -46,7 +66,7 @@ function jsonResponse(value, status = 200) {
 }
 
 describe('GitHub Release immutable publisher', () => {
-  it('draft를 만든 뒤 세 asset을 올리고 마지막에만 공개한다', async (test) => {
+  it('draft를 만든 뒤 TypeScript를 포함한 네 asset을 올리고 마지막에만 공개한다', async (test) => {
     const directory = await releaseDirectory(test);
     const calls = [];
     const uploaded = [];
@@ -105,10 +125,59 @@ describe('GitHub Release immutable publisher', () => {
       token: 'test-token',
     });
     assert.deepEqual(result, { releaseId: 42, tag: 'v0.6.5' });
-    assert.equal(calls.filter(({ url }) => url.startsWith('https://uploads.github.test/')).length, 3);
+    assert.equal(calls.filter(({ url }) => url.startsWith('https://uploads.github.test/')).length, 4);
     const publish = calls.at(-1);
     assert.equal(publish.options.method, 'PATCH');
     assert.deepEqual(JSON.parse(publish.options.body), { draft: false });
+  });
+
+  it('TypeScript artifact가 없으면 API 호출 전에 중단한다', async (test) => {
+    const directory = await releaseDirectory(test);
+    await rm(join(directory, 'seorilabs-platform-sdk-0.4.0.tgz'));
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return jsonResponse([]);
+    };
+    await assert.rejects(
+      publishPlatformRelease({
+        apiBase: 'https://api.github.test',
+        directory,
+        fetchImpl,
+        repository: 'seorilabs/platform',
+        sourceSha: 'a'.repeat(40),
+        tag: 'v0.6.5',
+        token: 'test-token',
+      }),
+      /ENOENT/u,
+    );
+    assert.equal(calls, 0);
+  });
+
+  it('TypeScript artifact size가 manifest와 다르면 API 호출 전에 중단한다', async (test) => {
+    const directory = await releaseDirectory(test);
+    const manifestPath = join(directory, 'platform-release.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    manifest.sdk.typescript.artifact.size += 1;
+    await writeFile(manifestPath, canonicalJson(manifest));
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return jsonResponse([]);
+    };
+    await assert.rejects(
+      publishPlatformRelease({
+        apiBase: 'https://api.github.test',
+        directory,
+        fetchImpl,
+        repository: 'seorilabs/platform',
+        sourceSha: 'a'.repeat(40),
+        tag: 'v0.6.5',
+        token: 'test-token',
+      }),
+      /size가 manifest와 다릅니다/u,
+    );
+    assert.equal(calls, 0);
   });
 
   it('이미 공개된 release에 asset이 빠졌으면 수정하지 않고 중단한다', async (test) => {
