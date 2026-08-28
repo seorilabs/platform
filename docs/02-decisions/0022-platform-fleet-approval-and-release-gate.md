@@ -48,3 +48,9 @@ Backoffice 설정으로도 release build가 진행될 수 있다.
 ADR 0021의 "저장소에 서명 생성 CLI를 두지 않는다"는 결정을 이 ADR이 좁게 대체한다.
 private key를 해석하거나 export하는 일반 CLI는 계속 금지하며, broker FD 전용 signer만
 허용한다.
+
+## ADR 0025와의 관계
+
+approval schema v1은 canary evidence를 강제하지 못하므로 ADR 0025의 v2 계약으로 대체한다.
+private key FD와 release gate receipt 원칙은 유지하며, signer는 broker가 연결한 signed
+canary evidence와 trusted readback key registry FD도 함께 요구한다.

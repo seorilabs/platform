@@ -49,6 +49,22 @@ describe('Platform release workflow 계약', () => {
     assert.match(source, /npm publish "\$\{\{ steps\.pack\.outputs\.tarball \}\}"/u);
   });
 
+  it('tracked GDScript SOURCE는 현재 VERSION의 immutable Release asset을 가리킨다', async () => {
+    const [versionText, sourceText, vendorScript] = await Promise.all([
+      readFile(resolve(root, 'sdk-gdscript/VERSION'), 'utf8'),
+      readFile(resolve(root, 'sdk-gdscript/addons/seorilabs_platform/SOURCE'), 'utf8'),
+      readFile(resolve(root, 'scripts/vendor_sdk_gdscript.sh'), 'utf8'),
+    ]);
+    const version = versionText.trim();
+    assert.equal(
+      sourceText.trim(),
+      `https://github.com/seorilabs/platform/releases/download/v${version}/seorilabs-platform-gdscript-${version}.tar.gz`,
+    );
+    assert.doesNotMatch(sourceText, /\/tree\/(?:main|master)\//u);
+    assert.match(vendorScript, /git -C "\$repo_root" rev-parse HEAD/u);
+    assert.doesNotMatch(vendorScript, /\/tree\/(?:main|master)\//u);
+  });
+
   it('oasdiff 버전과 모든 허용 실행환경 archive digest를 고정한다', () => {
     assert.equal(OASDIFF_VERSION, '1.29.1');
     for (const digest of [

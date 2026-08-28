@@ -1,7 +1,9 @@
 import { createHash, verify as verifySignature } from 'node:crypto';
 
-const APPROVAL_PURPOSE = 'seorilabs-platform-fleet-approved-release-v1';
+const APPROVAL_PURPOSE = 'seorilabs-platform-fleet-approved-release-v2';
 const APPROVAL_REPOSITORY = 'seorilabs/platform';
+const WORKFLOW_BUNDLE_REPOSITORY = 'seorilabs/.github';
+const CANARY_PROFILES = ['godot', 'react-native'];
 const TRACKS = ['gdscript', 'typescript'];
 const CONTRACT_CLASSIFICATIONS = [
   'implementation-only',
@@ -233,22 +235,162 @@ function parseManifestContent(manifestContent) {
   return { bytes, manifest: validateManifest(manifest) };
 }
 
-export function platformReleaseApprovalPayload(manifestContent) {
+export function platformReleaseIdentity(manifestContent) {
   const { bytes, manifest } = parseManifestContent(manifestContent);
   return immutableClone({
-    purpose: APPROVAL_PURPOSE,
     repository: APPROVAL_REPOSITORY,
-    status: 'fleet-approved',
     manifestSha256: `sha256:${sha256(bytes)}`,
     sourceSha: manifest.release.sourceSha,
     releaseTag: manifest.release.tag,
   });
 }
 
+function validateCanaryArtifact(value, label) {
+  assertExactKeys(value, ['name', 'sha256', 'size'], label);
+  requiredString(value.name, `${label}.name`, /^[A-Za-z0-9._-]+\.aab$/u);
+  requiredString(value.sha256, `${label}.sha256`, SHA256_REVISION_PATTERN);
+  requiredInteger(value.size, `${label}.size`, 1);
+}
+
+function validateCanaryRun(value, label, { buildOnly, sourceSha, workflowSourceSha }) {
+  assertExactKeys(
+    value,
+    buildOnly
+      ? [
+          'artifact',
+          'buildConfigDigest',
+          'builderImageDigest',
+          'cloudBuildId',
+          'conclusion',
+          'headSha',
+          'runId',
+          'workflowSourceSha',
+        ]
+      : ['conclusion', 'headSha', 'runId', 'workflowSourceSha'],
+    label,
+  );
+  requiredString(value.runId, `${label}.runId`, /^\d+$/u);
+  if (value.conclusion !== 'success') {
+    throw new Error(`${label}.conclusion은 success여야 합니다.`);
+  }
+  requiredString(value.headSha, `${label}.headSha`, SOURCE_SHA_PATTERN);
+  requiredString(value.workflowSourceSha, `${label}.workflowSourceSha`, SOURCE_SHA_PATTERN);
+  if (value.headSha !== sourceSha || value.workflowSourceSha !== workflowSourceSha) {
+    throw new Error(`${label}의 source SHA가 canary 또는 WorkflowBundle과 다릅니다.`);
+  }
+  if (buildOnly) {
+    requiredString(value.cloudBuildId, `${label}.cloudBuildId`, SAFE_ID_PATTERN);
+    requiredString(value.builderImageDigest, `${label}.builderImageDigest`, SHA256_REVISION_PATTERN);
+    requiredString(value.buildConfigDigest, `${label}.buildConfigDigest`, SHA256_REVISION_PATTERN);
+    validateCanaryArtifact(value.artifact, `${label}.artifact`);
+  }
+}
+
+function validateCanaryApprovalEvidence(value) {
+  assertExactKeys(
+    value,
+    ['attestationSha256', 'canaries', 'readbackKeyId', 'workflowBundle'],
+    'release approval canary evidence',
+  );
+  requiredString(
+    value.attestationSha256,
+    'release approval canary evidence.attestationSha256',
+    SHA256_REVISION_PATTERN,
+  );
+  requiredString(
+    value.readbackKeyId,
+    'release approval canary evidence.readbackKeyId',
+    SAFE_ID_PATTERN,
+  );
+  assertExactKeys(
+    value.workflowBundle,
+    ['digest', 'repository', 'sourceSha'],
+    'release approval canary evidence.workflowBundle',
+  );
+  if (value.workflowBundle.repository !== WORKFLOW_BUNDLE_REPOSITORY) {
+    throw new Error('canary evidence WorkflowBundle repository가 올바르지 않습니다.');
+  }
+  requiredString(
+    value.workflowBundle.sourceSha,
+    'release approval canary evidence.workflowBundle.sourceSha',
+    SOURCE_SHA_PATTERN,
+  );
+  requiredString(
+    value.workflowBundle.digest,
+    'release approval canary evidence.workflowBundle.digest',
+    SHA256_REVISION_PATTERN,
+  );
+  if (!Array.isArray(value.canaries) || value.canaries.length !== CANARY_PROFILES.length) {
+    throw new Error('release approval에는 RN과 Godot canary가 정확히 하나씩 필요합니다.');
+  }
+  const repositoryIds = new Set();
+  const repositoryNames = new Set();
+  const profiles = [];
+  for (const [index, canary] of value.canaries.entries()) {
+    const label = `release approval canary evidence.canaries[${index}]`;
+    assertExactKeys(
+      canary,
+      [
+        'buildOnlyRun',
+        'profile',
+        'repositoryFullName',
+        'repositoryId',
+        'sourceSha',
+        'staticRun',
+      ],
+      label,
+    );
+    if (!CANARY_PROFILES.includes(canary.profile)) {
+      throw new Error(`${label}.profile 값이 올바르지 않습니다.`);
+    }
+    profiles.push(canary.profile);
+    requiredString(canary.repositoryId, `${label}.repositoryId`, /^\d+$/u);
+    requiredString(
+      canary.repositoryFullName,
+      `${label}.repositoryFullName`,
+      REPOSITORY_PATTERN,
+    );
+    requiredString(canary.sourceSha, `${label}.sourceSha`, SOURCE_SHA_PATTERN);
+    if (repositoryIds.has(canary.repositoryId) || repositoryNames.has(canary.repositoryFullName)) {
+      throw new Error('RN과 Godot canary repository는 서로 달라야 합니다.');
+    }
+    repositoryIds.add(canary.repositoryId);
+    repositoryNames.add(canary.repositoryFullName);
+    validateCanaryRun(canary.staticRun, `${label}.staticRun`, {
+      buildOnly: false,
+      sourceSha: canary.sourceSha,
+      workflowSourceSha: value.workflowBundle.sourceSha,
+    });
+    validateCanaryRun(canary.buildOnlyRun, `${label}.buildOnlyRun`, {
+      buildOnly: true,
+      sourceSha: canary.sourceSha,
+      workflowSourceSha: value.workflowBundle.sourceSha,
+    });
+    if (canary.staticRun.runId === canary.buildOnlyRun.runId) {
+      throw new Error(`${label}의 static과 build-only run ID가 같습니다.`);
+    }
+  }
+  if (JSON.stringify(profiles) !== JSON.stringify(CANARY_PROFILES)) {
+    throw new Error('release approval canary는 godot, react-native 순서로 고정해야 합니다.');
+  }
+  return value;
+}
+
+export function platformReleaseApprovalPayload(manifestContent, canaryEvidence) {
+  const identity = platformReleaseIdentity(manifestContent);
+  const evidence = validateCanaryApprovalEvidence(structuredClone(canaryEvidence));
+  return immutableClone({
+    purpose: APPROVAL_PURPOSE,
+    ...identity,
+    status: 'fleet-approved',
+    canaryEvidence: evidence,
+  });
+}
+
 // Signer와 verifier가 같은 byte 표현을 쓰도록 승인 payload의 canonical byte를
 // producer가 아닌 계약 모듈에서 한 번만 정의한다. 반환값에는 secret이 없다.
-export function platformReleaseApprovalBytes(manifestContent) {
-  return Buffer.from(canonicalBytes(platformReleaseApprovalPayload(manifestContent)));
+export function platformReleaseApprovalBytes(manifestContent, canaryEvidence) {
+  return Buffer.from(canonicalBytes(platformReleaseApprovalPayload(manifestContent, canaryEvidence)));
 }
 
 function trustedKey(trustedPublicKeys, keyId) {
@@ -268,16 +410,27 @@ function verifyApproval(manifestContent, approval, trustedPublicKeys) {
     ['algorithm', 'keyId', 'payload', 'schemaVersion', 'signature'],
     'release approval',
   );
-  if (approval.schemaVersion !== 1 || approval.algorithm !== 'Ed25519') {
+  if (approval.schemaVersion !== 2 || approval.algorithm !== 'Ed25519') {
     throw new Error('지원하지 않는 Fleet approval 형식입니다.');
   }
   requiredString(approval.keyId, 'release approval keyId', SAFE_ID_PATTERN);
   requiredString(approval.signature, 'release approval signature', /^[A-Za-z0-9+/]+={0,2}$/u);
-  const expectedPayload = platformReleaseApprovalPayload(manifestContent);
   assertExactKeys(
     approval.payload,
-    ['manifestSha256', 'purpose', 'releaseTag', 'repository', 'sourceSha', 'status'],
+    [
+      'canaryEvidence',
+      'manifestSha256',
+      'purpose',
+      'releaseTag',
+      'repository',
+      'sourceSha',
+      'status',
+    ],
     'release approval payload',
+  );
+  const expectedPayload = platformReleaseApprovalPayload(
+    manifestContent,
+    approval.payload.canaryEvidence,
   );
   if (JSON.stringify(canonicalize(approval.payload)) !== JSON.stringify(canonicalize(expectedPayload))) {
     throw new Error('Fleet approval payload가 platform release와 일치하지 않습니다.');
@@ -838,6 +991,9 @@ export function reconcilePlatformFleet({
       releaseTag: approvalPayload.releaseTag,
       contractRevision: manifest.contract.revision,
       contractClassification: manifest.contract.classification,
+      canaryEvidenceDigest: approvalPayload.canaryEvidence.attestationSha256,
+      workflowBundleSourceSha: approvalPayload.canaryEvidence.workflowBundle.sourceSha,
+      workflowBundleDigest: approvalPayload.canaryEvidence.workflowBundle.digest,
     },
     observationSnapshotDigest,
     consumers,

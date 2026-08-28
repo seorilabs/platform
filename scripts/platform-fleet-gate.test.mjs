@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import {
   mkdtemp,
   open,
@@ -15,9 +15,12 @@ import { fileURLToPath } from 'node:url';
 
 import {
   createPlatformReleaseApproval,
+  parseTrustedPlatformCanaryKeys,
   parseTrustedPlatformReleaseKeys,
+  platformFleetCanaryEvidenceBytes,
 } from './platform-fleet-approval.mjs';
 import { evaluatePlatformReleaseGate } from './platform-fleet-gate.mjs';
+import { platformReleaseIdentity } from './platform-fleet-reconciler.mjs';
 
 const NOW = '2026-08-28T00:00:00.000Z';
 const SOURCE_SHA = 'a'.repeat(40);
@@ -86,6 +89,83 @@ function keyMaterial() {
   return { privateKey, publicKeyPem, trustedPublicKeys };
 }
 
+function canaryKeyRegistry(publicKeyPem) {
+  return {
+    schemaVersion: 1,
+    purpose: 'seorilabs-platform-fleet-canary-readback-keys-v1',
+    keys: [{
+      keyId: 'canary-readback-1',
+      algorithm: 'Ed25519',
+      status: 'ACTIVE',
+      publicKeyPem,
+    }],
+  };
+}
+
+function canaryEvidenceMaterial(manifestContent, mutatePayload = () => {}) {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const workflowSourceSha = '7'.repeat(40);
+  const canary = (profile, repositoryId, repositoryFullName, sourceSha, suffix) => ({
+    profile,
+    repositoryId,
+    repositoryFullName,
+    sourceSha,
+    staticRun: {
+      runId: `10${suffix}`,
+      conclusion: 'success',
+      headSha: sourceSha,
+      workflowSourceSha,
+    },
+    buildOnlyRun: {
+      runId: `20${suffix}`,
+      conclusion: 'success',
+      headSha: sourceSha,
+      workflowSourceSha,
+      cloudBuildId: `cloud-build-${suffix}`,
+      builderImageDigest: `sha256:${suffix.repeat(64)}`,
+      buildConfigDigest: `sha256:${String(Number(suffix) + 2).repeat(64)}`,
+      artifact: {
+        name: `${profile}-release.aab`,
+        sha256: `sha256:${String(Number(suffix) + 4).repeat(64)}`,
+        size: 4096 + Number(suffix),
+      },
+    },
+  });
+  const payload = {
+    purpose: 'seorilabs-platform-fleet-canary-readback-v1',
+    status: 'passed',
+    platformRelease: platformReleaseIdentity(manifestContent),
+    workflowBundle: {
+      repository: 'seorilabs/.github',
+      sourceSha: workflowSourceSha,
+      digest: `sha256:${'8'.repeat(64)}`,
+    },
+    canaries: [
+      canary('godot', '1265192029', 'seorilabs/lizard-tycoon', '5'.repeat(40), '1'),
+      canary('react-native', '1250442131', 'seorilabs/happy-farm', '6'.repeat(40), '2'),
+    ],
+  };
+  mutatePayload(payload);
+  const evidence = {
+    schemaVersion: 1,
+    algorithm: 'Ed25519',
+    keyId: 'canary-readback-1',
+    payload,
+    signature: sign(
+      null,
+      platformFleetCanaryEvidenceBytes(payload),
+      privateKey,
+    ).toString('base64'),
+  };
+  const registry = canaryKeyRegistry(publicKeyPem);
+  return {
+    evidence,
+    registry,
+    trustedCanaryPublicKeys: parseTrustedPlatformCanaryKeys(registry),
+  };
+}
+
 function currentObservation() {
   return {
     observationId: 'observation-1',
@@ -114,12 +194,15 @@ function currentObservation() {
 function gateInput() {
   const manifestContent = releaseManifest();
   const keys = keyMaterial();
+  const canary = canaryEvidenceMaterial(manifestContent);
   return {
     manifestContent,
     approval: createPlatformReleaseApproval({
+      canaryEvidence: canary.evidence,
       keyId: 'fleet-test-1',
       manifestContent,
       privateKey: keys.privateKey,
+      trustedCanaryPublicKeys: canary.trustedCanaryPublicKeys,
     }),
     trustedPublicKeys: keys.trustedPublicKeys,
     expectedConsumer: {
@@ -145,6 +228,8 @@ describe('Platform Fleet approval signer', () => {
     assert.equal(receipt.sourceSha, REPOSITORY_SOURCE_SHA);
     assert.equal(receipt.configRevision, 'config-7');
     assert.match(receipt.receiptDigest, /^sha256:[0-9a-f]{64}$/u);
+    assert.match(receipt.canaryEvidenceDigest, /^sha256:[0-9a-f]{64}$/u);
+    assert.equal(receipt.workflowBundleSourceSha, '7'.repeat(40));
     assert.equal(receipt.sdkBindings[0].artifactSha256, TS_ARTIFACT_SHA);
   });
 
@@ -165,28 +250,88 @@ describe('Platform Fleet approval signer', () => {
     }), /중복/u);
   });
 
-  it('CLI는 private key를 inherited FD로만 받고 argv, env, 출력에 남기지 않는다', async (test) => {
+  it('RN/Godot exact build-only 성공 증거와 AAB checksum이 없으면 승인하지 않는다', () => {
+    const manifestContent = releaseManifest();
+    const { privateKey } = keyMaterial();
+    const invalidEvidence = [
+      canaryEvidenceMaterial(manifestContent, (payload) => payload.canaries.pop()),
+      canaryEvidenceMaterial(manifestContent, (payload) => {
+        payload.canaries[0].buildOnlyRun.conclusion = 'failure';
+      }),
+      canaryEvidenceMaterial(manifestContent, (payload) => {
+        payload.canaries[1].buildOnlyRun.headSha = '9'.repeat(40);
+      }),
+      canaryEvidenceMaterial(manifestContent, (payload) => {
+        delete payload.canaries[0].buildOnlyRun.artifact.sha256;
+      }),
+    ];
+    for (const canary of invalidEvidence) {
+      assert.throws(() => createPlatformReleaseApproval({
+        canaryEvidence: canary.evidence,
+        keyId: 'fleet-test-1',
+        manifestContent,
+        privateKey,
+        trustedCanaryPublicKeys: canary.trustedCanaryPublicKeys,
+      }), /canary|conclusion|source SHA|artifact/u);
+    }
+  });
+
+  it('canary readback 서명이나 platform release binding이 다르면 승인하지 않는다', () => {
+    const manifestContent = releaseManifest();
+    const { privateKey } = keyMaterial();
+    const canary = canaryEvidenceMaterial(manifestContent);
+    const tampered = structuredClone(canary.evidence);
+    tampered.payload.canaries[0].buildOnlyRun.artifact.sha256 = `sha256:${'9'.repeat(64)}`;
+    assert.throws(() => createPlatformReleaseApproval({
+      canaryEvidence: tampered,
+      keyId: 'fleet-test-1',
+      manifestContent,
+      privateKey,
+      trustedCanaryPublicKeys: canary.trustedCanaryPublicKeys,
+    }), /서명/u);
+
+    const otherRelease = releaseManifest().replace(SOURCE_SHA, '9'.repeat(40));
+    assert.throws(() => createPlatformReleaseApproval({
+      canaryEvidence: canary.evidence,
+      keyId: 'fleet-test-1',
+      manifestContent: otherRelease,
+      privateKey,
+      trustedCanaryPublicKeys: canary.trustedCanaryPublicKeys,
+    }), /platform release/u);
+  });
+
+  it('CLI는 key와 canary readback을 inherited FD로만 받고 argv, env, 출력에 남기지 않는다', async (test) => {
     const directory = await mkdtemp(join(tmpdir(), 'platform-fleet-signer-'));
     test.after(() => rm(directory, { recursive: true, force: true }));
     const manifestPath = join(directory, 'platform-release.json');
     const privateKeyPath = join(directory, 'approval-private.pem');
+    const canaryEvidencePath = join(directory, 'canary-evidence.json');
+    const canaryKeysPath = join(directory, 'trusted-canary-keys.json');
     const approvalPath = join(directory, 'fleet-approved.json');
     const { privateKey } = generateKeyPairSync('ed25519');
     const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-    await writeFile(manifestPath, releaseManifest());
+    const manifestContent = releaseManifest();
+    const canary = canaryEvidenceMaterial(manifestContent);
+    await writeFile(manifestPath, manifestContent);
     await writeFile(privateKeyPath, privatePem, { mode: 0o600 });
+    await writeFile(canaryEvidencePath, JSON.stringify(canary.evidence));
+    await writeFile(canaryKeysPath, JSON.stringify(canary.registry));
     const keyFile = await open(privateKeyPath, 'r');
+    const evidenceFile = await open(canaryEvidencePath, 'r');
+    const canaryKeysFile = await open(canaryKeysPath, 'r');
     try {
       const result = spawnSync(process.execPath, [
         resolve(scriptsDirectory, 'sign-platform-fleet-release.mjs'),
         '--manifest', manifestPath,
         '--key-id', 'fleet-test-cli',
         '--private-key-fd', '3',
+        '--canary-evidence-fd', '4',
+        '--trusted-canary-keys-fd', '5',
         '--output', approvalPath,
       ], {
         encoding: 'utf8',
         env: { PATH: process.env.PATH },
-        stdio: ['ignore', 'pipe', 'pipe', keyFile.fd],
+        stdio: ['ignore', 'pipe', 'pipe', keyFile.fd, evidenceFile.fd, canaryKeysFile.fd],
       });
       assert.equal(result.status, 0, result.stderr);
       assert.doesNotMatch(result.stdout, /PRIVATE KEY/u);
@@ -195,9 +340,13 @@ describe('Platform Fleet approval signer', () => {
       assert.equal(result.stderr.includes(privatePem), false);
       const approval = JSON.parse(await readFile(approvalPath, 'utf8'));
       assert.equal(approval.keyId, 'fleet-test-cli');
+      assert.equal(approval.schemaVersion, 2);
+      assert.equal(approval.payload.canaryEvidence.canaries.length, 2);
       assert.equal(Object.hasOwn(approval, 'privateKey'), false);
     } finally {
       await keyFile.close();
+      await evidenceFile.close();
+      await canaryKeysFile.close();
     }
   });
 });
@@ -208,10 +357,13 @@ describe('Platform release build gate', () => {
     test.after(() => rm(directory, { recursive: true, force: true }));
     const manifestContent = releaseManifest();
     const { privateKey, publicKeyPem } = keyMaterial();
+    const canary = canaryEvidenceMaterial(manifestContent);
     const approval = createPlatformReleaseApproval({
+      canaryEvidence: canary.evidence,
       keyId: 'fleet-test-cli-gate',
       manifestContent,
       privateKey,
+      trustedCanaryPublicKeys: canary.trustedCanaryPublicKeys,
     });
     const files = {
       manifest: join(directory, 'platform-release.json'),
