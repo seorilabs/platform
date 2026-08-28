@@ -29,7 +29,7 @@ Seorilabs의 모든 앱·게임을 **가로질러 밑에 깔리는** 런타임 �
 - **R2** 백오피스 MySQL은 런타임 유저 데이터를 0바이트도 저장하지 않는다. 플랫폼이 SoT.
 - **R3** `platform-iap`은 별도 서비스다. 마켓 자격증명은 이 서비스에만 마운트한다.
 - **R4** `/v1`은 영구히 깨지 않는다. 마켓 배포된 구버전 SDK가 2~3년 산다.
-- **R5** IAP 불변식 12개는 언어와 무관하게 보존한다. → `docs/03-architecture/iap.md`
+- **R5** IAP 불변식 12개는 언어와 무관하게 보존한다. → Obsidian `프로젝트/platform/03-architecture/iap.md`
 
 ## 구조
 
@@ -40,19 +40,22 @@ packages/       TS SDK
 sdk-gdscript/   Godot addon. 게임 repo에 vendoring
 examples/       레퍼런스 앱 - RN, Godot
 registry/apps/  앱 레지스트리. git이 SoT
-infra/          Terraform
-docs/           실행 원장
+scripts/        릴리스·검증 스크립트
 ```
 
 ## 문서
 
-`docs/`가 이 저장소의 실행 원장이다. Obsidian은 보조 지식베이스.
+실행 원장은 이 저장소가 아니라 Obsidian vault의 `프로젝트/platform/`이다.
+저장소에는 코드와 계약만 남긴다.
 
-- `docs/02-decisions/` — ADR. **되돌리기 어려운 결정은 전부 여기 있다**
-- `docs/03-architecture/` — 아키텍처, identity, 이벤트, IAP, RemoteConfig
-- `docs/08-ops/BREAK-GLASS.md` — 백오피스 다운 시 긴급 조작 런북
-- `docs/09-knowledge/go/` — Go 관용구·함정 학습 기록
+- `프로젝트/platform/02-decisions/` — ADR. **되돌리기 어려운 결정은 전부 여기 있다**
+- `프로젝트/platform/03-architecture/` — 아키텍처, identity, 이벤트, IAP, RemoteConfig, Firestore 인덱스
+- `프로젝트/platform/08-ops/BREAK-GLASS.md` — 백오피스 다운 시 긴급 조작 런북
+- `프로젝트/platform/09-knowledge/go/` — Go 관용구·함정 학습 기록
+
+저장소에 남는 원장은 두 개다. API 계약은 `spec/openapi.yaml`, 앱 레지스트리는
+`registry/apps/*.json`이다.
 
 ## 상태
 
-**D0 문서화 단계.** 코드는 아직 없다. 진행 상황은 `docs/04-work/`를 본다.
+**D0 문서화 단계.** 코드는 아직 없다. 진행 상황은 Obsidian `프로젝트/platform/04-work/`를 본다.

@@ -12,7 +12,7 @@ import (
 // AppHeader는 어느 앱의 요청인지 고르는 힌트다.
 //
 // 권한이 아니다. 헤더를 바꿔도 토큰의 aud 불일치로 거부된다.
-// docs/03-architecture/identity.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/identity.md 참고.
 const AppHeader = "X-Seori-App"
 
 // Handler는 identity HTTP 핸들러다.

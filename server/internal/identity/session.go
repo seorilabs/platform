@@ -160,7 +160,7 @@ func (s *SessionIssuer) Verify(tokenStr, appID string) (Session, error) {
 // Firebase anonymous 사용자는 이름 없는 사용자이지만 Firebase가 서명한 ID token으로
 // 소유권을 증명한다. 반면 KindAnonymous의 `anon:` appUserId는 클라이언트가 아무 값이나
 // 보낼 수 있어 타인 사칭이 가능하다. 민감 경로는 후자만 막는다.
-// docs/03-architecture/identity.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/identity.md 참고.
 func (s Session) EnsureNotAnonymous() error {
 	if s.IsAnonymous && strings.HasPrefix(s.AppUserID, "anon:") {
 		return platformerr.New(platformerr.CodeAnonymousNotAllowed,

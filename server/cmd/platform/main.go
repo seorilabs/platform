@@ -8,7 +8,7 @@
 //   - 비용 격벽: ingest 폭주가 max-instances 를 다 먹어 결제를 죽이면 안 된다
 //   - 동시성 튜닝이 정반대: ingest 는 I/O 바운드 write-only, api 는 캐시 + 읽기
 //
-// docs/03-architecture/overview.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/overview.md 참고.
 package main
 
 import (

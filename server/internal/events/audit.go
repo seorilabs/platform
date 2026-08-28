@@ -17,7 +17,7 @@ import (
 // SQL로 답한다.
 //
 // 결제는 정산과 감사 쿼리가 필수라 이게 특히 중요하다.
-// docs/03-architecture/overview.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/overview.md 참고.
 
 // AuditAction은 기록 대상 행위다.
 type AuditAction string

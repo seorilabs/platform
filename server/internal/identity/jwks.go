@@ -22,7 +22,7 @@ import (
 // 검증할 수 있고, 프로젝트 구분은 서명이 아니라 aud와 iss claim으로 한다.
 //
 // 이 사실이 인증 설계를 크게 단순화했다.
-// docs/03-architecture/identity.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/identity.md 참고.
 const FirebaseCertURL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
 
 // keySet은 kid → 공개키 맵과 만료 시각을 들고 있다.

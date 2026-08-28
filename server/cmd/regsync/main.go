@@ -12,7 +12,7 @@
 //
 // 대신 파일만 고치고 적용을 잊는 사고가 실제로 있었다. registry 파일은
 // iap:false인데 앱은 결제가 되고 백오피스 관리만 403이었다.
-// docs/06-release/go-live-checklist.md의 절차를 따른다.
+// Obsidian 프로젝트/platform/06-release/go-live-checklist.md의 절차를 따른다.
 //
 //	regsync --dir=../registry/apps --project=seorilabs-platform --dry-run
 //	regsync --dir=../registry/apps --project=seorilabs-platform

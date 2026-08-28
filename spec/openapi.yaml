@@ -1837,7 +1837,7 @@ components:
           properties:
             code:
               type: string
-              description: snake_case 에러 코드. 전체 목록은 docs/03-architecture/iap.md
+              description: snake_case 에러 코드. 전체 목록은 Obsidian 프로젝트/platform/03-architecture/iap.md
               example: purchase_owned_by_another_user
             message:
               type: string

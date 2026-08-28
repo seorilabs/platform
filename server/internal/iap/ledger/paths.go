@@ -1,6 +1,6 @@
 // Package ledger는 IAP entitlement 원장을 Firestore에 기록한다.
 //
-// 불변식 대부분이 여기서 실제로 강제된다. docs/03-architecture/iap.md 참고.
+// 불변식 대부분이 여기서 실제로 강제된다. Obsidian 프로젝트/platform/03-architecture/iap.md 참고.
 //
 // 경로 prefix가 두 층이다. 배포 환경(staging)은 store가 붙이고,
 // IAP 원장 환경(sandbox)은 여기서 붙인다. 둘은 독립적이다.

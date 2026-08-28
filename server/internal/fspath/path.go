@@ -49,7 +49,7 @@ var (
 //
 // 이 타입을 통해서만 경로를 만들면 prefix 누락을 구조적으로 줄일 수 있다.
 // store 패키지의 Doc과 Collection이 string이 아니라 Path를 받는 이유가 이것이다.
-// docs/03-architecture/server-layout.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/server-layout.md 참고.
 type Path struct {
 	segments []string
 	kind     Kind

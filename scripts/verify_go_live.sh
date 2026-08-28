@@ -19,7 +19,7 @@
 #   scripts/verify_go_live.sh rtdn
 #   scripts/verify_go_live.sh ait
 #
-# 자세한 절차는 docs/06-release/go-live-checklist.md에 있다.
+# 자세한 절차는 Obsidian 프로젝트/platform/06-release/go-live-checklist.md에 있다.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -293,4 +293,4 @@ if [[ "$skip" -gt 0 ]]; then
   exit 2
 fi
 
-echo "전환 준비 완료. docs/06-release/go-live-checklist.md 4장으로 간다."
+echo "전환 준비 완료. Obsidian 프로젝트/platform/06-release/go-live-checklist.md 4장으로 간다."
