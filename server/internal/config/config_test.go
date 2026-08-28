@@ -81,6 +81,52 @@ func TestOperationalConfigRequiresPairAndPreservesSharedSecret(t *testing.T) {
 	}
 }
 
+func TestKakaoUnlinkConfigRequiresCompleteAPIOnlySecretSet(t *testing.T) {
+	setAPIConfigEnv(t)
+	t.Setenv("KAKAO_UNLINK_PLATFORM_APP_ID", "ungeul")
+	t.Setenv("KAKAO_UNLINK_APP_ID", "1559177")
+	t.Setenv("KAKAO_UNLINK_ADMIN_KEY", "admin-key-value")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("config load 실패: %v", err)
+	}
+	if !cfg.KakaoUnlink.Enabled() || cfg.KakaoUnlink.PlatformAppID != "ungeul" ||
+		cfg.KakaoUnlink.KakaoAppID != "1559177" || string(cfg.KakaoUnlink.AdminKey) != "admin-key-value" {
+		t.Fatalf("Kakao unlink config = %#v", cfg.KakaoUnlink)
+	}
+
+	t.Setenv("KAKAO_UNLINK_ADMIN_KEY", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("부분 Kakao unlink 설정을 허용했다")
+	}
+}
+
+func TestKakaoUnlinkConfigRejectsInvalidIDs(t *testing.T) {
+	setAPIConfigEnv(t)
+	t.Setenv("KAKAO_UNLINK_PLATFORM_APP_ID", "Ungeul")
+	t.Setenv("KAKAO_UNLINK_APP_ID", "1559177")
+	t.Setenv("KAKAO_UNLINK_ADMIN_KEY", "admin-key-value")
+	if _, err := Load(); err == nil {
+		t.Fatal("대문자 Platform app ID를 허용했다")
+	}
+
+	t.Setenv("KAKAO_UNLINK_PLATFORM_APP_ID", "ungeul")
+	t.Setenv("KAKAO_UNLINK_APP_ID", "app-1559177")
+	if _, err := Load(); err == nil {
+		t.Fatal("숫자가 아닌 Kakao app ID를 허용했다")
+	}
+}
+
+func setAPIConfigEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("PLATFORM_ROLE", string(RoleAPI))
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
+	t.Setenv("PLATFORM_SESSION_SECRET", strings.Repeat("s", 64))
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_URL", "")
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_SECRET", "")
+}
+
 func TestPresenceConfigIsOptionalButRejectsPartialPair(t *testing.T) {
 	t.Setenv("PLATFORM_ROLE", string(RoleIngest))
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")

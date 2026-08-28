@@ -257,6 +257,12 @@ canonical JSON을 런타임에 주입한다. `entitlementId`는 `^[A-Za-z0-9._-]
 목록의 교집합만 허용한다. 앱 목록에는 있지만 전역 카탈로그에 없는 값은 설정
 불일치이므로 503으로 fail-closed한다.
 
+`iap.require_linked_account=true`인 앱은 검증된 Platform session의
+`isLinkedAccount=true`가 아니면 구매 검증, entitlement 복원, 마켓 account reference 발급을
+모두 `account_link_required`로 거부한다. native Firebase guest는 무료 기능을 계속 쓸 수 있지만
+결제 전에 카카오 또는 Apple 계정을 연결해야 한다. AppsInToss의 mTLS Toss Login session은
+연결 계정으로 취급한다. 자세한 신원 경계는 ADR 0024를 따른다.
+
 새 카탈로그 형식은 앱별 SKU를 분리한다. 기존 `/v1/iap/*`와 lizard SDK의 응답
 계약을 유지하기 위해 단일 앱 전역 형식도 읽지만, 앱별 형식과 한 JSON에서
 섞는 것은 거부한다.

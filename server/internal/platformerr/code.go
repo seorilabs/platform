@@ -32,6 +32,8 @@ const (
 	CodeSessionExpired      Code = "session_expired"
 	CodeRefreshInvalid      Code = "refresh_invalid"
 	CodeAnonymousNotAllowed Code = "anonymous_not_allowed"
+	CodeAccountLinkRequired Code = "account_link_required"
+	CodeAccountLinkConflict Code = "account_link_conflict"
 )
 
 // App Check
@@ -207,6 +209,8 @@ var statusByCode = map[Code]int{
 	CodeSessionExpired:      http.StatusUnauthorized,
 	CodeRefreshInvalid:      http.StatusUnauthorized,
 	CodeAnonymousNotAllowed: http.StatusForbidden,
+	CodeAccountLinkRequired: http.StatusForbidden,
+	CodeAccountLinkConflict: http.StatusConflict,
 
 	// App Check
 	CodeAppCheckRequired:    http.StatusUnauthorized,

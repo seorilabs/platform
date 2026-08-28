@@ -12,6 +12,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/verify"
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 // fakeService는 유스케이스를 대신한다. 핸들러 경계만 검증한다.
@@ -46,6 +47,15 @@ func (f *fakeService) AccountReferences(puid string) (string, string, error) {
 type fakeSessions struct {
 	sess identity.Session
 	err  error
+}
+
+type fakeApps struct {
+	app registry.App
+	err error
+}
+
+func (f *fakeApps) GetUsable(context.Context, string) (registry.App, error) {
+	return f.app, f.err
 }
 
 func (f *fakeSessions) Authenticate(*http.Request) (identity.Session, error) {
@@ -163,6 +173,43 @@ func TestAnonymousCannotPay(t *testing.T) {
 				t.Errorf("code = %q, want anonymous_not_allowed", code)
 			}
 		})
+	}
+}
+
+func TestLinkedAccountPolicyAppliesToPurchaseAndRestore(t *testing.T) {
+	app := registry.App{IAP: registry.IAPConfig{RequireLinkedAccount: true}}
+	h := NewHandler(&fakeService{}, &fakeSessions{sess: paidSession()}).WithApps(&fakeApps{app: app})
+
+	routes := []struct {
+		method, path, body string
+	}{
+		{http.MethodPost, "/v1/iap/verify", validBody},
+		{http.MethodGet, "/v1/iap/entitlements", ""},
+		{http.MethodPost, "/v1/iap/account-references", ""},
+	}
+	for _, route := range routes {
+		t.Run(route.path, func(t *testing.T) {
+			w := serve(t, h, route.method, route.path, route.body)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			if code := errorCode(t, w); code != string(platformerr.CodeAccountLinkRequired) {
+				t.Fatalf("code = %q", code)
+			}
+		})
+	}
+}
+
+func TestLinkedAccountCanPay(t *testing.T) {
+	sess := paidSession()
+	sess.IsLinkedAccount = true
+	svc := &fakeService{}
+	h := NewHandler(svc, &fakeSessions{sess: sess}).WithApps(&fakeApps{
+		app: registry.App{IAP: registry.IAPConfig{RequireLinkedAccount: true}},
+	})
+	w := serve(t, h, http.MethodPost, "/v1/iap/verify", validBody)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 }
 

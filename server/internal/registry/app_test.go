@@ -213,6 +213,69 @@ func TestFirebaseCustomTokenBridgeConfigValidation(t *testing.T) {
 	}
 }
 
+func TestAccountProviderAndLinkedIAPValidation(t *testing.T) {
+	validAccountApp := func() App {
+		app := validAppForTest()
+		app.Features["firebase_custom_token_bridge"] = true
+		app.FirebaseCustomTokenServiceAccount = "platform-auth@test-app.iam.gserviceaccount.com"
+		app.RequireAppCheck = true
+		app.Auth.AccountProviders = map[string]AuthProviderConfig{
+			"kakao": {Audience: "123456789"},
+			"apple": {Audience: "com.seorilabs.testapp"},
+		}
+		app.IAP.RequireLinkedAccount = true
+		return app
+	}
+	if err := validAccountApp().Validate(); err != nil {
+		t.Fatalf("valid account config: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*App)
+		wantErr string
+	}{
+		{
+			name: "App Check 없는 provider 거부",
+			mutate: func(app *App) {
+				app.RequireAppCheck = false
+			},
+			wantErr: "App Check",
+		},
+		{
+			name: "지원하지 않는 provider 거부",
+			mutate: func(app *App) {
+				app.Auth.AccountProviders["naver"] = AuthProviderConfig{Audience: "naver-client"}
+			},
+			wantErr: "지원하지 않는 auth provider",
+		},
+		{
+			name: "비공개 값처럼 보이는 audience 거부",
+			mutate: func(app *App) {
+				app.Auth.AccountProviders["kakao"] = AuthProviderConfig{Audience: "https://secret.example/client"}
+			},
+			wantErr: "auth audience",
+		},
+		{
+			name: "연결 계정 정책에 provider 필수",
+			mutate: func(app *App) {
+				app.Auth.AccountProviders = nil
+			},
+			wantErr: "연결 계정 필수 IAP",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app := validAccountApp()
+			tc.mutate(&app)
+			err := app.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestContentConfigValidation(t *testing.T) {
 	validContentApp := func() App {
 		app := validAppForTest()

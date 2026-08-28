@@ -12,7 +12,8 @@ info:
     - **`/v1`은 영구히 깨지지 않는다.** 마켓 배포된 구버전 SDK가 2~3년 산다
     - 필드 **추가만** 허용한다. 제거와 의미 변경은 `/v2`
     - 양방향 forward-compat — 서버는 요청의 미지 필드를 무시하고, SDK는 응답의 미지 필드를 무시한다
-    - 모든 응답은 envelope로 감싼다. 성공은 `{ok:true, result}`, 실패는 `{ok:false, error}`
+    - 모든 Platform 클라이언트 응답은 envelope로 감싼다. 성공은 `{ok:true, result}`, 실패는 `{ok:false, error}`
+    - 외부 공급자 webhook 응답은 공급자 계약을 따르며 envelope 예외일 수 있다
     - 요청 본문 상한 64KiB. 제어문자 거부. 허용 필드 외 어떤 키도 400
 
     상태: **D0 초안.** 스키마 세부는 각 단계에서 확정한다.
@@ -154,6 +155,131 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/account-link-challenges:
+    post:
+      tags: [auth]
+      summary: 외부 계정 연결 challenge 발급
+      description: |
+        검증된 현재 Platform 세션에 공급자 OIDC nonce를 5분 동안 묶는다.
+        Firebase anonymous 로그인처럼 서버가 검증한 게스트 세션은 사용할 수 있지만,
+        클라이언트가 값을 고를 수 있는 anonymous credential 세션은 거부한다.
+      operationId: createAccountLinkChallenge
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountLinkChallengeRequest' }
+      responses:
+        '201':
+          description: challenge 발급 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountLinkChallenge' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/account-links:
+    post:
+      tags: [auth]
+      summary: 외부 계정 연결 또는 기존 계정 복원
+      description: |
+        공급자가 서명한 ID token의 issuer, audience, expiry, issued-at, signature와
+        challenge nonce를 검증한다. provider subject 원문과 이메일은 저장하지 않고
+        앱 및 공급자 범위의 SHA-256 매핑으로 Platform 사용자만 연결한다.
+
+        새 설치의 연결되지 않은 게스트가 기존 공급자 계정을 증명하면 기존 Platform
+        사용자로 전환한다. 서로 다른 두 연결 계정은 자동 병합하지 않고 409를 반환한다.
+      operationId: createAccountLink
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountLinkRequest' }
+      responses:
+        '200':
+          description: 연결 또는 복원 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountLink' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/webhooks/kakao/unlink:
+    post:
+      tags: [webhook]
+      summary: 카카오 연결 해제 알림 수신
+      description: |
+        카카오가 전달한 앱 ID, 사용자 ID, 연결 해제 사유를 검증하고 기존
+        `(app_id, kakao, subject_hash)` 매핑을 멱등하게 제거한다. 사용자 ID 원문은
+        저장하거나 로그에 남기지 않으며 IAP 감사 원장은 보존한다.
+
+        유효하고 인증된 알림은 내부 매핑이 이미 없거나 저장소 처리 오류가 발생해도
+        카카오 callback 계약에 따라 빈 200을 반환한다. 내부 오류는 비식별 운영 로그로 남긴다.
+      operationId: handleKakaoUnlinkWebhook
+      security: []
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          description: KakaoAK scheme과 앱 Primary Admin Key
+          schema:
+            type: string
+            pattern: '^KakaoAK .+$'
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [app_id, user_id, referrer_type]
+              properties:
+                app_id:
+                  type: string
+                  pattern: '^[0-9]+$'
+                user_id:
+                  type: string
+                  pattern: '^[0-9]{1,20}$'
+                referrer_type:
+                  type: string
+                  enum:
+                    - ACCOUNT_DELETE
+                    - FORCED_ACCOUNT_DELETE
+                    - UNLINK_FROM_ADMIN
+                    - UNLINK_FROM_APPS
+                    - INCOMPLETE_SIGN_UP
+                group_user_token:
+                  type: string
+                  maxLength: 256
+      responses:
+        '200':
+          description: 연결 해제 알림 수신 완료. 응답 본문은 비어 있다.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /auth/firebase-account:
     delete:
@@ -2233,10 +2359,59 @@ components:
           maxLength: 128
           description: custom token의 Firebase uid. 기존 토큰을 보낸 경우 기존 uid와 같아야 한다
 
+    AccountProvider:
+      type: string
+      enum: [kakao, apple]
+
+    CreateAccountLinkChallengeRequest:
+      type: object
+      required: [provider]
+      additionalProperties: false
+      properties:
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+
+    AccountLinkChallenge:
+      type: object
+      required: [provider, nonce, expiresAt]
+      additionalProperties: false
+      properties:
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+        nonce: { type: string, minLength: 43, maxLength: 128 }
+        expiresAt: { type: string, format: date-time }
+
+    CreateAccountLinkRequest:
+      type: object
+      required: [provider, idToken, nonce]
+      additionalProperties: false
+      properties:
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+        idToken:
+          type: string
+          minLength: 1
+          maxLength: 8192
+        nonce:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+    AccountLink:
+      type: object
+      required: [session, firebaseCustomToken, provider, restored]
+      additionalProperties: false
+      properties:
+        session: { $ref: '#/components/schemas/Session' }
+        firebaseCustomToken:
+          type: string
+          description: 연결된 사용자로 Firebase signInWithCustomToken에 한 번 사용한다
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+        restored:
+          type: boolean
+          description: 새 설치의 게스트 대신 기존 Platform 사용자를 복원했으면 true
+
     Session:
       type: object
       required:
-        [platformToken, refreshToken, platformUserId, supportCode, expiresIn, serverTimeUnix, features, sdk]
+        [platformToken, refreshToken, platformUserId, supportCode, isAnonymous, isLinkedAccount, expiresIn, serverTimeUnix]
       properties:
         platformToken: { type: string }
         refreshToken: { type: string }
@@ -2264,6 +2439,9 @@ components:
         isAnonymous:
           type: boolean
           description: true면 IAP 경로가 막힌다
+        isLinkedAccount:
+          type: boolean
+          description: 검증된 외부 계정 또는 AppsInToss 계정과 연결됐으면 true
         features:
           $ref: '#/components/schemas/Features'
         sdk:

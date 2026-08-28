@@ -14,6 +14,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/verify"
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 // Sessions는 요청에서 세션을 꺼낸다.
@@ -21,6 +22,10 @@ import (
 // 소비자인 Handler가 인터페이스를 정의한다. identity.Handler가 구현한다.
 type Sessions interface {
 	Authenticate(r *http.Request) (identity.Session, error)
+}
+
+type Apps interface {
+	GetUsable(ctx context.Context, appID string) (registry.App, error)
 }
 
 // Service는 결제 유스케이스다. verify.Service가 구현한다.
@@ -39,10 +44,16 @@ type appScopedService interface {
 type Handler struct {
 	svc      Service
 	sessions Sessions
+	apps     Apps
 }
 
 func NewHandler(svc Service, sessions Sessions) *Handler {
 	return &Handler{svc: svc, sessions: sessions}
+}
+
+func (h *Handler) WithApps(apps Apps) *Handler {
+	h.apps = apps
+	return h
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -203,6 +214,16 @@ func (h *Handler) requirePayingSession(r *http.Request) (identity.Session, error
 	if sess.IsAnonymous {
 		return identity.Session{}, platformerr.New(platformerr.CodeAnonymousNotAllowed,
 			"로그인 후에 구매할 수 있어요")
+	}
+	if h.apps != nil {
+		app, err := h.apps.GetUsable(r.Context(), sess.AppID)
+		if err != nil {
+			return identity.Session{}, err
+		}
+		if app.IAP.RequireLinkedAccount && !sess.IsLinkedAccount {
+			return identity.Session{}, platformerr.New(platformerr.CodeAccountLinkRequired,
+				"계정을 연결한 뒤 구매하거나 복원할 수 있어요")
+		}
 	}
 	return sess, nil
 }

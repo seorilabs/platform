@@ -61,8 +61,11 @@ type App struct {
 	RequireAppCheck bool `json:"require_app_check" firestore:"require_app_check"`
 
 	GA4 GA4Config `json:"ga4" firestore:"ga4"`
-	IAP IAPConfig `json:"iap" firestore:"iap"`
-	Ads AdsConfig `json:"ads" firestore:"ads"`
+	// Auth는 외부 계정 공급자 allowlist와 공개 audience를 보관한다.
+	// provider secret과 토큰은 레지스트리에 저장하지 않는다.
+	Auth AuthConfig `json:"auth,omitempty" firestore:"auth,omitempty"`
+	IAP  IAPConfig  `json:"iap" firestore:"iap"`
+	Ads  AdsConfig  `json:"ads" firestore:"ads"`
 	// Content는 private GCS 릴리스와 사용자별 조회 한도의 원장이다.
 	// bucket에는 gs://를 넣지 않고, prefix에는 환경(staging/production)을 넣지 않는다.
 	Content ContentConfig `json:"content,omitempty" firestore:"content,omitempty"`
@@ -107,6 +110,18 @@ type IAPConfig struct {
 	// EntitlementIDs는 이 앱에 지급할 수 있는 entitlement allowlist다.
 	// 전역 SKU 카탈로그는 상품 매핑의 원장이고, 이 목록은 앱 경계의 원장이다.
 	EntitlementIDs []string `json:"entitlement_ids" firestore:"entitlement_ids"`
+	// RequireLinkedAccount는 결제·복원 전에 검증된 외부 계정 연결을 요구한다.
+	// 기존 앱은 기본 false로 동작을 유지한다.
+	RequireLinkedAccount bool `json:"require_linked_account,omitempty" firestore:"require_linked_account,omitempty"`
+}
+
+type AuthConfig struct {
+	AccountProviders map[string]AuthProviderConfig `json:"account_providers,omitempty" firestore:"account_providers,omitempty"`
+}
+
+type AuthProviderConfig struct {
+	// Audience는 OIDC ID token의 aud와 정확히 대조하는 공개 식별자다.
+	Audience string `json:"audience" firestore:"audience"`
 }
 
 // AdsConfig는 보상 광고 정책의 앱별 원장이다.
@@ -165,6 +180,7 @@ var adsIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
 var admobUnitPattern = regexp.MustCompile(`^ca-app-pub-[0-9]{16}/[0-9]{10}$`)
 var gcsBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
 var contentPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9/_-]{0,127}$`)
+var authProviderAudiencePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,256}$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
@@ -203,6 +219,12 @@ func (a App) Validate() error {
 	}
 	if a.FeatureEnabled("iap") && len(a.IAP.EntitlementIDs) == 0 {
 		return fmt.Errorf("%s: IAP 활성 앱에는 iap.entitlement_ids가 필요하다", a.AppID)
+	}
+	if err := a.validateAuth(); err != nil {
+		return err
+	}
+	if a.IAP.RequireLinkedAccount && (!a.FeatureEnabled("iap") || len(a.Auth.AccountProviders) == 0) {
+		return fmt.Errorf("%s: 연결 계정 필수 IAP에는 활성 IAP와 auth provider가 필요하다", a.AppID)
 	}
 	if a.FeatureEnabled("iap") && a.MarketEnabled("google_play") {
 		if !androidPackagePattern.MatchString(a.IAP.GooglePlayPackageName) ||
@@ -248,6 +270,24 @@ func (a App) Validate() error {
 	for _, v := range []string{a.AppID, a.DisplayName, a.FirebaseProjectID} {
 		if isPlaceholder(v) {
 			return fmt.Errorf("%s: placeholder가 남아 있다: %q", a.AppID, v)
+		}
+	}
+	return nil
+}
+
+func (a App) validateAuth() error {
+	if len(a.Auth.AccountProviders) == 0 {
+		return nil
+	}
+	if !a.RequireAppCheck || !a.FeatureEnabled("firebase_custom_token_bridge") {
+		return fmt.Errorf("%s: 외부 계정 연결에는 App Check와 firebase custom token bridge가 필요하다", a.AppID)
+	}
+	for provider, cfg := range a.Auth.AccountProviders {
+		if provider != "kakao" && provider != "apple" {
+			return fmt.Errorf("%s: 지원하지 않는 auth provider다: %q", a.AppID, provider)
+		}
+		if !authProviderAudiencePattern.MatchString(cfg.Audience) || isPlaceholder(cfg.Audience) {
+			return fmt.Errorf("%s: %s auth audience가 올바르지 않다", a.AppID, provider)
 		}
 	}
 	return nil
