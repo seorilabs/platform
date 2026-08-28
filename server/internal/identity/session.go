@@ -15,9 +15,9 @@ import (
 
 // 세션 토큰 기본 수명.
 //
-// 1시간은 Firebase ID 토큰과 같다. 이 값이 revocation 지연의 상한이 된다.
-// 계정을 차단해도 이미 발급된 세션은 최대 1시간 유효하다.
-// 즉시성이 필요하면 레지스트리의 blocked_uids로 막는다.
+// 1시간은 Firebase ID 토큰과 같다. 이 값이 revocation 지연의 상한처럼
+// 보이지만 실제로는 아니다. 세션 검증마다 차단 목록을 보므로 차단은
+// 캐시 TTL(60초) 안에 반영된다. ADR 0026 참고.
 const (
 	DefaultSessionTTL = time.Hour
 	DefaultRefreshTTL = 90 * 24 * time.Hour

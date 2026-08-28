@@ -77,9 +77,6 @@ type App struct {
 	// CORSOrigins는 웹, AIT와 Capacitor WebView 빌드용이다. 비어 있으면 CORS를 허용하지 않는다.
 	CORSOrigins []string `json:"cors_origins" firestore:"cors_origins"`
 
-	// BlockedUIDs는 남용 계정 차단용이다. 앱 전체를 멈추지 않고 개별 차단한다.
-	BlockedUIDs []string `json:"blocked_uids" firestore:"blocked_uids"`
-
 	// RegistrySyncedAt은 regsync가 Firestore에 반영한 시각이다. JSON 원장에는
 	// 들어가지 않으며 운영툴이 파일 변경과 런타임 반영을 구분할 때만 쓴다.
 	RegistrySyncedAt time.Time `json:"-" firestore:"registry_synced_at,omitempty"`
@@ -566,16 +563,6 @@ func (a App) StripEventPrefix(name string) string {
 		return name
 	}
 	return strings.TrimPrefix(name, a.GA4.EventPrefix)
-}
-
-// UIDBlocked는 계정이 차단됐는지 본다.
-func (a App) UIDBlocked(uid string) bool {
-	for _, b := range a.BlockedUIDs {
-		if b == uid {
-			return true
-		}
-	}
-	return false
 }
 
 // EnsureUsable은 앱이 요청을 받을 수 있는 상태인지 확인한다.

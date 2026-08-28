@@ -24,6 +24,7 @@ import (
 	"time"
 
 	platformads "github.com/seorilabs/platform/server/internal/ads"
+	"github.com/seorilabs/platform/server/internal/blocklist"
 	"github.com/seorilabs/platform/server/internal/config"
 	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/httpx"
@@ -93,6 +94,7 @@ type deps struct {
 	identity *identity.Handler
 	// adminUsers는 세션 issuer 없이 PII 없는 사용자 조회만 제공한다.
 	adminUsers      *identity.StoreRepository
+	blocklist       *blocklist.Service
 	keys            *identity.KeyCache
 	events          *events.Collector
 	config          *remoteconfig.Service
@@ -121,6 +123,12 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		store:    st,
 		registry: reg,
 		config:   remoteconfig.NewService(st),
+		// 차단 목록은 레지스트리가 아니라 별도 컬렉션이다. regsync가
+		// 레지스트리 문서를 통째로 덮어써도 차단이 풀리지 않는다. ADR 0026.
+		//
+		// role과 무관하게 만든다. 세션을 발급하는 role은 차단을 읽고
+		// admin role은 차단을 쓴다.
+		blocklist: blocklist.NewService(blocklist.NewStoreSource(st)),
 	}
 	if cfg.Role == config.RoleIngest {
 		var issuer presence.TokenIssuer
@@ -166,9 +174,10 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		users := identity.NewStoreRepository(st).WithOperationalEvents(d.operationalRepo)
 		svc := identity.NewService(
 			reg,
-			identity.NewFirebaseVerifier(keys),
+			identity.NewFirebaseVerifier(keys, d.blocklist),
 			users,
 			issuer,
+			d.blocklist,
 		)
 		if cfg.Role == config.RoleAPI {
 			customTokens, err := identity.NewIAMCustomTokenIssuer(ctx)

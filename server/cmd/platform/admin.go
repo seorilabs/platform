@@ -63,6 +63,11 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 	if err := admin.RegisterAds(mux, auth, d.ads.service); err != nil {
 		return err
 	}
+	// 차단 관리는 백오피스가 유일한 조작 경로다. registry/apps/*.json은
+	// public 저장소라 사용자 식별자를 담지 않는다. ADR 0026 참고.
+	if err := admin.RegisterBlocks(mux, auth, d.blocklist, d.registry, auditAdapter{col: d.events}); err != nil {
+		return err
+	}
 
 	slog.Info("Admin API 준비 완료",
 		"read_allowed_accounts", len(readAllowed),

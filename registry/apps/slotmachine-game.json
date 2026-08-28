@@ -18,6 +18,5 @@
     ]
   },
   "platform_event_allowlist": ["seori_session_start", "seori_sdk_error", "ad_reward_click", "ad_reward_completed", "ad_reward_failed"],
-  "cors_origins": [],
-  "blocked_uids": []
+  "cors_origins": []
 }

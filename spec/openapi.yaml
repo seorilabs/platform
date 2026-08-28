@@ -1641,6 +1641,108 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /admin/apps/{appId}/blocks:
+    get:
+      tags: [admin]
+      summary: 앱 차단 계정 목록 조회
+      description: |
+        차단 목록의 원장은 Firestore다. registry/apps/*.json에는 들어가지
+        않는다. 저장소가 public이고 사용자 식별자를 git에 남기지 않는다.
+      operationId: listAdminBlocks
+      security: [{ AdminOidc: [] }]
+      parameters: [{ name: appId, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' } }]
+      responses:
+        '200':
+          description: 차단 시각 내림차순 목록
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [appId, blocks]
+                        additionalProperties: false
+                        properties:
+                          appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                          blocks: { type: array, items: { $ref: '#/components/schemas/AdminBlockEntry' } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [admin]
+      summary: 앱 계정 차단
+      description: |
+        이미 차단된 계정을 다시 넣으면 사유와 시각을 갱신한다. 실패가
+        아니다. 사고 대응 중에 같은 조작을 반복하는 편이 정상이다.
+      operationId: createAdminBlock
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - { name: appId, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' } }
+        - $ref: '#/components/parameters/AdminActor'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uid]
+              additionalProperties: false
+              properties:
+                uid: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+                reason: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: 차단 기록
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result: { $ref: '#/components/schemas/AdminBlockEntry' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/apps/{appId}/blocks/{uid}:
+    delete:
+      tags: [admin]
+      summary: 앱 계정 차단 해제
+      description: |
+        차단돼 있지 않아도 200이다. 운영자가 원한 최종 상태는 같고,
+        404를 보면 다른 앱을 잘못 본 것으로 오해해 조작을 반복한다.
+      operationId: deleteAdminBlock
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - { name: appId, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' } }
+        - { name: uid, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' } }
+        - $ref: '#/components/parameters/AdminActor'
+      responses:
+        '200':
+          description: 해제 결과. removed가 false면 원래 차단돼 있지 않았다
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [appId, uid, removed]
+                        additionalProperties: false
+                        properties:
+                          appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                          uid: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+                          removed: { type: boolean }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /admin/apps/{appId}/ads/config:
     get:
       tags: [admin, ads]
@@ -2258,6 +2360,16 @@ components:
         key: { type: string }
         min_amount: { type: integer, minimum: 1 }
         max_amount: { type: integer, minimum: 1 }
+
+    AdminBlockEntry:
+      type: object
+      required: [uid, blockedAt]
+      additionalProperties: false
+      properties:
+        uid: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+        reason: { type: string, maxLength: 200 }
+        blockedBy: { type: string }
+        blockedAt: { type: string, format: date-time }
 
     AdminAdsConfig:
       type: object

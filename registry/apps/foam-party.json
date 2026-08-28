@@ -19,6 +19,5 @@
   "cors_origins": [
     "https://foam-party.apps.tossmini.com",
     "https://foam-party.private-apps.tossmini.com"
-  ],
-  "blocked_uids": []
+  ]
 }

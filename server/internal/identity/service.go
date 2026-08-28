@@ -42,6 +42,14 @@ type TokenVerifier interface {
 	Verify(ctx context.Context, token string, app registry.App) (Claims, error)
 }
 
+// Blocklist는 앱별 차단 계정 조회 포트다.
+//
+// 소비자인 이 패키지가 정의한다. blocklist.Service가 구현한다.
+// 차단 목록이 레지스트리에서 빠져나온 이유는 ADR 0026에 있다.
+type Blocklist interface {
+	Blocked(ctx context.Context, appID, uid string) (bool, error)
+}
+
 // AITLoginVerifier는 일회용 appLogin authorization code를 mTLS로 교환한다.
 // 반환값은 원문 userKey가 아니라 이미 SHA-256 처리된 앱 사용자 ID다.
 type AITLoginVerifier interface {
@@ -117,6 +125,7 @@ type FirebaseCustomTokenResult struct {
 type Service struct {
 	registry         *registry.Registry
 	verifier         TokenVerifier
+	blocklist        Blocklist
 	aitLogin         AITLoginVerifier
 	users            UserRepository
 	issuer           *SessionIssuer
@@ -134,20 +143,39 @@ func (s *Service) WithAITLoginVerifier(verifier AITLoginVerifier) *Service {
 }
 
 // NewService는 서비스를 만든다.
+// blocklist는 선택 인자가 아니다. nil이면 차단이 조용히 풀린 채
+// 배포되고, 그 상태는 로그에도 남지 않는다.
 func NewService(
 	reg *registry.Registry,
 	verifier TokenVerifier,
 	users UserRepository,
 	issuer *SessionIssuer,
+	blocked Blocklist,
 ) *Service {
 	return &Service{
 		registry:   reg,
 		verifier:   verifier,
 		users:      users,
 		issuer:     issuer,
+		blocklist:  blocked,
 		refreshTTL: DefaultRefreshTTL,
 		now:        time.Now,
 	}
+}
+
+// ensureNotBlocked는 차단된 계정을 거른다.
+//
+// 조회 자체가 실패하면 그 에러를 그대로 올린다. 차단 여부를 모른 채
+// 통과시키면 차단이 무의미해진다.
+func (s *Service) ensureNotBlocked(ctx context.Context, appID, uid string) error {
+	blocked, err := s.blocklist.Blocked(ctx, appID, uid)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
+	}
+	return nil
 }
 
 // WithCustomTokenIssuer는 API role에만 custom token 원격 서명기를 연결한다.
@@ -253,11 +281,8 @@ func (s *Service) CreateFirebaseCustomToken(
 			)
 		}
 	}
-	if app.UIDBlocked(uid) {
-		return FirebaseCustomTokenResult{}, platformerr.New(
-			platformerr.CodeUserBlocked,
-			"이용이 제한된 계정이에요",
-		)
+	if err := s.ensureNotBlocked(ctx, app.AppID, uid); err != nil {
+		return FirebaseCustomTokenResult{}, err
 	}
 
 	customToken, err := s.customTokens.Mint(ctx, app, uid, platformGuest)
@@ -400,8 +425,8 @@ func (s *Service) resolveIdentity(
 		// IAP 같은 민감 경로가 EnsureNotAnonymous로 거부한다.
 		// 이렇게 하는 이유는 RemoteConfig 조회와 이벤트 로그는
 		// 익명으로도 허용해야 하기 때문이다.
-		if app.UIDBlocked(value) {
-			return "", false, "", "", platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
+		if err := s.ensureNotBlocked(ctx, app.AppID, value); err != nil {
+			return "", false, "", "", err
 		}
 		return "anon:" + value, true, "anonymous", "", nil
 
@@ -462,8 +487,8 @@ func (s *Service) Refresh(ctx context.Context, appID, refreshToken string) (Resu
 	if sess.AppID != app.AppID {
 		return Result{}, platformerr.New(platformerr.CodeRefreshInvalid, "갱신 토큰이 올바르지 않아요")
 	}
-	if app.UIDBlocked(sess.AppUserID) {
-		return Result{}, platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
+	if err := s.ensureNotBlocked(ctx, app.AppID, sess.AppUserID); err != nil {
+		return Result{}, err
 	}
 	if sess.IsLinkedAccount && s.accounts != nil {
 		linked, err := s.accounts.IsAccountLinked(ctx, app.AppID, sess.PlatformUserID)
@@ -527,9 +552,9 @@ func (s *Service) Authenticate(ctx context.Context, appID, sessionToken string) 
 	}
 
 	// 세션 발급 후 차단됐을 수 있다. 세션 수명이 revocation 지연의 상한이지만
-	// 레지스트리 차단은 즉시 반영한다.
-	if app.UIDBlocked(sess.AppUserID) {
-		return Session{}, platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
+	// 차단은 캐시 TTL 안에 반영된다.
+	if err := s.ensureNotBlocked(ctx, app.AppID, sess.AppUserID); err != nil {
+		return Session{}, err
 	}
 	return sess, nil
 }

@@ -20,6 +20,5 @@
     "entitlement_ids": []
   },
   "platform_event_allowlist": [],
-  "cors_origins": [],
-  "blocked_uids": []
+  "cors_origins": []
 }

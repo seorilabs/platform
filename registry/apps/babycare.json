@@ -30,6 +30,5 @@
     "bc_log_update",
     "bc_log_delete"
   ],
-  "cors_origins": [],
-  "blocked_uids": []
+  "cors_origins": []
 }
