@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { canonicalJson, sha256 } from './platform-release-lib.mjs';
-import { publishPlatformRelease } from './publish-platform-release.mjs';
+import {
+  publishPlatformRelease,
+  validatePlatformReleaseAssetRedirect,
+} from './publish-platform-release.mjs';
 
 async function releaseDirectory(test) {
   const directory = await mkdtemp(join(tmpdir(), 'platform-release-publish-test-'));
@@ -65,33 +68,52 @@ function jsonResponse(value, status = 200) {
   });
 }
 
-describe('GitHub Release immutable publisher', () => {
-  it('draft를 만든 뒤 TypeScript를 포함한 네 asset을 올리고 마지막에만 공개한다', async (test) => {
+describe('GitHub Release immutable draft publisher', () => {
+  it('release asset redirect는 기본 HTTPS 포트의 허용 host만 따른다', () => {
+    assert.equal(
+      validatePlatformReleaseAssetRedirect(
+        'https://release-assets.githubusercontent.com/path/to/asset',
+        'fixture asset',
+      ),
+      'https://release-assets.githubusercontent.com/path/to/asset',
+    );
+    assert.throws(
+      () => validatePlatformReleaseAssetRedirect(
+        'https://release-assets.githubusercontent.com:8443/path/to/asset',
+        'fixture asset',
+      ),
+      /redirect origin/u,
+    );
+  });
+
+  it('TypeScript를 포함한 네 asset을 검증한 approval 대기 draft로만 준비한다', async (test) => {
     const directory = await releaseDirectory(test);
     const calls = [];
     const uploaded = [];
     const fetchImpl = async (url, options = {}) => {
       calls.push({ url, options });
-      if (url.endsWith('/releases?per_page=100')) {
-        return jsonResponse([]);
+      if (url.endsWith('/releases/tags/v0.6.5')) {
+        return jsonResponse({ message: 'Not Found' }, 404);
       }
       if (url.endsWith('/releases') && options.method === 'POST') {
         return jsonResponse({
           id: 42,
           tag_name: 'v0.6.5',
+          target_commitish: 'a'.repeat(40),
           draft: true,
+          prerelease: false,
           assets: [],
-          upload_url: 'https://uploads.github.test/repos/seorilabs/platform/releases/42/assets{?name,label}',
+          upload_url: 'https://uploads.github.com/repos/seorilabs/platform/releases/42/assets{?name,label}',
         }, 201);
       }
-      if (url.startsWith('https://uploads.github.test/')) {
+      if (url.startsWith('https://uploads.github.com/')) {
         const name = new URL(url).searchParams.get('name');
         const content = Buffer.from(options.body);
         const remote = {
           id: uploaded.length + 1,
           name,
           size: content.length,
-          url: `https://api.github.test/assets/${uploaded.length + 1}`,
+          url: `https://api.github.com/repos/seorilabs/platform/releases/assets/${uploaded.length + 1}`,
           content,
         };
         uploaded.push(remote);
@@ -101,22 +123,21 @@ describe('GitHub Release immutable publisher', () => {
         return jsonResponse({
           id: 42,
           tag_name: 'v0.6.5',
+          target_commitish: 'a'.repeat(40),
           draft: true,
+          prerelease: false,
           assets: uploaded.map(({ content: _content, ...asset }) => asset),
         });
       }
-      if (url.startsWith('https://api.github.test/assets/')) {
+      if (url.startsWith('https://api.github.com/repos/seorilabs/platform/releases/assets/')) {
         const id = Number.parseInt(url.split('/').at(-1), 10);
         return new Response(uploaded.find((asset) => asset.id === id).content);
-      }
-      if (url.endsWith('/releases/42') && options.method === 'PATCH') {
-        return jsonResponse({ id: 42, tag_name: 'v0.6.5', draft: false });
       }
       throw new Error(`예상하지 않은 요청: ${options.method ?? 'GET'} ${url}`);
     };
 
     const result = await publishPlatformRelease({
-      apiBase: 'https://api.github.test',
+      apiBase: 'https://api.github.com',
       directory,
       fetchImpl,
       repository: 'seorilabs/platform',
@@ -124,11 +145,15 @@ describe('GitHub Release immutable publisher', () => {
       tag: 'v0.6.5',
       token: 'test-token',
     });
-    assert.deepEqual(result, { releaseId: 42, tag: 'v0.6.5' });
-    assert.equal(calls.filter(({ url }) => url.startsWith('https://uploads.github.test/')).length, 4);
-    const publish = calls.at(-1);
-    assert.equal(publish.options.method, 'PATCH');
-    assert.deepEqual(JSON.parse(publish.options.body), { draft: false });
+    assert.deepEqual(result, {
+      releaseId: 42,
+      state: 'AWAITING_FLEET_APPROVAL',
+      tag: 'v0.6.5',
+    });
+    assert.equal(calls[0].url.endsWith('/releases/tags/v0.6.5'), true);
+    assert.equal(calls.some(({ url }) => url.includes('/releases?')), false);
+    assert.equal(calls.filter(({ url }) => url.startsWith('https://uploads.github.com/')).length, 4);
+    assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
   });
 
   it('TypeScript artifact가 없으면 API 호출 전에 중단한다', async (test) => {
@@ -141,7 +166,7 @@ describe('GitHub Release immutable publisher', () => {
     };
     await assert.rejects(
       publishPlatformRelease({
-        apiBase: 'https://api.github.test',
+        apiBase: 'https://api.github.com',
         directory,
         fetchImpl,
         repository: 'seorilabs/platform',
@@ -167,7 +192,7 @@ describe('GitHub Release immutable publisher', () => {
     };
     await assert.rejects(
       publishPlatformRelease({
-        apiBase: 'https://api.github.test',
+        apiBase: 'https://api.github.com',
         directory,
         fetchImpl,
         repository: 'seorilabs/platform',
@@ -180,18 +205,20 @@ describe('GitHub Release immutable publisher', () => {
     assert.equal(calls, 0);
   });
 
-  it('이미 공개된 release에 asset이 빠졌으면 수정하지 않고 중단한다', async (test) => {
+  it('이미 공개된 release는 base publisher가 수정하지 않는다', async (test) => {
     const directory = await releaseDirectory(test);
-    const fetchImpl = async () => jsonResponse([{
+    const fetchImpl = async () => jsonResponse({
       id: 42,
       tag_name: 'v0.6.5',
+      target_commitish: 'a'.repeat(40),
       draft: false,
+      prerelease: false,
       assets: [],
-      upload_url: 'https://uploads.github.test/releases/42/assets{?name,label}',
-    }]);
+      upload_url: 'https://uploads.github.com/repos/seorilabs/platform/releases/42/assets{?name,label}',
+    });
     await assert.rejects(
       publishPlatformRelease({
-        apiBase: 'https://api.github.test',
+        apiBase: 'https://api.github.com',
         directory,
         fetchImpl,
         repository: 'seorilabs/platform',
@@ -199,22 +226,24 @@ describe('GitHub Release immutable publisher', () => {
         tag: 'v0.6.5',
         token: 'test-token',
       }),
-      /immutable release에 asset이 없습니다/u,
+      /approval 대기 draft/u,
     );
   });
 
   it('예상하지 않은 기존 asset이 있으면 변경하지 않고 중단한다', async (test) => {
     const directory = await releaseDirectory(test);
-    const fetchImpl = async () => jsonResponse([{
+    const fetchImpl = async () => jsonResponse({
       id: 42,
       tag_name: 'v0.6.5',
+      target_commitish: 'a'.repeat(40),
       draft: true,
+      prerelease: false,
       assets: [{ id: 1, name: 'unexpected.zip', size: 1 }],
-      upload_url: 'https://uploads.github.test/releases/42/assets{?name,label}',
-    }]);
+      upload_url: 'https://uploads.github.com/repos/seorilabs/platform/releases/42/assets{?name,label}',
+    });
     await assert.rejects(
       publishPlatformRelease({
-        apiBase: 'https://api.github.test',
+        apiBase: 'https://api.github.com',
         directory,
         fetchImpl,
         repository: 'seorilabs/platform',
@@ -235,7 +264,7 @@ describe('GitHub Release immutable publisher', () => {
     };
     await assert.rejects(
       publishPlatformRelease({
-        apiBase: 'https://api.github.test',
+        apiBase: 'https://api.github.com',
         directory,
         fetchImpl,
         repository: 'seorilabs/platform',
@@ -247,7 +276,7 @@ describe('GitHub Release immutable publisher', () => {
     );
     await assert.rejects(
       publishPlatformRelease({
-        apiBase: 'https://api.github.test',
+        apiBase: 'https://api.github.com',
         directory,
         fetchImpl,
         repository: 'fork/platform',
