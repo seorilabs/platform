@@ -103,6 +103,9 @@ export function evaluatePlatformReleaseGate({
     manifestDigest: plan.releaseApproval.manifestDigest,
     platformReleaseSourceSha: plan.releaseApproval.sourceSha,
     contractRevision: plan.releaseApproval.contractRevision,
+    canaryEvidenceDigest: plan.releaseApproval.canaryEvidenceDigest,
+    workflowBundleSourceSha: plan.releaseApproval.workflowBundleSourceSha,
+    workflowBundleDigest: plan.releaseApproval.workflowBundleDigest,
     planDigest: plan.planDigest,
     observationSnapshotDigest: plan.observationSnapshotDigest,
     sdkBindings: consumer.trackStates.map((track) => ({

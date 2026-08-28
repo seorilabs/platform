@@ -42,3 +42,4 @@ ADR과 장기 의사결정을 관리한다.
 | [0022](0022-platform-fleet-approval-and-release-gate.md) | Fleet 승인은 broker FD로 서명하고 release build는 receipt로 차단한다 | Accepted |
 | [0023](0023-consumable-content-ticket-and-flow-unlock.md) | 콘텐츠 열람권은 소모성 상품으로 검증하고 연간 흐름을 한 번에 해금한다 | Accepted |
 | [0024](0024-provider-account-link-and-paid-access.md) | 외부 계정은 OIDC 어댑터로 연결하고 유료 접근은 연결 계정에 묶는다 | Accepted |
+| [0025](0025-canary-bound-platform-fleet-approval.md) | Fleet approval은 RN·Godot canary readback에 묶는다 | Accepted |

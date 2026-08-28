@@ -80,11 +80,54 @@ function manifest(classification = 'implementation-only') {
   };
 }
 
+function canaryApprovalEvidence() {
+  const workflowSourceSha = '4'.repeat(40);
+  const canary = (profile, repositoryId, repositoryFullName, sourceSha, runOffset) => ({
+    profile,
+    repositoryId,
+    repositoryFullName,
+    sourceSha,
+    staticRun: {
+      runId: String(1000 + runOffset),
+      conclusion: 'success',
+      headSha: sourceSha,
+      workflowSourceSha,
+    },
+    buildOnlyRun: {
+      runId: String(2000 + runOffset),
+      conclusion: 'success',
+      headSha: sourceSha,
+      workflowSourceSha,
+      cloudBuildId: `build-${runOffset}`,
+      builderImageDigest: `sha256:${String(runOffset).repeat(64)}`,
+      buildConfigDigest: `sha256:${String(runOffset + 2).repeat(64)}`,
+      artifact: {
+        name: `${profile}-release.aab`,
+        sha256: `sha256:${String(runOffset + 4).repeat(64)}`,
+        size: 1024 + runOffset,
+      },
+    },
+  });
+  return {
+    attestationSha256: `sha256:${'8'.repeat(64)}`,
+    readbackKeyId: 'canary-readback-1',
+    workflowBundle: {
+      repository: 'seorilabs/.github',
+      sourceSha: workflowSourceSha,
+      digest: `sha256:${'9'.repeat(64)}`,
+    },
+    canaries: [
+      canary('godot', '1265192029', 'seorilabs/lizard-tycoon', '5'.repeat(40), 1),
+      canary('react-native', '1250442131', 'seorilabs/happy-farm', '6'.repeat(40), 2),
+    ],
+  };
+}
+
 function signedRelease(classification = 'implementation-only') {
   const release = manifest(classification);
   const manifestContent = `${JSON.stringify(release, null, 2)}\n`;
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-  const payload = platformReleaseApprovalPayload(manifestContent);
+  const payload = platformReleaseApprovalPayload(manifestContent, canaryApprovalEvidence());
   const signature = sign(
     null,
     Buffer.from(JSON.stringify(stable(payload)), 'utf8'),
@@ -93,7 +136,7 @@ function signedRelease(classification = 'implementation-only') {
   return {
     manifestContent,
     approval: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       algorithm: 'Ed25519',
       keyId: 'fixture-key-1',
       payload,
@@ -201,6 +244,8 @@ describe('Platform Fleet release 승인', () => {
     assert.equal(plan.releaseApproval.sourceSha, SOURCE_SHA);
     assert.equal(plan.releaseApproval.contractRevision, CONTRACT_REVISION);
     assert.match(plan.releaseApproval.manifestDigest, /^sha256:[0-9a-f]{64}$/u);
+    assert.match(plan.releaseApproval.canaryEvidenceDigest, /^sha256:[0-9a-f]{64}$/u);
+    assert.equal(plan.releaseApproval.workflowBundleSourceSha, '4'.repeat(40));
     assert.equal(Object.isFrozen(plan), true);
     assert.equal(Object.isFrozen(plan.actions[0]), true);
   });
@@ -232,10 +277,21 @@ describe('Platform Fleet release 승인', () => {
       now: NOW,
     }), /신뢰하지 않는/u);
 
+    assert.throws(() => reconcilePlatformFleet({
+      ...release,
+      approval: { ...release.approval, schemaVersion: 1 },
+      expectedConsumers: [expected()],
+      observations: [observation()],
+      now: NOW,
+    }), /지원하지 않는/u);
+
     const invalid = manifest();
     invalid.sdk.gdscript.source = 'https://github.com/seorilabs/platform/tree/main/sdk-gdscript';
     assert.throws(
-      () => platformReleaseApprovalPayload(`${JSON.stringify(invalid)}\n`),
+      () => platformReleaseApprovalPayload(
+        `${JSON.stringify(invalid)}\n`,
+        canaryApprovalEvidence(),
+      ),
       /고정 source URL/u,
     );
   });

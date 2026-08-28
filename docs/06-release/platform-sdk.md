@@ -78,6 +78,12 @@ Release를 발견해도 자동으로 덮어쓰지 않는다.
 `platform-release.json` 원문 byte와 별도 `fleet-approved` Ed25519 서명을 검증한 뒤에만
 consumer 계획을 만든다. private signing key는 이 저장소나 agent에 전달하지 않는다.
 
+approval schema v2는 RN과 Godot 각각의 독립 static·build-only 성공을 trusted GitHub
+readback adapter가 서명한 canary evidence도 요구한다. evidence는 app source SHA,
+WorkflowBundle source SHA/digest, run ID, Cloud Build ID, builder/config digest와 AAB
+SHA-256을 모두 포함한다. 둘 중 하나가 실패·누락됐거나 source가 다르면 signer와
+`fleet-approved latest` 승격은 fail-closed한다. candidate fixture 성공은 canary가 아니다.
+
 ```text
 immutable release byte
   -> Fleet approval signature 검증
@@ -101,17 +107,27 @@ manifest digest와 `release-build` capability에 묶인 미래 만료 시각만 
 dry-run이며, fixture observation과 `needs_input` plan은 write할 수 없다. 실제 Backoffice
 adapter와 GitHub App fan-out은 별도 운영 배포가 필요하다.
 
-승인 signer는 private key 파일 경로나 환경변수를 받지 않는다. Auth Broker native
-launcher가 purpose-specific key를 inherited FD로 직접 연결하고 core dump를 차단한 경우에만
-다음처럼 실행한다. 아래의 FD 3은 예시 번호일 뿐 key 값이나 path를 의미하지 않는다.
+승인 signer는 private key, signed canary evidence와 trusted canary public-key registry의
+파일 경로나 환경변수를 받지 않는다. Auth Broker native launcher가 purpose-specific
+입력들을 서로 다른 inherited FD로 직접 연결하고 core dump를 차단한 경우에만 다음처럼
+실행한다. 아래 FD 번호는 예시일 뿐 key 값이나 path를 의미하지 않는다.
 
 ```bash
 node scripts/sign-platform-fleet-release.mjs \
   --manifest /trusted/release/platform-release.json \
   --key-id fleet-release-2026-01 \
   --private-key-fd 3 \
+  --canary-evidence-fd 4 \
+  --trusted-canary-keys-fd 5 \
   --output /trusted/release/fleet-approved.json
 ```
+
+canary evidence는 `godot`, `react-native` 순서로 각 profile의 repository numeric ID/full
+name, exact app source SHA, 독립 static/build-only 성공 run, exact WorkflowBundle SHA,
+Cloud Build ID, builder/config digest와 단일 AAB checksum을 고정한다. signer는 이 evidence의
+Ed25519 readback signature와 manifest binding을 검증한 뒤 approval v2에 evidence digest를
+포함한다. signed evidence 생성은 `.github` trusted adapter 책임이며 이 저장소는 evidence
+signer나 GitHub token을 제공하지 않는다.
 
 앱의 release build는 `scripts/platform-fleet-gate.mjs`가 만든 receipt를 먼저 요구한다.
 snapshot은 Backoffice가 정확한 repository ID, source SHA, ACTIVE config revision에 대해
