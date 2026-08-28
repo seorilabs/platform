@@ -200,8 +200,14 @@ func (s *AccessService) DeepAccess(
 ) (DeepAccess, error) {
 	out := DeepAccess{Unlocks: []UnlockRecord{}}
 
-	if app.Content.TicketEntitlementID != "" && app.Content.TicketUnitsPerPurchase > 0 &&
-		s.entitlements != nil {
+	if app.Content.TicketEntitlementID != "" && app.Content.TicketUnitsPerPurchase > 0 {
+		// 열람권을 운영하는 앱인데 원장 접합면이 없으면 조립이 잘못된 것이다.
+		// 조용히 ticket을 빼면 화면에는 "열람권 없는 앱"으로 보여 배선 버그가
+		// 사용자 쪽에서만 드러난다. Unlock의 ticket 경로와 같은 코드로 막는다.
+		if s.entitlements == nil {
+			return DeepAccess{}, platformerr.New(platformerr.CodeContentLocked,
+				"열람권이 운영 설정되지 않았어요")
+		}
 		remaining, err := s.entitlements.Remaining(
 			ctx, app, puid, app.Content.TicketEntitlementID, app.Content.TicketUnitsPerPurchase,
 		)

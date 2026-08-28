@@ -60,6 +60,17 @@ func TestDeepAccessOmitsTicketWhenAppHasNoTicketConfig(t *testing.T) {
 	}
 }
 
+// 열람권 앱인데 원장 접합면이 없으면 조용히 넘어가지 않는다. 그대로 두면
+// 배선 버그가 "열람권 없는 앱" 화면으로 위장된다.
+func TestDeepAccessFailsWhenTicketAppHasNoLedger(t *testing.T) {
+	access := NewAccessService(&fakeUnlocks{}, nil, nil)
+
+	_, err := access.DeepAccess(t.Context(), ticketApp(), "puid", 0)
+	if platformerr.CodeOf(err) != platformerr.CodeContentLocked {
+		t.Fatalf("code=%q err=%v", platformerr.CodeOf(err), err)
+	}
+}
+
 func TestDeepAccessPropagatesLedgerFailure(t *testing.T) {
 	boom := errors.New("ledger down")
 	access := NewAccessService(&fakeUnlocks{}, nil, &fakeEntitlements{remainingErr: boom})

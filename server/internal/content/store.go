@@ -368,10 +368,7 @@ func (r *StoreRepository) ListUnlocks(
 		if err := snap.DataTo(&doc); err != nil {
 			return nil, err
 		}
-		// 원장이 깨진 문서 하나 때문에 화면 전체를 못 그리게 하지 않는다.
-		// 조회 경로는 권한 판정이 아니라 표시용이고, 판정은 GetUnlock이 한다.
-		if doc.AppID != appID || doc.PlatformUserID != puid ||
-			doc.ReadingKey == "" || doc.DeepKey == "" {
+		if !listableUnlock(doc, appID, puid) {
 			continue
 		}
 		records = append(records, UnlockRecord{
@@ -386,4 +383,19 @@ func (r *StoreRepository) ListUnlocks(
 		records = records[:limit]
 	}
 	return records, nil
+}
+
+// listableUnlock은 목록에 실을 수 있는 문서인지 본다.
+//
+// 원장이 깨진 문서 하나 때문에 화면 전체를 못 그리게 하지 않는다. 조회 경로는
+// 권한 판정이 아니라 표시용이고 판정은 GetUnlock이 한다.
+//
+// 다만 **버리는 기준은 응답 계약과 같아야 한다.** source는 스펙에서 enum이고
+// unlockedAt은 시각이다. 걸러내지 않으면 깨진 문서 하나가 알 수 없는 source나
+// 0001-01-01을 그대로 내보내 서버가 자기 스펙을 어긴다.
+func listableUnlock(doc unlockDoc, appID, puid string) bool {
+	return doc.AppID == appID && doc.PlatformUserID == puid &&
+		doc.ReadingKey != "" && doc.DeepKey != "" &&
+		(doc.Source == "ticket" || doc.Source == "reward_claim") &&
+		!doc.CreatedAt.IsZero()
 }
