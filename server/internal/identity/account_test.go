@@ -157,7 +157,7 @@ func newAccountTestService(
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(reg, fakeVerifier{}, newMemRepo(), issuer).WithCustomTokenIssuer(customTokens)
+	service := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).WithCustomTokenIssuer(customTokens)
 	if err := service.ConfigureAccountProviders(accounts, provider); err != nil {
 		t.Fatal(err)
 	}

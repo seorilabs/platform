@@ -67,7 +67,7 @@ func newFixture(t *testing.T) *tokenFixture {
 	keys := fakeKeys{byKID: map[string]*rsa.PublicKey{testKID: &priv.PublicKey}}
 
 	// WithClock이 jwt.WithTimeFunc까지 넣으므로 라이브러리 판정도 같은 시각을 본다.
-	v := NewFirebaseVerifier(keys).WithClock(func() time.Time { return now })
+	v := NewFirebaseVerifier(keys, fakeBlocklist{}).WithClock(func() time.Time { return now })
 
 	return &tokenFixture{priv: priv, verifier: v, now: now}
 }
@@ -310,12 +310,11 @@ func TestVerifyRejectsFutureAuthTime(t *testing.T) {
 // 차단된 계정은 토큰이 유효해도 막는다.
 func TestVerifyRejectsBlockedUID(t *testing.T) {
 	f := newFixture(t)
-	app := testApp()
-	app.BlockedUIDs = []string{testUID}
+	f.verifier.blocked = blocking(testUID)
 
 	token := f.sign(t, jwt.SigningMethodRS256, testKID, f.priv)
 
-	_, err := f.verifier.Verify(context.Background(), token, app)
+	_, err := f.verifier.Verify(context.Background(), token, testApp())
 	if err == nil {
 		t.Fatal("차단된 계정을 통과시켰다")
 	}

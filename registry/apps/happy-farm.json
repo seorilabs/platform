@@ -52,6 +52,5 @@
     "update_gate_shown",
     "update_gate_store_click"
   ],
-  "cors_origins": [],
-  "blocked_uids": []
+  "cors_origins": []
 }

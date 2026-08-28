@@ -21,6 +21,5 @@
     "capacitor://localhost",
     "https://match-picture-app.apps.tossmini.com",
     "https://match-picture-app.private-apps.tossmini.com"
-  ],
-  "blocked_uids": []
+  ]
 }

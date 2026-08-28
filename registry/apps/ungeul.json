@@ -81,6 +81,5 @@
     "capacitor://localhost",
     "https://ungeul.apps.tossmini.com",
     "https://ungeul.private-apps.tossmini.com"
-  ],
-  "blocked_uids": []
+  ]
 }

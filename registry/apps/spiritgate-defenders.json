@@ -37,6 +37,5 @@
   ],
   "cors_origins": [
     "https://seorilabs.github.io"
-  ],
-  "blocked_uids": []
+  ]
 }
