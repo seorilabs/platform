@@ -5,7 +5,7 @@
 //
 // Firebase RC가 못 하는 걸 한다. AIT와 Godot 런타임에서 동작하고,
 // 크로스앱 공통 설정이 가능하며, IAP와 같은 서버 권위 신뢰 경계를 갖는다.
-// docs/03-architecture/remote-config.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/remote-config.md 참고.
 package remoteconfig
 
 import (

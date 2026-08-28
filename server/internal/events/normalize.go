@@ -2,7 +2,7 @@
 //
 // GA4를 대체하지 않는다. SDK가 단일 진입점이 되어 GA4와 플랫폼 양쪽으로
 // 팬아웃하고, 플랫폼은 allowlist에 있는 것만 받는다.
-// docs/03-architecture/events.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/events.md 참고.
 package events
 
 import (

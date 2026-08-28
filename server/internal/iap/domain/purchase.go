@@ -5,7 +5,7 @@
 //
 // 인터페이스는 여기 두지 않는다. 호출하는 쪽(iap/verify)에 정의한다.
 // Go 관용구이면서 원본 domain.ts와 값 타입 대조도 가능하게 한 절충이다.
-// docs/03-architecture/server-layout.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/server-layout.md 참고.
 package domain
 
 import (
