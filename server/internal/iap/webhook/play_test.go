@@ -250,7 +250,7 @@ func TestPlayVoidedPurchase(t *testing.T) {
 	}
 }
 
-// 부분 환불은 수량 기반이라 비소비성 entitlement에 대응되지 않는다.
+// 부분 환불은 수량 기반이라 현재 source 전체 회수 모델에 대응되지 않는다.
 //
 // 조용히 전부 회수하면 산 것을 잃는다.
 func TestPlayPartialRefundRejected(t *testing.T) {

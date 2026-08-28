@@ -11,7 +11,7 @@
 - private 콘텐츠 GCS bucket 이름과 `ungeul` prefix
 - Android/iOS Firebase 앱 등록 파일과 App Check provider 설정
 - 콘텐츠용 AdMob rewarded placement와 reward key
-- 열람권 및 연도별 시즌 패스 entitlement ID와 마켓 SKU
+- 소모성 열람권 entitlement ID와 마켓별 SKU
 
 확정 뒤 `registry/apps/ungeul.json`에 다음 계약을 실제 값으로 등록한다.
 
@@ -24,7 +24,7 @@
 - `cors_origins`: Android 기본 `https://localhost`, iOS 기본 `capacitor://localhost`와 실제로
   배포하는 웹 origin만 명시
 - 운영 준비가 끝난 권한만 `reward_key`, `ticket_entitlement_id`,
-  `ticket_units_per_purchase`, `season_entitlements`에 등록
+  `ticket_units_per_purchase`에 등록. 운글은 `season_entitlements`를 사용하지 않는다.
 
 레지스트리 파일 추가만으로 런타임이 바뀌지 않는다. `cmd/regsync` dry-run과 실제 sync를
 분리하고, sync 뒤 Firestore readback을 확인한다.
@@ -48,6 +48,8 @@
 - 손상된 active/manifest/content 전환은 직전 정상본을 계속 제공한다.
 - 신규 명식 11번째와 사전 101번째는 429, 같은 readingKey 재조회는 허용한다.
 - AdMob은 `server_verified` claim만 열고, claim 재사용은 다른 deepKey에 바인딩되지 않는다.
+- 같은 명식의 `flow:{year}`는 광고 보상 1회 또는 열람권 1단위로 세운과 12개월 월운을
+  함께 열며 두 섹션을 따로 차감하지 않는다.
 - 열람권은 같은 request key 재시작에 중복 차감하지 않고, 해제 기록에 묶인 구매 source의
   환불·소유권 이전을 다음 온라인 조회에서 반영한다.
 - 앱 실기기에서 401 갱신, 403 잠금, 429 안내, 7일/5개 캐시와 버전 폐기를 확인한다.

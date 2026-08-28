@@ -79,7 +79,7 @@ func (s *Service) Resolve(
 			return ResolveResult{}, platformerr.New(platformerr.CodeContentLocked,
 				"심화 권한 확인이 준비되지 않았어요")
 		}
-		deepKey := fmt.Sprintf("%s:%d", req.Unlock.Section, req.Reading.Seun.Year)
+		deepKey := flowDeepKey(req.Reading.Seun.Year)
 		alreadyAuthorized, err := s.access.Authorized(
 			ctx, app, puid, selection.ReadingKey, deepKey, req.Reading.Seun.Year,
 		)
@@ -109,7 +109,7 @@ func (s *Service) Resolve(
 		if !selection.Scope[section] {
 			continue
 		}
-		deepKey := fmt.Sprintf("%s:%d", section, req.Reading.Seun.Year)
+		deepKey := flowDeepKey(req.Reading.Seun.Year)
 		allowed := false
 		if s.access != nil {
 			allowed, err = s.access.Authorized(
@@ -138,6 +138,12 @@ func (s *Service) Resolve(
 		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
 		ReadingKey: selection.ReadingKey, Articles: articleList, Locked: locked,
 	}, nil
+}
+
+// flowDeepKey는 한 해의 세운과 12개월 월운을 같은 열람 단위로 묶는다.
+// 한 번의 광고 보상 또는 열람권 차감으로 둘을 함께 열기 위한 키다.
+func flowDeepKey(year int) string {
+	return fmt.Sprintf("flow:%d", year)
 }
 
 func validateSelectionRelease(release Release, selection Selection) error {

@@ -330,7 +330,7 @@ func (h *PlayHandler) parse(raw []byte) (notification, error) {
 		v := dn.VoidedPurchaseNotification
 		n.Kind = "voided_purchase"
 
-		// 우리는 일회성 비소비성 상품만 다룬다. 구독 환불 알림을
+		// 우리는 일회성 소비성·비소비성 상품만 다룬다. 구독 환불 알림을
 		// 처리하면 원장에 없는 주문이라 tombstone만 쌓이고, 나중에
 		// 구독을 도입할 때 그 tombstone이 신규 지급을 막는다.
 		//
@@ -340,8 +340,8 @@ func (h *PlayHandler) parse(raw []byte) (notification, error) {
 			return n, nil
 		}
 
-		// 부분 환불은 수량 기반이라 비소비성 entitlement에 대응되지 않는다.
-		// 일부만 회수한다는 개념이 없어서 조용히 전부 회수하면 안 된다.
+		// 부분 환불은 수량 기반이다. 현재 원장은 한 source의 일부 단위만
+		// 회수하지 않으므로 조용히 전부 회수하면 안 된다.
 		if v.RefundType == refundTypePartial {
 			return notification{}, platformerr.New(platformerr.CodePartialRefundUnsupported,
 				"부분 환불은 처리할 수 없어요")
