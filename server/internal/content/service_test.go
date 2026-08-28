@@ -22,6 +22,20 @@ func (u serviceUsage) AllowTerm(context.Context, registry.App, string) error { r
 type serviceAccess struct {
 	authorized bool
 	unlockCall int
+	deep       DeepAccess
+	deepErr    error
+}
+
+func (a *serviceAccess) DeepAccess(
+	_ context.Context, _ registry.App, _ string, _ int,
+) (DeepAccess, error) {
+	return a.deep, a.deepErr
+}
+
+func (a *flowServiceAccess) DeepAccess(
+	_ context.Context, _ registry.App, _ string, _ int,
+) (DeepAccess, error) {
+	return DeepAccess{}, nil
 }
 
 type flowServiceAccess struct {

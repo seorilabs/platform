@@ -83,6 +83,7 @@ func TestHandlerRequiresAppCheck(t *testing.T) {
 		{name: "version", method: http.MethodGet, path: "/v1/content/version"},
 		{name: "resolve", method: http.MethodPost, path: "/v1/content/readings:resolve", body: `{}`},
 		{name: "term", method: http.MethodGet, path: "/v1/content/terms/ilju.gapja"},
+		{name: "deep-access", method: http.MethodGet, path: "/v1/content/deep-access"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks := &fakeAppChecks{err: platformerr.New(platformerr.CodeAppCheckRequired, "required")}
@@ -116,6 +117,7 @@ func TestHandlerRequiresPlatformSession(t *testing.T) {
 		{name: "version", method: http.MethodGet, path: "/v1/content/version"},
 		{name: "resolve", method: http.MethodPost, path: "/v1/content/readings:resolve", body: `{}`},
 		{name: "term", method: http.MethodGet, path: "/v1/content/terms/ilju.gapja"},
+		{name: "deep-access", method: http.MethodGet, path: "/v1/content/deep-access"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()

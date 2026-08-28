@@ -12,6 +12,8 @@ import (
 )
 
 type fakeUnlocks struct {
+	listed         []UnlockRecord
+	listErr        error
 	grant          UnlockGrant
 	rewardClaim    string
 	ticketRecorded bool
@@ -28,6 +30,11 @@ func (f *fakeUnlocks) BindReward(_ context.Context, _, _, _, _, claim string) er
 		f.grant = UnlockGrant{Exists: true, Source: "reward_claim", Reference: claim}
 	}
 	return f.bindErr
+}
+func (f *fakeUnlocks) ListUnlocks(
+	_ context.Context, _, _ string, _ int,
+) ([]UnlockRecord, error) {
+	return f.listed, f.listErr
 }
 func (f *fakeUnlocks) RecordTicket(_ context.Context, _, _, _, _, sourceKey string) error {
 	f.ticketRecorded = true
@@ -59,6 +66,8 @@ func (f *fakeClaims) AcknowledgeClaim(
 }
 
 type fakeEntitlements struct {
+	remaining    int
+	remainingErr error
 	active       bool
 	sourceActive bool
 	consumed     bool
@@ -73,6 +82,11 @@ func (f *fakeEntitlements) SourceActive(
 	context.Context, registry.App, string, string, string,
 ) (bool, error) {
 	return f.sourceActive, nil
+}
+func (f *fakeEntitlements) Remaining(
+	_ context.Context, _ registry.App, _, _ string, _ int,
+) (int, error) {
+	return f.remaining, f.remainingErr
 }
 func (f *fakeEntitlements) Consume(
 	_ context.Context, _ registry.App, _, _ string, _ int, key string,

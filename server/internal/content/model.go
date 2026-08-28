@@ -134,3 +134,37 @@ type TermResult struct {
 	ContentVersion string  `json:"contentVersion"`
 	Article        Article `json:"article"`
 }
+
+// TicketBalance는 남은 열람권이다.
+//
+// UnitsPerPurchase를 함께 주는 것은 화면이 "5개 중 2개 남음"처럼 분모를
+// 보여줄 수 있게 하기 위해서다. 앱이 이 값을 상수로 박으면 레지스트리를
+// 고쳤을 때 화면만 옛 숫자로 남는다.
+type TicketBalance struct {
+	EntitlementID    string `json:"entitlementId"`
+	Remaining        int    `json:"remaining"`
+	UnitsPerPurchase int    `json:"unitsPerPurchase"`
+}
+
+// DeepUnlock은 이미 열린 심화 항목 하나의 응답 형태다.
+//
+// Year는 deepKey에서 뽑는다. 앱이 문자열을 다시 파싱하지 않게 한다.
+type DeepUnlock struct {
+	ReadingKey string `json:"readingKey"`
+	DeepKey    string `json:"deepKey"`
+	Year       int    `json:"year,omitempty"`
+	Source     string `json:"source"`
+	UnlockedAt string `json:"unlockedAt"`
+}
+
+// DeepAccessResult는 심화 열람 현황 응답이다.
+type DeepAccessResult struct {
+	Ticket  *TicketBalance `json:"ticket,omitempty"`
+	Unlocks []DeepUnlock   `json:"unlocks"`
+}
+
+// DeepAccess는 유스케이스 반환값이다. HTTP 표현과 분리해 둔다.
+type DeepAccess struct {
+	Ticket  *TicketBalance
+	Unlocks []UnlockRecord
+}

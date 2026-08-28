@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
@@ -25,6 +28,7 @@ type Usage interface {
 type AccessController interface {
 	Authorized(context.Context, registry.App, string, string, string, int) (bool, error)
 	Unlock(context.Context, registry.App, string, string, string, UnlockRequest) error
+	DeepAccess(context.Context, registry.App, string, int) (DeepAccess, error)
 }
 
 type Service struct {
@@ -140,10 +144,60 @@ func (s *Service) Resolve(
 	}, nil
 }
 
+// DeepAccess는 남은 열람권과 이미 연 심화 항목을 함께 준다.
+//
+// 둘을 한 번에 주는 것은 화면이 한 곳에서 "몇 장 남았고 무엇을 열었는지"를
+// 그리기 때문이다. 나눠 두면 두 번 왕복하고 그 사이 값이 어긋난다.
+func (s *Service) DeepAccess(
+	ctx context.Context,
+	appID, puid string,
+	limit int,
+) (DeepAccessResult, error) {
+	app, err := s.apps.GetUsable(ctx, appID)
+	if err != nil {
+		return DeepAccessResult{}, err
+	}
+	if s.access == nil {
+		return DeepAccessResult{}, platformerr.New(platformerr.CodeContentLocked,
+			"심화 권한 확인이 준비되지 않았어요")
+	}
+	access, err := s.access.DeepAccess(ctx, app, puid, limit)
+	if err != nil {
+		return DeepAccessResult{}, err
+	}
+	unlocks := make([]DeepUnlock, 0, len(access.Unlocks))
+	for _, record := range access.Unlocks {
+		unlocks = append(unlocks, DeepUnlock{
+			ReadingKey: record.ReadingKey,
+			DeepKey:    record.DeepKey,
+			Year:       flowDeepKeyYear(record.DeepKey),
+			Source:     record.Source,
+			UnlockedAt: record.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return DeepAccessResult{Ticket: access.Ticket, Unlocks: unlocks}, nil
+}
+
 // flowDeepKey는 한 해의 세운과 12개월 월운을 같은 열람 단위로 묶는다.
 // 한 번의 광고 보상 또는 열람권 차감으로 둘을 함께 열기 위한 키다.
 func flowDeepKey(year int) string {
 	return fmt.Sprintf("flow:%d", year)
+}
+
+// flowDeepKeyYear는 deepKey에서 연도를 되뽑는다.
+//
+// 형식이 다르면 0을 준다. 표시용 값이라 여기서 실패로 만들지 않는다 —
+// 나중에 다른 종류의 deepKey가 생겨도 목록은 계속 그려져야 한다.
+func flowDeepKeyYear(deepKey string) int {
+	rest, ok := strings.CutPrefix(deepKey, "flow:")
+	if !ok {
+		return 0
+	}
+	year, err := strconv.Atoi(rest)
+	if err != nil || year < 1900 || year > 2200 {
+		return 0
+	}
+	return year
 }
 
 func validateSelectionRelease(release Release, selection Selection) error {
