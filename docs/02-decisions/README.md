@@ -39,3 +39,4 @@ ADR과 장기 의사결정을 관리한다.
 | [0019](0019-rpi-edge-presence.md) | RPI Edge presence와 fail-open 경계 | Accepted |
 | [0020](0020-immutable-platform-fleet-release.md) | Platform Fleet release를 불변 manifest로 배포한다 | Accepted |
 | [0021](0021-platform-fleet-reconciler-boundary.md) | Platform Fleet fan-out은 서명된 dry-run 계획에서 시작한다 | Accepted |
+| [0022](0022-platform-fleet-approval-and-release-gate.md) | Fleet 승인은 broker FD로 서명하고 release build는 receipt로 차단한다 | Accepted |

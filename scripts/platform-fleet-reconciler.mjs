@@ -245,6 +245,12 @@ export function platformReleaseApprovalPayload(manifestContent) {
   });
 }
 
+// Signer와 verifier가 같은 byte 표현을 쓰도록 승인 payload의 canonical byte를
+// producer가 아닌 계약 모듈에서 한 번만 정의한다. 반환값에는 secret이 없다.
+export function platformReleaseApprovalBytes(manifestContent) {
+  return Buffer.from(canonicalBytes(platformReleaseApprovalPayload(manifestContent)));
+}
+
 function trustedKey(trustedPublicKeys, keyId) {
   if (!(trustedPublicKeys instanceof Map)) {
     throw new Error('trustedPublicKeys는 명시적인 Map이어야 합니다.');
@@ -696,6 +702,10 @@ export function reconcilePlatformFleet({
           approvedContractRevision: desired.contractRevision,
           observedArtifactSha256: integration.sdk?.artifactSha256 ?? null,
           approvedArtifactSha256: desired.artifactSha256,
+          observedTreeChecksum: integration.sdk?.treeChecksum ?? null,
+          approvedTreeChecksum: desired.treeChecksum ?? null,
+          observedSource: integration.sdk?.source ?? null,
+          approvedSource: desired.source ?? null,
         });
         if (integration.status === 'ambiguous') {
           needsInput.push(`AMBIGUOUS_${track.toUpperCase()}_INTEGRATION`);
