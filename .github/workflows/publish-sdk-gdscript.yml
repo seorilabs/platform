@@ -23,7 +23,7 @@ jobs:
         bash scripts/check_sdk_gdscript.sh
 
   publish:
-    name: Immutable Platform SDK Release 발행
+    name: Platform SDK approval 대기 draft 준비
     needs: sdk
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -88,7 +88,7 @@ jobs:
             --oasdiff "$RUNNER_TEMP/oasdiff" \
             --output-dir "$RUNNER_TEMP/platform-release"
 
-      - name: Publish immutable GitHub Release
+      - name: Prepare immutable GitHub Release draft
         run: node scripts/publish-platform-release.mjs "$RUNNER_TEMP/platform-release"
         env:
           GITHUB_TOKEN: ${{ github.token }}

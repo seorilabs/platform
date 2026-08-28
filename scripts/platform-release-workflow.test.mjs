@@ -36,6 +36,22 @@ describe('Platform release workflow 계약', () => {
     assert.doesNotMatch(source, /\b(?:gcloud|kubectl|firebase)\b/u);
   });
 
+  it('base publisher는 네 asset draft만 만들고 Fleet approval 전에는 공개하지 않는다', async () => {
+    const [workflowSource, publisherSource, approvalPublisherSource] = await Promise.all([
+      workflow('publish-sdk-gdscript.yml'),
+      readFile(resolve(root, 'scripts/publish-platform-release.mjs'), 'utf8'),
+      readFile(resolve(root, 'scripts/publish-platform-fleet-approval.mjs'), 'utf8'),
+    ]);
+    assert.match(workflowSource, /approval 대기 draft/u);
+    assert.match(publisherSource, /AWAITING_FLEET_APPROVAL/u);
+    assert.doesNotMatch(publisherSource, /JSON\.stringify\(\{ draft: false \}\)/u);
+    assert.match(approvalPublisherSource, /immutable === true/u);
+    assert.match(approvalPublisherSource, /--grant-fd/u);
+    assert.match(approvalPublisherSource, /--policy-attestation/u);
+    assert.match(approvalPublisherSource, /--token-fd/u);
+    assert.doesNotMatch(approvalPublisherSource, /--trusted-keys/u);
+  });
+
   it('PR gate는 generator를 두 번 실행해 byte 차이를 검사한다', async () => {
     const source = await workflow('checks-platform-release.yml');
     assert.match(source, /for output in first second/u);
