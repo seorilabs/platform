@@ -126,3 +126,36 @@ func setAPIConfigEnv(t *testing.T) {
 	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_URL", "")
 	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_SECRET", "")
 }
+
+func TestPresenceConfigIsOptionalButRejectsPartialPair(t *testing.T) {
+	t.Setenv("PLATFORM_ROLE", string(RoleIngest))
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
+	t.Setenv("PLATFORM_SESSION_SECRET", strings.Repeat("s", 64))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("presence 비활성 config load 실패: %v", err)
+	}
+	if cfg.Presence.Enabled() {
+		t.Fatal("키가 없는데 presence가 활성화됐다")
+	}
+
+	t.Setenv("PLATFORM_PRESENCE_EDGE_URL", "https://edge.vzyx.xyz")
+	if _, err := Load(); err == nil {
+		t.Fatal("Edge URL만 있는 presence 설정을 허용했다")
+	}
+
+	t.Setenv("PLATFORM_PRESENCE_PRIVATE_KEY", "private-key-placeholder")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("presence 설정 load 실패: %v", err)
+	}
+	if !cfg.Presence.Enabled() || cfg.Presence.EdgeURL != "https://edge.vzyx.xyz" {
+		t.Fatalf("presence 설정이 달라졌다: %+v", cfg.Presence)
+	}
+
+	t.Setenv("PLATFORM_PRESENCE_EDGE_URL", "http://edge.vzyx.xyz")
+	if _, err := Load(); err == nil {
+		t.Fatal("외부 평문 HTTP Edge URL을 허용했다")
+	}
+}

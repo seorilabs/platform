@@ -1,13 +1,20 @@
 # Seorilabs 플랫폼 GDScript SDK
 
 Godot 앱이 플랫폼을 쓰기 위한 애드온. 인증·이벤트·설정·결제와 보상 광고
-SSV adapter가 한 배포본에 있다. 원본 저장소는
-`https://github.com/seorilabs/platform/tree/main/sdk-gdscript`이고 vendored addon의
-`SOURCE`, `VERSION`, `CHECKSUM`으로 출처와 내용을 고정한다.
+SSV adapter가 한 배포본에 있다. 정식 배포본은
+`https://github.com/seorilabs/platform/releases/tag/v<VERSION>`의 고정 asset이며,
+vendored addon의 `SOURCE`, `VERSION`, `CHECKSUM`으로 출처와 전체 tree를 고정한다.
 
 ## 가져가기
 
-GDScript에는 패키지 매니저가 없다. **파일을 복사해 간다.**
+GDScript에는 패키지 매니저가 없다. 정식 소비자는 GitHub Release의
+`seorilabs-platform-gdscript-<VERSION>.tar.gz`와 같은 이름의 `.sha256`을 검증한
+뒤 Godot 프로젝트의 `addons/` 아래에 푼다. archive 안의 `SOURCE`는 `main`이 아니라
+다운로드한 Release asset URL을 가리킨다.
+
+아래 script는 Platform checkout의 미발행 source를 확인하는 로컬 개발용이다.
+결과의 floating `SOURCE`와 기존 source checksum을 정식 release provenance로
+사용하지 않는다.
 
 ```bash
 # 소비자 저장소에서. <platform>은 이 저장소의 checkout 경로다.
@@ -49,6 +56,8 @@ platform.configure({
             "appVersion": "1.2.3",
             "locale": "ko-KR",
         },
+    # 명시적으로 켠 앱만 별도 2초 timeout의 RPI heartbeat를 시작한다.
+    "presence_enabled": true,
 })
 add_child(platform)
 
@@ -155,6 +164,26 @@ fail-closed한다. `discard_unsettled_claim`은 광고를 보여 주지 못한 �
 | `message` | 사람이 읽는 메시지. 분기에 쓰지 않는다 |
 | `local` | 로컬 판정인가. 서버에 닿지 못한 경우 |
 
+### 세션 만료와 IAP 인증 복구
+
+`current_session()["expiresAt"]`은 Unix epoch millisecond다. SDK는 기기
+sleep 중 멈출 수 있는 monotonic tick을 세션 만료 기준으로 쓰지 않으며,
+만료 60초 전부터 선제 refresh한다. session refresh 전송 자체는 proactive와
+strict IAP 경로 모두 일반 재시도 없이 한 번만 보낸다.
+
+`verify_purchase`, `list_entitlements`, `account_references`는 전송 계층의 일반
+재시도를 모두 끈다. 첫 응답이 정확히 `401 session_expired`일 때만 refresh를
+한 번 요청하고 새 토큰으로 원 요청을 한 번 replay한다. 그 refresh 요청도
+일반 재시도를 하지 않으며 refresh 실패, replay의 두 번째 401, 403, 5xx,
+timeout은 그대로 한 번 반환한다. 이 strict IAP 복구 경로는 refresh 401/403
+뒤 보관 자격증명으로 다시 로그인하지 않는다. 일반 `with_token`의 선제
+refresh는 기존 재로그인 정책을 유지한다.
+
+refresh 중 public `sign_in` 또는 `sign_out`이 호출되면 이전 인증 세대의
+waiter를 `auth_state_changed`로 한 번 끝내고, 늦게 도착한 refresh·내부
+재로그인 응답은 세션에 저장하거나 IAP 요청에 재사용하지 않는다. refresh
+실패 응답은 `http_status`, `local`, `valid`를 포함한 원래 envelope를 보존한다.
+
 ## 계약
 
 응답 해석·정규화·백오프는 `spec/conformance/*.json`이 정본이고
@@ -180,8 +209,9 @@ lizard-tycoon의 기존 `iap_functions_client.gd`는 `_exact_keys()`로
 
 - **익명 신원은 결제할 수 없다.** `getAnonymousKey` 해시는 bearer
   자격증명이 아니라 타인 사칭이 가능하다. 조회와 이벤트는 익명도 된다.
-- **결제 검증은 자동 재시도하지 않는다.** 서버가 멱등이어도 응답을
-  기다리는 사이 사용자에게는 두 번 결제한 것처럼 보인다.
+- **결제 검증은 일반 오류에서 자동 재시도하지 않는다.** 인증 미들웨어의
+  첫 `401 session_expired`만 위 규칙으로 한 번 복구한다. 서버가 멱등이어도
+  다른 응답을 기다리는 사이 사용자에게는 두 번 결제한 것처럼 보인다.
 - HTTP 요청은 직렬로 흐른다. Godot의 `HTTPRequest`가 한 번에 하나만
   처리하기 때문이다. 플랫폼 호출은 빈도가 낮아 충분하다.
 - `Retry-After`는 초 단위 숫자만 읽는다. Godot에 HTTP-date 파서가 없다.

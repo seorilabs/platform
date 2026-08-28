@@ -36,5 +36,9 @@ ADR과 장기 의사결정을 관리한다.
 | [0015](0015-platform-ads-boundary.md) | 광고 검증을 platform-ads 경계로 분리한다 | Accepted |
 | [0016](0016-iap-app-scoped-ledger.md) | 신규 IAP 원장을 앱 범위로 격리한다 | Accepted |
 | [0018](0018-private-versioned-content-delivery.md) | 보호 콘텐츠는 private GCS 릴리스와 Platform 선택 API로 전달한다 | Accepted |
-| [0019](0019-consumable-content-ticket-and-flow-unlock.md) | 콘텐츠 열람권은 소모성 상품으로 검증하고 연간 흐름을 한 번에 해금한다 | Accepted |
-| [0020](0020-provider-account-link-and-paid-access.md) | 외부 계정은 OIDC 어댑터로 연결하고 유료 접근은 연결 계정에 묶는다 | Accepted |
+| [0019](0019-rpi-edge-presence.md) | RPI Edge presence와 fail-open 경계 | Accepted |
+| [0020](0020-immutable-platform-fleet-release.md) | Platform Fleet release를 불변 manifest로 배포한다 | Accepted |
+| [0021](0021-platform-fleet-reconciler-boundary.md) | Platform Fleet fan-out은 서명된 dry-run 계획에서 시작한다 | Accepted |
+| [0022](0022-platform-fleet-approval-and-release-gate.md) | Fleet 승인은 broker FD로 서명하고 release build는 receipt로 차단한다 | Accepted |
+| [0023](0023-consumable-content-ticket-and-flow-unlock.md) | 콘텐츠 열람권은 소모성 상품으로 검증하고 연간 흐름을 한 번에 해금한다 | Accepted |
+| [0024](0024-provider-account-link-and-paid-access.md) | 외부 계정은 OIDC 어댑터로 연결하고 유료 접근은 연결 계정에 묶는다 | Accepted |

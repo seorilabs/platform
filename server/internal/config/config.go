@@ -51,6 +51,7 @@ type Config struct {
 	Ads         AdsConfig
 	Operational OperationalConfig
 	KakaoUnlink KakaoUnlinkConfig
+	Presence    PresenceConfig
 }
 
 // OperationalConfig는 확정 이벤트를 Backoffice에 서명해 전달하는 설정이다.
@@ -71,6 +72,15 @@ type KakaoUnlinkConfig struct {
 func (c KakaoUnlinkConfig) Enabled() bool {
 	return c.PlatformAppID != "" && c.KakaoAppID != "" && len(c.AdminKey) > 0
 }
+
+// PresenceConfig는 Cloud ingest가 RPI Edge 전용 token을 발급할 때만 쓴다.
+// 비공개키를 Edge에 복제하지 않고, Edge에는 대응 공개키만 둔다.
+type PresenceConfig struct {
+	EdgeURL       string
+	PrivateKeyRaw string
+}
+
+func (c PresenceConfig) Enabled() bool { return c.EdgeURL != "" && c.PrivateKeyRaw != "" }
 
 func (c OperationalConfig) Enabled() bool { return c.URL != "" && len(c.Secret) >= 32 }
 
@@ -150,6 +160,13 @@ func Load() (Config, error) {
 		}
 		c.KakaoUnlink = kakaoUnlink
 	}
+	if role == RoleIngest {
+		presence, err := loadPresence()
+		if err != nil {
+			return Config{}, err
+		}
+		c.Presence = presence
+	}
 
 	return c, nil
 }
@@ -210,6 +227,24 @@ func isDigits(value string) bool {
 		}
 	}
 	return true
+}
+
+func loadPresence() (PresenceConfig, error) {
+	rawURL := strings.TrimSpace(os.Getenv("PLATFORM_PRESENCE_EDGE_URL"))
+	rawKey := strings.TrimSpace(os.Getenv("PLATFORM_PRESENCE_PRIVATE_KEY"))
+	if rawURL == "" && rawKey == "" {
+		return PresenceConfig{}, nil
+	}
+	if rawURL == "" || rawKey == "" {
+		return PresenceConfig{}, errors.New("config: presence Edge URL과 비공개키는 함께 필요하다")
+	}
+	parsed, err := url.ParseRequestURI(rawURL)
+	loopbackHTTP := err == nil && parsed.Scheme == "http" &&
+		(parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1")
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !loopbackHTTP) {
+		return PresenceConfig{}, errors.New("config: PLATFORM_PRESENCE_EDGE_URL은 HTTPS 또는 loopback HTTP여야 한다")
+	}
+	return PresenceConfig{EdgeURL: strings.TrimRight(rawURL, "/"), PrivateKeyRaw: rawKey}, nil
 }
 
 func loadOperational() (OperationalConfig, error) {

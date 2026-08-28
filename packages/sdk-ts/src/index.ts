@@ -22,6 +22,7 @@ import { Iap } from "./iap.ts";
 import { Ads } from "./ads.ts";
 import { Content } from "./content.ts";
 import { Identity } from "./identity.ts";
+import { Presence, type PresenceContextProvider } from "./presence.ts";
 import {
   MemorySessionStore,
   SessionManager,
@@ -48,6 +49,7 @@ export { Ads } from "./ads.ts";
 export { Config } from "./config.ts";
 export { Content, CONTENT_SCHEMA_VERSION } from "./content.ts";
 export { Identity } from "./identity.ts";
+export { Presence } from "./presence.ts";
 export { SDK_VERSION } from "./version.ts";
 
 export type { Credential, CredentialKind, Session, SessionStore } from "./session.ts";
@@ -90,6 +92,7 @@ export type {
   AccountProvider,
   FirebaseCustomTokenResult,
 } from "./identity.ts";
+export type { PresenceContext, PresenceContextProvider, PresencePlatform } from "./presence.ts";
 export type {
   AdsPolicy,
   AdReward,
@@ -116,6 +119,10 @@ export interface PlatformOptions extends TransportOptions {
   /** 이벤트 자동 전송 주기. 0이면 수동으로만 보낸다. */
   eventFlushIntervalMs?: number;
   configTtlMs?: ConfigOptions["ttlMs"];
+  /** RPI Edge heartbeat. 명시적으로 true인 앱만 시작한다. */
+  presenceEnabled?: boolean;
+  /** 생략하면 eventContext의 platform과 appVersion을 사용한다. */
+  presenceContext?: PresenceContextProvider;
 }
 
 /** SDK 진입점. */
@@ -128,12 +135,19 @@ export class Platform {
   readonly ads: Ads;
   readonly content: Content;
   readonly identity: Identity;
+  readonly presence: Presence;
 
   constructor(opts: PlatformOptions) {
     this.transport = new Transport(opts);
     const ingestTransport = new Transport({
       ...opts,
       baseUrl: opts.ingestBaseUrl ?? opts.baseUrl,
+    });
+    const presenceTokenTransport = new Transport({
+      ...opts,
+      baseUrl: opts.ingestBaseUrl ?? opts.baseUrl,
+      maxRetries: 0,
+      timeoutMs: 5_000,
     });
     const iapTransport = new Transport({
       ...opts,
@@ -188,6 +202,22 @@ export class Platform {
       () => this.session.token(),
       (session) => this.session.adopt(session),
     );
+    this.presence = new Presence({
+      enabled: opts.presenceEnabled === true,
+      tokenTransport: presenceTokenTransport,
+      context: opts.presenceContext ?? (() => {
+        const value = typeof opts.eventContext === "function"
+          ? opts.eventContext()
+          : (opts.eventContext ?? {});
+        return {
+          ...(value.platform ? { platform: value.platform } : {}),
+          ...(value.appVersion ? { appVersion: value.appVersion } : {}),
+        };
+      }),
+      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      ...(opts.now ? { now: opts.now } : {}),
+      ...(opts.random ? { random: opts.random } : {}),
+    });
 
     this.config = new Config({
       transport: this.transport,
@@ -203,17 +233,20 @@ export class Platform {
 
   async signOut(): Promise<void> {
     this.events.stop();
+    this.presence.stop();
     await this.session.signOut();
   }
 
   /** 이벤트 자동 전송을 시작한다. */
   start(): void {
     this.events.start();
+    this.presence.start();
   }
 
   /** 종료 전에 남은 이벤트를 보낸다. */
   async shutdown(): Promise<void> {
     this.events.stop();
+    this.presence.stop();
     await this.events.flush();
   }
 }

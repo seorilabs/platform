@@ -22,11 +22,14 @@ flowchart TB
 
   subgraph RPI["vzyx-cluster RPI k8s"]
     BO["seorilabs-backoffice"]
+    EDGE["platform-presence-edge<br/>edge.vzyx.xyz"]
+    MYSQL[("MySQL presence projection")]
   end
 
   CLIENT --> API
   CLIENT --> IAP
   CLIENT --> ING
+  CLIENT -. "fail-open heartbeat" .-> EDGE
   API --> FS
   API --> GCS["private GCS content releases"]
   IAP --> FS
@@ -36,13 +39,20 @@ flowchart TB
   IAP --> MARKETS["Google Play · App Store · AppsInToss"]
   MARKETS -.-> IAP
   BO -.-> ADM
+  EDGE --> MYSQL
+  BO --> MYSQL
 ```
 
 백오피스에서 플랫폼으로 가는 점선은 **Google OIDC ID token 기반 egress 전용** 호출이다. 마켓에서 오는 점선은 RTDN과 App Store Server Notification 웹훅.
 
+클라이언트에서 RPI Edge로 가는 점선은 **선택적 presence 관측 경로**다. DNS,
+TLS, RPI, MySQL 장애가 앱으로 전파되지 않고, Cloud Run이나 BigQuery fallback도
+없다. 세부 실패 계약은 ADR 0019를 따른다.
+
 ## 서비스 배포 단위
 
-단일 이미지 · 단일 코드베이스. `PLATFORM_ROLE`로 스위치한다.
+GCP 서비스는 단일 이미지 · 단일 코드베이스이며 `PLATFORM_ROLE`로 스위치한다.
+RPI Edge는 장애 격리를 위해 같은 Go module의 별도 최소 이미지로 배포한다.
 
 | role | 노출 | 특징 |
 |---|---|---|
@@ -51,6 +61,7 @@ flowchart TB
 | `ingest` | public | 이벤트 수집. 고QPS, I/O 바운드 write-only |
 | `admin` | **private** | `--no-allow-unauthenticated` |
 | `worker` | Job | 완료 outbox 재시도 |
+| `presence-edge` | RPI public | 최근 활성 heartbeat만 MySQL projection에 반영. 원장·fallback 없음 |
 
 `admin`을 private으로 두면 **Cloud Run 인프라가 애플리케이션 코드 진입 전에 거부**하므로, 라우팅 버그로 admin 핸들러가 노출되는 사고가 구조적으로 불가능하다.
 

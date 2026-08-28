@@ -1,0 +1,91 @@
+name: Checks (Platform Release)
+
+on:
+  pull_request:
+    paths:
+      - "packages/sdk-ts/**"
+      - "sdk-gdscript/**"
+      - "spec/openapi.yaml"
+      - "spec/conformance/**"
+      - "scripts/*.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/checks-platform-release.yml"
+      - ".github/workflows/publish-sdk-gdscript.yml"
+      - ".github/workflows/publish-sdk-ts.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/sdk-ts/**"
+      - "sdk-gdscript/**"
+      - "spec/openapi.yaml"
+      - "spec/conformance/**"
+      - "scripts/*.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/checks-platform-release.yml"
+      - ".github/workflows/publish-sdk-gdscript.yml"
+      - ".github/workflows/publish-sdk-ts.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-platform-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Platform release contract
+    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.16.0"
+          check-latest: false
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test, typecheck, and build
+        run: |
+          pnpm test
+          pnpm typecheck
+          pnpm build
+
+      - name: Install pinned oasdiff
+        run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"
+
+      - name: Build deterministic release twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          typescript_artifact="$RUNNER_TEMP/$(npm pack ./packages/sdk-ts --pack-destination "$RUNNER_TEMP" --silent)"
+          release_tag="v$(tr -d '[:space:]' < sdk-gdscript/VERSION)"
+          for output in first second; do
+            node scripts/build-platform-release.mjs \
+              --release-tag "$release_tag" \
+              --source-sha "$GITHUB_SHA" \
+              --typescript-artifact "$typescript_artifact" \
+              --oasdiff "$RUNNER_TEMP/oasdiff" \
+              --output-dir "$RUNNER_TEMP/platform-release-$output"
+          done
+          diff -rq \
+            "$RUNNER_TEMP/platform-release-first" \
+            "$RUNNER_TEMP/platform-release-second"

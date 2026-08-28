@@ -24,6 +24,9 @@ func TestLizardTycoonRegistryEventContract(t *testing.T) {
 	if lizardTycoon == nil {
 		t.Fatal("lizard-tycoon registry가 없다")
 	}
+	if !lizardTycoon.FeatureEnabled("presence") {
+		t.Fatal("v1.1.12 canary 후보의 presence가 활성화되지 않았다")
+	}
 
 	wantAllowlist := []string{
 		"lizard_adopted",

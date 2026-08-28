@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Node and GitHub Packages
         uses: actions/setup-node@v7
@@ -49,17 +51,40 @@ jobs:
       - name: Verify tag and package versions
         run: node scripts/check-sdk-ts-release.mjs "$GITHUB_REF_NAME"
 
-      - name: Pack and import smoke
+      - name: Pack TypeScript SDK
+        id: pack
         shell: bash
         run: |
           set -euo pipefail
           tarball="$RUNNER_TEMP/$(npm pack ./packages/sdk-ts --pack-destination "$RUNNER_TEMP" --silent)"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned oasdiff
+        run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"
+
+      - name: Verify common Platform release generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="v$(tr -d '[:space:]' < sdk-gdscript/VERSION)"
+          node scripts/build-platform-release.mjs \
+            --release-tag "$release_tag" \
+            --source-sha "$GITHUB_SHA" \
+            --typescript-artifact "${{ steps.pack.outputs.tarball }}" \
+            --oasdiff "$RUNNER_TEMP/oasdiff" \
+            --output-dir "$RUNNER_TEMP/platform-release-validation"
+
+      - name: Import smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="${{ steps.pack.outputs.tarball }}"
           smoke_dir="$(mktemp -d "$RUNNER_TEMP/platform-sdk-smoke.XXXXXX")"
           npm install --prefix "$smoke_dir" "$tarball"
           cd "$smoke_dir"
           node --input-type=module -e "import('@seorilabs/platform-sdk').then(({SDK_VERSION}) => { if (!SDK_VERSION) process.exit(1) })"
 
       - name: Publish private package
-        run: npm publish ./packages/sdk-ts
+        run: npm publish "${{ steps.pack.outputs.tarball }}"
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}

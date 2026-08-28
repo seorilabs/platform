@@ -1,5 +1,8 @@
 # Release
 
+SDK의 불변 asset과 Fleet manifest 발행 절차는
+[Platform SDK release](platform-sdk.md)를 따른다.
+
 ## 배포 파이프라인
 
 ```

@@ -1,0 +1,94 @@
+name: Publish GDScript SDK
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-sdk-gdscript-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sdk:
+    name: GDScript SDK 검증
+    uses: seorilabs/.github/.github/workflows/godot-checks.yml@main
+    with:
+      runs_on: seorilabs-rpi-arm64
+      project_dir: sdk-gdscript
+      check_command: |
+        bash scripts/check_sdk_gdscript.sh
+
+  publish:
+    name: Immutable Platform SDK Release 발행
+    needs: sdk
+    runs-on: seorilabs-rpi-arm64
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.16.0"
+          check-latest: false
+
+      - name: Verify tag is on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test, typecheck, and build
+        run: |
+          pnpm test
+          pnpm typecheck
+          pnpm build
+
+      - name: Verify GDScript SDK
+        run: bash scripts/sdk_gdscript_checksum.sh --check
+
+      - name: Pack TypeScript SDK
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/$(npm pack ./packages/sdk-ts --pack-destination "$RUNNER_TEMP" --silent)"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned oasdiff
+        run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"
+
+      - name: Build immutable release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/build-platform-release.mjs \
+            --release-tag "$GITHUB_REF_NAME" \
+            --source-sha "$GITHUB_SHA" \
+            --typescript-artifact "${{ steps.pack.outputs.tarball }}" \
+            --oasdiff "$RUNNER_TEMP/oasdiff" \
+            --output-dir "$RUNNER_TEMP/platform-release"
+
+      - name: Publish immutable GitHub Release
+        run: node scripts/publish-platform-release.mjs "$RUNNER_TEMP/platform-release"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
