@@ -90,20 +90,20 @@ jobs:
       image: ${{ steps.meta.outputs.image }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Resolve image reference
         id: meta
         run: echo "image=${REGISTRY}/${IMAGE_PATH}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.DEPLOYER_SA }}
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       # WIF는 external account 자격증명이라 gcloud가 어느 프로젝트로 쿼터를
       # 청구할지 스스로 알지 못한다. 지정하지 않으면 Cloud Build 소스 업로드가
@@ -155,7 +155,7 @@ jobs:
     environment: production
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # 신규 앱은 registry의 앱별 환경을 사용한다. 전역 환경은 기존 경로를
       # 유지하는 legacy 앱에만 적용되므로 그 앱만 production 고정값과 대조한다.
@@ -191,13 +191,13 @@ jobs:
           }
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.DEPLOYER_SA }}
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       # 서비스 이미지와 IAP 원장 환경을 함께 고정한다. 환경을 명시하지 않으면
       # 이전에 손으로 넣은 값이 다음 배포에도 남아 registry와 런타임이
