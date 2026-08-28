@@ -209,9 +209,7 @@ func (h *Handler) createAccountLinkChallenge(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return err
 	}
-	httpx.WriteOK(w, http.StatusCreated, accountLinkChallengeResponse{
-		Provider: challenge.Provider, Nonce: challenge.Nonce, ExpiresAt: challenge.ExpiresAt,
-	})
+	httpx.WriteOK(w, http.StatusCreated, accountLinkChallengeResponse(challenge))
 	return nil
 }
 
