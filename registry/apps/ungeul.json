@@ -8,9 +8,35 @@
     "config": false,
     "events": false,
     "iap": false,
-    "ads": false,
+    "ads": true,
     "content": true,
     "firebase_custom_token_bridge": true
+  },
+  "ads": {
+    "providers": [
+      "admob"
+    ],
+    "placements": [
+      {
+        "id": "deep_flow",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-2444587584524186/8793041426",
+            "ios_ad_unit_id": "ca-app-pub-2444587584524186/2557921082",
+            "reward_item": "deep_flow",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "deep_flow",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 10,
+        "cooldown_seconds": 30
+      }
+    ]
   },
   "require_app_check": true,
   "ga4": {
@@ -20,7 +46,8 @@
     "bucket": "seorilabs-ungeul-content",
     "prefix": "ungeul",
     "reading_daily_limit": 10,
-    "term_daily_limit": 100
+    "term_daily_limit": 100,
+    "reward_key": "deep_flow"
   },
   "platform_event_allowlist": [],
   "cors_origins": [
