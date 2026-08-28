@@ -28,7 +28,7 @@ env:
 jobs:
   deploy:
     name: Deploy staging API
-    runs-on: seorilabs-rpi-arm64
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: staging
     steps:

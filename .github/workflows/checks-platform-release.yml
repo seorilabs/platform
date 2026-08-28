@@ -39,7 +39,7 @@ concurrency:
 jobs:
   release:
     name: Platform release contract
-    runs-on: ${{ github.event.repository.private && 'seorilabs-rpi-arm64' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout

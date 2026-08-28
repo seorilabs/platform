@@ -1,5 +1,16 @@
 name: RPI Presence Edge
 
+# ## 러너
+#
+# 여기만 ARC를 유지한다. 다른 워크플로는 public 전환으로 전부 GitHub-hosted로
+# 옮겼지만 이 셋은 클러스터 안에 있어야 한다.
+#
+# - 이미지를 registry.vzyx.xyz로 push한다. 사설 레지스트리다
+# - linux/arm64 이미지를 만든다. 대상이 RPI다
+# - 배포가 RPI k8s API에 kubeconfig로 붙는다
+#
+# GitHub-hosted로 옮기면 클러스터 자격증명과 API를 외부 러너에 노출해야 한다.
+
 on:
   workflow_dispatch:
     inputs:
