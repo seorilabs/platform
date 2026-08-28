@@ -23,13 +23,16 @@
 #
 # ## 이미지 빌드
 #
-# 이미지는 Cloud Build에서 만들고 러너는 제출만 한다. ARC RPi 러너에서는
-# 무엇을 해도 30분 timeout에 걸렸다 — DIND 안에서 빌드하면 golang 이미지
-# pull 6분과 go mod download 9분, Docker를 걷어내고 러너에서 직접 빌드해도
-# 모듈 다운로드만 20분이었다. 병목은 컴파일이 아니라 그 러너의 네트워크다.
+# 이미지는 러너에서 직접 만든다. 예전에 Cloud Build로 위임했던 이유는
+# ARC RPi 러너의 네트워크였다 — golang 이미지 pull 6분, go mod download
+# 9분, Docker를 걷어내도 모듈 다운로드만 20분이라 30분 timeout에 잘렸다.
+# 병목은 컴파일이 아니라 그 러너였다.
 #
-# Cloud Build는 amd64 네이티브고 Artifact Registry와 같은 클라우드 안에
-# 있다. 러너는 gcloud만 쓰므로 Docker도 필요 없다.
+# GitHub-hosted로 옮기면서 그 제약이 사라졌다. ubuntu-latest는 amd64
+# 네이티브라 크로스컴파일이 필요 없고, buildx 레이어 캐시로 go mod
+# download를 재사용한다. Cloud Build를 거치면서 필요했던 우회 두 개
+# (소스 업로드용 quota project, 읽을 수 있는 로그 버킷 지정)도 함께
+# 없어진다.
 #
 # ## 러너
 #
@@ -98,13 +101,6 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
-      # WIF는 external account 자격증명이라 gcloud가 어느 프로젝트로 쿼터를
-      # 청구할지 스스로 알지 못한다. 지정하지 않으면 Cloud Build 소스 업로드가
-      # "forbidden from accessing the bucket ... serviceusage.services.use"로
-      # 막힌다. platform-deployer에는 serviceusage.serviceUsageConsumer가 있다.
-      - name: Set quota project
-        run: gcloud config set billing/quota_project "$PROJECT_ID"
-
       # 같은 commit을 다시 배포할 때 빌드를 반복하지 않는다. 재배포가
       # 곧바로 배포 단계로 들어간다.
       - name: Check whether the image already exists
@@ -117,21 +113,35 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 로그를 우리 버킷에 쓴다. 기본 로그 버킷은 Google이 관리해서 읽으려면
-      # 프로젝트 Viewer/Owner가 필요하고, platform-deployer에는 그 권한이 없다.
-      # 빌드가 SUCCESS여도 gcloud가 스트리밍에 실패해 exit 1로 끝나 배포가
-      # 통째로 건너뛰어졌다. 스테이징 버킷은 이미 deployer가 쓰고 있다.
-      - name: Build and push on Cloud Build
+      # Artifact Registry에 push하려면 docker가 gcloud 자격증명을 쓰도록
+      # 등록해야 한다. auth 액션이 만든 external account 자격증명을 그대로
+      # 재사용한다.
+      - name: Configure Docker for Artifact Registry
         if: steps.exists.outputs.found == 'false'
-        run: |
-          gcloud builds submit server \
-            --project="$PROJECT_ID" \
-            --tag="${{ steps.meta.outputs.image }}" \
-            --gcs-log-dir="gs://${PROJECT_ID}_cloudbuild/logs" \
-            --quiet
+        run: gcloud auth configure-docker "$REGISTRY" --quiet
 
-      # Cloud Build가 성공했다고 태그가 우리가 기대한 자리에 생겼다는 보장은
-      # 없다. 배포가 없는 이미지를 가리키기 전에 여기서 끊는다.
+      - name: Set up Buildx
+        if: steps.exists.outputs.found == 'false'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      # 캐시는 GitHub Actions 캐시에 둔다. go mod download 레이어가 재사용되면
+      # 소스만 바뀐 빌드에서 그 시간이 통째로 빠진다.
+      #
+      # Cloud Run은 amd64 전용이고 러너도 amd64라 크로스컴파일이 없다.
+      - name: Build and push image
+        if: steps.exists.outputs.found == 'false'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: server
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # push가 성공했다고 태그가 우리가 기대한 자리에 생겼다는 보장은 없다.
+      # 배포가 없는 이미지를 가리키기 전에 여기서 끊는다.
       - name: Assert image exists
         if: steps.exists.outputs.found == 'false'
         run: |

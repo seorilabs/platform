@@ -1,10 +1,20 @@
-FROM golang:1.25 AS build
+# 대상은 RPI(arm64)이고 빌드는 amd64 러너에서 돈다.
+#
+# BUILDPLATFORM으로 빌드 스테이지를 러너의 네이티브 아키텍처에 고정하고
+# GOARCH로 크로스컴파일한다. 이렇게 하지 않으면 buildx가 golang 이미지를
+# arm64로 받아 컴파일러까지 QEMU로 돌린다. CGO가 꺼져 있어 Go 크로스컴파일에
+# 툴체인이 더 필요하지 않으므로 에뮬레이션을 쓸 이유가 없다.
+FROM --platform=$BUILDPLATFORM golang:1.25 AS build
+
+# buildx가 --platform에서 채워 준다. 직접 넘기지 않는다.
+ARG TARGETARCH
 
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/presence-edge ./cmd/presence-edge
+RUN CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" \
+    go build -trimpath -ldflags="-s -w" -o /out/presence-edge ./cmd/presence-edge
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/presence-edge /presence-edge
