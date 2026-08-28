@@ -99,6 +99,28 @@ require("runAsUser: 65532" in presence_manifest, "Presence Edge의 숫자 non-ro
 require("runAsGroup: 65532" in presence_manifest, "Presence Edge의 숫자 non-root GID가 없다.")
 
 
+kakao_platform_app = "KAKAO_UNLINK_PLATFORM_APP_ID=${KAKAO_UNLINK_PLATFORM_APP_ID}"
+kakao_app = "KAKAO_UNLINK_APP_ID=${KAKAO_UNLINK_APP_ID}"
+kakao_secret = "KAKAO_UNLINK_ADMIN_KEY=ungeul-kakao-admin-key:latest"
+api_block = command_block("gcloud run deploy platform-api")
+require(kakao_platform_app in api_block, "platform-api에 Kakao unlink Platform app ID가 없다.")
+require(kakao_app in api_block, "platform-api에 Kakao app ID가 없다.")
+require(kakao_secret in api_block, "platform-api에 Kakao Admin Key secret이 없다.")
+
+for target in ("platform-iap", "platform-ingest", "platform-admin", "platform-ads"):
+    block = command_block(f"gcloud run deploy {target}")
+    require(kakao_platform_app not in block, f"{target}에 Kakao unlink Platform app ID를 마운트하면 안 된다.")
+    require(kakao_app not in block, f"{target}에 Kakao app ID를 마운트하면 안 된다.")
+    require(kakao_secret not in block, f"{target}에 Kakao Admin Key를 마운트하면 안 된다.")
+
+kakao_worker_block = command_block("gcloud run jobs update platform-worker")
+require(kakao_platform_app not in kakao_worker_block, "platform-worker에 Kakao unlink Platform app ID를 마운트하면 안 된다.")
+require(kakao_app not in kakao_worker_block, "platform-worker에 Kakao app ID를 마운트하면 안 된다.")
+require(kakao_secret not in kakao_worker_block, "platform-worker에 Kakao Admin Key를 마운트하면 안 된다.")
+require(text.count(kakao_secret) == 1, "Kakao Admin Key secret은 platform-api 한 곳에만 마운트해야 한다.")
+require("Assert Kakao unlink secret boundary" in text, "Kakao unlink secret readback gate가 없다.")
+
+
 operational_url = "BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}"
 operational_secret = (
     "BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest"

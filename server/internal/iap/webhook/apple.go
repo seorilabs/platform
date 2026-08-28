@@ -28,7 +28,7 @@ const appleMaxBodyBytes = 256 << 10
 
 // appleRelevantTypes는 우리가 반응하는 알림이다.
 //
-// 1단계는 비소비성만 다루므로 구독 관련은 전부 무시한다.
+// 일회성 소비성·비소비성만 다루므로 구독 관련은 전부 무시한다.
 // 무시한다고 실패로 처리하면 Apple이 계속 재전송한다.
 var appleRelevantTypes = map[string]bool{
 	string(appstore.NotificationTypeV2OneTimeCharge):  true,

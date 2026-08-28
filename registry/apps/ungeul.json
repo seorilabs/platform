@@ -8,11 +8,47 @@
     "config": false,
     "events": false,
     "iap": true,
-    "ads": false,
+    "ads": true,
     "content": true,
     "firebase_custom_token_bridge": true
   },
+  "ads": {
+    "providers": [
+      "admob"
+    ],
+    "placements": [
+      {
+        "id": "deep_flow",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-2444587584524186/8793041426",
+            "ios_ad_unit_id": "ca-app-pub-2444587584524186/2557921082",
+            "reward_item": "deep_flow",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "deep_flow",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 10,
+        "cooldown_seconds": 30
+      }
+    ]
+  },
   "require_app_check": true,
+  "auth": {
+    "account_providers": {
+      "kakao": {
+        "audience": "1559177"
+      },
+      "apple": {
+        "audience": "com.seorilabs.ungeul"
+      }
+    }
+  },
   "ga4": {
     "event_prefix": ""
   },
@@ -21,6 +57,7 @@
     "prefix": "ungeul",
     "reading_daily_limit": 10,
     "term_daily_limit": 100,
+    "reward_key": "deep_flow",
     "ticket_entitlement_id": "deep_reading_ticket",
     "ticket_units_per_purchase": 5
   },
@@ -35,7 +72,8 @@
     "app_store_bundle_id": "com.seorilabs.ungeul",
     "entitlement_ids": [
       "deep_reading_ticket"
-    ]
+    ],
+    "require_linked_account": true
   },
   "platform_event_allowlist": [],
   "cors_origins": [

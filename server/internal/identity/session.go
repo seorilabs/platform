@@ -27,12 +27,13 @@ const sessionIssuer = "seorilabs-platform"
 
 // Session은 발급된 플랫폼 세션이다.
 type Session struct {
-	PlatformUserID string
-	AppID          string
-	AppUserID      string
-	IsAnonymous    bool
-	IssuedAt       time.Time
-	ExpiresAt      time.Time
+	PlatformUserID  string
+	AppID           string
+	AppUserID       string
+	IsAnonymous     bool
+	IsLinkedAccount bool
+	IssuedAt        time.Time
+	ExpiresAt       time.Time
 }
 
 // sessionClaims는 세션 토큰의 내용이다.
@@ -42,6 +43,7 @@ type sessionClaims struct {
 	AppID     string `json:"app"`
 	AppUserID string `json:"auid"`
 	Anonymous bool   `json:"anon"`
+	Linked    bool   `json:"linked"`
 }
 
 // SessionIssuer는 플랫폼 세션 토큰을 발급하고 검증한다.
@@ -93,6 +95,7 @@ func (s *SessionIssuer) Issue(sess Session) (string, time.Time, error) {
 		AppID:     sess.AppID,
 		AppUserID: sess.AppUserID,
 		Anonymous: sess.IsAnonymous,
+		Linked:    sess.IsLinkedAccount,
 	}
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.secret)
@@ -142,12 +145,13 @@ func (s *SessionIssuer) Verify(tokenStr, appID string) (Session, error) {
 	}
 
 	return Session{
-		PlatformUserID: claims.Subject,
-		AppID:          claims.AppID,
-		AppUserID:      claims.AppUserID,
-		IsAnonymous:    claims.Anonymous,
-		IssuedAt:       issued,
-		ExpiresAt:      expires,
+		PlatformUserID:  claims.Subject,
+		AppID:           claims.AppID,
+		AppUserID:       claims.AppUserID,
+		IsAnonymous:     claims.Anonymous,
+		IsLinkedAccount: claims.Linked,
+		IssuedAt:        issued,
+		ExpiresAt:       expires,
 	}, nil
 }
 

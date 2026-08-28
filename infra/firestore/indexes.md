@@ -146,6 +146,20 @@ gcloud firestore fields ttls list \
   --format="table(collectionGroup,field,state)"
 ```
 
+외부 로그인 challenge는 소비 여부와 무관하게 `ttlAt` 기준으로 24시간 뒤 정리한다.
+계정 연결 기능을 활성화하기 전에 별도 collection group의 TTL을 만들고 readback한다.
+
+```bash
+gcloud firestore fields ttls update ttlAt \
+  --project=seorilabs-platform \
+  --collection-group=auth_link_challenges \
+  --enable-ttl
+
+gcloud firestore fields ttls list \
+  --project=seorilabs-platform \
+  --format="table(collectionGroup,field,state)"
+```
+
 ## 단일 필드로 충분한 쿼리
 
 Firestore가 자동으로 인덱싱하므로 따로 만들지 않는다.

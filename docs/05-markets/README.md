@@ -6,13 +6,13 @@
 
 | | Google Play | App Store | AppsInToss |
 |---|---|---|---|
-| 검증 API | `purchases/productsv2/tokens/{token}` | `getTransactionInfo` | `order/get-order-status` |
-| 완료 API | `:acknowledge` | `finishTransaction` | 클라이언트가 `completeProductGrant` |
+| 검증 API | 비소모성 `purchases/productsv2`<br/>소모성 `purchases/products` | `getTransactionInfo` | `order/get-order-status` |
+| 완료 API | 비소모성 `:acknowledge`<br/>소모성 `:consume` | `finishTransaction` | 클라이언트가 `completeProductGrant` |
 | **자격증명** | **ADC** — 런타임 SA + Play Console 권한. **JSON 키 없음** | Secret — issuer ID, key ID, `.p8` + Apple Root CA | **mTLS** 클라이언트 인증서 + 키 |
-| canonicalId | `purchaseToken` | **`originalTransactionId`** | `orderId` |
+| canonicalId | `purchaseToken` | 비소모성 `originalTransactionId`<br/>소모성 `transactionId` | `orderId` |
 | 계정 바인딩 | `obfuscatedExternalAccountId` — HMAC | `appAccountToken` — HMAC를 UUID 형태로 | **면제** |
 | 웹훅 | RTDN Pub/Sub topic `play-iap-rtdn` | ASSN v2 HTTPS + JWS | **없음** |
-| 소비/비소비 | 명시적 구분 없음 | **`NON_CONSUMABLE` 아니면 422 거부** | — |
+| 소비/비소비 | 카탈로그 유형별 검증·완료 | 카탈로그 유형과 서명 거래 유형 대조 | 카탈로그 유형은 지급 단위에 사용 |
 
 ## 확정 상태
 

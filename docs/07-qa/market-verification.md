@@ -146,7 +146,7 @@ orderKey         32de2fba...c5e598a7
 
 - 실제 Apple JWS를 파싱하고 인증서 체인을 검증한다
 - 불변식 1: canonicalId가 originalTransactionId다
-- 불변식 9: `NON_CONSUMABLE`이라 통과했다. 아니면 거부됐을 것이다
+- 카탈로그의 `non_consumable`과 서명 거래의 `NON_CONSUMABLE`이 일치했다
 - bundleId·환경 대조를 통과한다
 - `purchasedAt`이 원장 기록(`2026-07-30T12:09:29.000Z`)과 같다
 

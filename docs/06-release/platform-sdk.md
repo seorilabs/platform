@@ -99,8 +99,40 @@ manifest digest와 `release-build` capability에 묶인 미래 만료 시각만 
 
 순수 코어와 실행 포트는 `scripts/platform-fleet-reconciler.mjs`에 있다. 실행 기본값은
 dry-run이며, fixture observation과 `needs_input` plan은 write할 수 없다. 실제 Backoffice
-adapter, GitHub App fan-out, signer와 public key 배포, repository release required check
-연결은 별도 운영 배포가 필요하다.
+adapter와 GitHub App fan-out은 별도 운영 배포가 필요하다.
+
+승인 signer는 private key 파일 경로나 환경변수를 받지 않는다. Auth Broker native
+launcher가 purpose-specific key를 inherited FD로 직접 연결하고 core dump를 차단한 경우에만
+다음처럼 실행한다. 아래의 FD 3은 예시 번호일 뿐 key 값이나 path를 의미하지 않는다.
+
+```bash
+node scripts/sign-platform-fleet-release.mjs \
+  --manifest /trusted/release/platform-release.json \
+  --key-id fleet-release-2026-01 \
+  --private-key-fd 3 \
+  --output /trusted/release/fleet-approved.json
+```
+
+앱의 release build는 `scripts/platform-fleet-gate.mjs`가 만든 receipt를 먼저 요구한다.
+snapshot은 Backoffice가 정확한 repository ID, source SHA, ACTIVE config revision에 대해
+반환한 public observation이다. trusted key registry에는 public key와 ACTIVE/REVOKED 상태만
+있다.
+
+```bash
+node scripts/platform-fleet-gate.mjs \
+  --manifest platform-release.json \
+  --approval fleet-approved.json \
+  --trusted-keys trusted-fleet-keys.json \
+  --snapshot backoffice-platform-snapshot.json \
+  --repository-id 123456789 \
+  --source-sha 0123456789012345678901234567890123456789 \
+  --config-revision active-revision-id \
+  --output platform-release-gate.json
+```
+
+receipt가 `PASS` 또는 manifest digest에 묶인 유효한 `EXCEPTION`이 아니면 release artifact
+생성을 시작하지 않는다. static PR check는 같은 입력의 shadow 결과만 관찰하고 외부 write나
+release 승인을 만들지 않는다.
 
 로컬 dry-run은 실제 Release를 만들지 않는다.
 

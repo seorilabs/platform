@@ -23,7 +23,8 @@ type PurchaseVerifier interface {
 // VerifiedPurchase{ Platform, ProductID, CanonicalID, ProviderOrderID,
 //                   PlatformAccountID, PurchasedAt, ObservedAt, State, Completion }
 // State:      active | pending | revoked | invalid
-// Completion: none | google_acknowledge | apple_finish | apps_in_toss_client_complete
+// Completion: none | google_acknowledge | google_consume | apple_finish
+//             | apps_in_toss_client_complete
 ```
 
 ---
@@ -41,7 +42,8 @@ orderKey = sha256("{platform}:{canonicalId}")
 | 마켓 | canonicalId |
 |---|---|
 | Google Play | `purchaseToken` |
-| App Store | **`originalTransactionId`** — `transactionId`가 아니다 |
+| App Store 비소모성 | **`originalTransactionId`** |
+| App Store 소모성 | **`transactionId`** — 재구매 건마다 구분 |
 | AppsInToss | `orderId` |
 
 **클라이언트 생성 ID를 쓰지 않는다.** 마켓이 준 값만이 신뢰 가능한 멱등키다.
@@ -95,7 +97,7 @@ active = sources 중 하나라도 state == "active"
 
 ### 7. completeGrant 실패는 지급을 롤백하지 않는다
 
-마켓 완료 호출(`acknowledge` / `finishTransaction`)이 실패해도 **지급은 이미 커밋된 상태로 둔다.** outbox에 넣고 `retry_server_completion`을 클라이언트에 알린다.
+마켓 완료 호출(`acknowledge` / `consume` / `finishTransaction`)이 실패해도 **지급은 이미 커밋된 상태로 둔다.** outbox에 넣고 `retry_server_completion`을 클라이언트에 알린다.
 
 반대로 하면 "돈은 나갔는데 물건이 없다"가 된다.
 
@@ -103,9 +105,10 @@ active = sources 중 하나라도 state == "active"
 
 허용 필드 외의 어떤 키도 400으로 거부한다. `uid`, `entitlementId` 주입 차단이 목적이다.
 
-### 9. Apple 제약 둘
+### 9. Apple 상품 유형과 환경 제약
 
-- **`NON_CONSUMABLE`이 아니면 422로 거부**한다
+- 서버 카탈로그의 `non_consumable|consumable`과 서명된 거래의
+  `NON_CONSUMABLE|CONSUMABLE`이 일치해야 한다. 구독은 422로 거부한다.
 - **production과 sandbox 자동 fallback 금지.** 환경 설정이 원장 환경과 불일치하면 부팅을 실패시킨다
 
 ### 10. 알림은 기존 소유자만 재조정한다
@@ -226,12 +229,12 @@ Apple 환경 설정과 불일치하면 **부팅을 실패시킨다**(503). 자�
 
 | | Google Play | App Store | AppsInToss |
 |---|---|---|---|
-| 검증 API | `purchases/productsv2/tokens/{token}` | `getTransactionInfo` | `order/get-order-status` |
-| 완료 API | `:acknowledge` | `finishTransaction` | 클라이언트가 `completeProductGrant` |
+| 검증 API | 비소모성 `purchases/productsv2/tokens/{token}`<br/>소모성 `purchases/products/{productId}/tokens/{token}` | `getTransactionInfo` | `order/get-order-status` |
+| 완료 API | 비소모성 `:acknowledge`<br/>소모성 `:consume` | `finishTransaction` | 클라이언트가 `completeProductGrant` |
 | **자격증명** | **ADC** — SA + Console 권한. **JSON 키 없음** | Secret — issuer ID, key ID, `.p8` | **mTLS** 클라이언트 인증서 |
 | 타임아웃 | 8초 | — | 10초, 응답 1MB 제한 |
 | 계정 바인딩 | `obfuscatedExternalAccountId` — HMAC | `appAccountToken` — HMAC를 UUID 형태로 | **면제** — claim이 신뢰 경로 |
-| 소비/비소비 | 명시적 구분 없음 | **`NON_CONSUMABLE` 강제** | — |
+| 소비/비소비 | 카탈로그 유형과 완료 API를 대조 | 카탈로그 유형과 서명 거래 유형을 대조 | 카탈로그 유형은 지급 단위에 사용 |
 | 웹훅 | RTDN Pub/Sub | ASSN v2 JWS | **없음** |
 
 ### 상태 매핑
@@ -245,12 +248,20 @@ Apple 환경 설정과 불일치하면 **부팅을 실패시킨다**(503). 자�
 ### SKU 카탈로그
 
 canonical JSON을 런타임에 주입한다. `entitlementId`는 `^[A-Za-z0-9._-]{1,128}$`, 최대 100개.
+각 항목의 `type`은 `non_consumable|consumable`이며 생략하면 기존 동작을 보존하기 위해
+`non_consumable`로 해석한다. 유형은 클라이언트 요청에서 받지 않고 카탈로그에서만 주입한다.
 
 `IAP_CATALOG_JSON`은 `(appId, market, productId)`→entitlement 매핑의 원장이다.
 앱별 운영 경계는 `registry/apps/*.json`의 `iap.entitlement_ids`가 담당한다.
 `features.iap=true`이면 앱 목록은 비어 있을 수 없고, Admin 조회와 조작은 두
 목록의 교집합만 허용한다. 앱 목록에는 있지만 전역 카탈로그에 없는 값은 설정
 불일치이므로 503으로 fail-closed한다.
+
+`iap.require_linked_account=true`인 앱은 검증된 Platform session의
+`isLinkedAccount=true`가 아니면 구매 검증, entitlement 복원, 마켓 account reference 발급을
+모두 `account_link_required`로 거부한다. native Firebase guest는 무료 기능을 계속 쓸 수 있지만
+결제 전에 카카오 또는 Apple 계정을 연결해야 한다. AppsInToss의 mTLS Toss Login session은
+연결 계정으로 취급한다. 자세한 신원 경계는 ADR 0024를 따른다.
 
 새 카탈로그 형식은 앱별 SKU를 분리한다. 기존 `/v1/iap/*`와 lizard SDK의 응답
 계약을 유지하기 위해 단일 앱 전역 형식도 읽지만, 앱별 형식과 한 JSON에서
@@ -263,6 +274,7 @@ canonical JSON을 런타임에 주입한다. `entitlementId`는 `^[A-Za-z0-9._-]
     "happy-farm": {
       "entitlements": {
         "ad_free": {
+          "type": "non_consumable",
           "google_play": "ad_free",
           "app_store": "com.seorilabs.happyfarm.premium.ad_free"
         }

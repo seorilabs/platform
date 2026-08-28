@@ -15,7 +15,7 @@ concurrency:
 jobs:
   sdk:
     name: GDScript SDK 검증
-    uses: seorilabs/.github/.github/workflows/godot-checks.yml@main
+    uses: seorilabs/.github/.github/workflows/godot-checks.yml@97e16ce4cbdfb20d6a2a7872782cc34ecef022c3
     with:
       runs_on: seorilabs-rpi-arm64
       project_dir: sdk-gdscript
@@ -31,12 +31,12 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "24.16.0"
           check-latest: false
