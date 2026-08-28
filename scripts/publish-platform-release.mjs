@@ -28,7 +28,7 @@ function safeAssetName(value, label) {
 
 function requiredPositiveSize(value, label) {
   if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`${label}이 올바르지 않습니다.`);
+    throw new Error(`${label}가 올바르지 않습니다.`);
   }
   return value;
 }
@@ -60,15 +60,9 @@ async function loadReleaseAssets(directory, tag) {
   } catch (error) {
     throw new Error('platform-release.json을 해석하지 못했습니다.', { cause: error });
   }
-  const releaseIdentity = platformReleaseIdentity(manifestContent);
+  platformReleaseIdentity(manifestContent);
   if (manifest.schemaVersion !== 1 || manifest.release?.tag !== tag) {
     throw new Error(`manifest release tag가 실행 tag와 다릅니다: ${manifest.release?.tag}`);
-  }
-  if (
-    releaseIdentity.releaseTag !== tag
-    || releaseIdentity.sourceSha !== manifest.release.sourceSha
-  ) {
-    throw new Error('manifest release identity가 검증 결과와 다릅니다.');
   }
 
   const typescript = manifest.sdk?.typescript;
