@@ -218,7 +218,7 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
-            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,IAP_TOSS_CLIENT_CERT_UNGEUL=ait-client-cert-ungeul:latest,IAP_TOSS_CLIENT_KEY_UNGEUL=ait-client-key-ungeul:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
           gcloud run deploy platform-admin \
@@ -248,7 +248,7 @@ jobs:
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
             --remove-secrets="PLATFORM_SESSION_SECRET" \
-            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,IAP_TOSS_CLIENT_CERT_UNGEUL=ait-client-cert-ungeul:latest,IAP_TOSS_CLIENT_KEY_UNGEUL=ait-client-key-ungeul:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
       # 배포가 전부 성공했다고 같은 태그가 됐다는 보장은 없다.
@@ -549,7 +549,9 @@ jobs:
           }
 
           fail=0
-          for pair in IAP_TOSS_CLIENT_CERT:ait-client-cert IAP_TOSS_CLIENT_KEY:ait-client-key; do
+          for pair in IAP_TOSS_CLIENT_CERT:ait-client-cert IAP_TOSS_CLIENT_KEY:ait-client-key \
+                      IAP_TOSS_CLIENT_CERT_UNGEUL:ait-client-cert-ungeul \
+                      IAP_TOSS_CLIENT_KEY_UNGEUL:ait-client-key-ungeul; do
             env_name=${pair%%:*}
             expected=${pair#*:}
             actual=$(service_secret platform-iap "$env_name")

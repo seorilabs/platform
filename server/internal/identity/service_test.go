@@ -586,7 +586,7 @@ func TestAITLoginAllowsAppsInTossAdsAndStoresOnlyHashedIdentity(t *testing.T) {
 	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
 	repo := newMemRepo()
 	verifier := &fakeAITLoginVerifier{hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
-	svc := NewService(reg, fakeVerifier{}, repo, issuer, fakeBlocklist{}).WithAITLoginVerifier(verifier)
+	svc := NewService(reg, fakeVerifier{}, repo, issuer, fakeBlocklist{}).WithAITLoginVerifiers(map[string]AITLoginVerifier{app.AppID: verifier})
 
 	res, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "one-time-authorization-code", Referrer: "sandbox",
@@ -632,7 +632,7 @@ func TestAITLoginAllowsAppsInTossIAPWithoutAds(t *testing.T) {
 	verifier := &fakeAITLoginVerifier{
 		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
-	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).WithAITLoginVerifier(verifier)
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).WithAITLoginVerifiers(map[string]AITLoginVerifier{app.AppID: verifier})
 
 	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "iap-authorization-code", Referrer: "SANDBOX",
@@ -664,7 +664,7 @@ func TestAITLoginRejectsAdMobOnlyApp(t *testing.T) {
 	verifier := &fakeAITLoginVerifier{
 		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
-	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).WithAITLoginVerifier(verifier)
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).WithAITLoginVerifiers(map[string]AITLoginVerifier{app.AppID: verifier})
 
 	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "must-not-be-exchanged", Referrer: "DEFAULT",
@@ -858,5 +858,35 @@ func TestAnonymousKeyStillCannotPay(t *testing.T) {
 	}
 	if err := sess.EnsureNotAnonymous(); err == nil {
 		t.Error("사칭 가능한 신원이 결제 경로를 통과했다")
+	}
+}
+
+// 인증서는 미니앱마다 발급되고 토스는 CN으로 앱을 식별한다. 다른 앱 인증서로
+// 대신 교환하면 설정 누락이 인증 실패로 둔갑해 원인을 찾기 어려워진다.
+func TestAITLoginRejectsAppWithoutItsOwnCertificate(t *testing.T) {
+	app := testApp()
+	app.AppID = "ungeul"
+	app.Features = map[string]bool{"iap": true}
+	app.IAP = registry.IAPConfig{
+		LedgerEnvironment: registry.LedgerProduction,
+		Markets:           []string{"apps_in_toss"},
+		EntitlementIDs:    []string{"deep_reading_ticket"},
+	}
+	reg := registry.New(fakeSource{apps: []registry.App{app}})
+	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
+	other := &fakeAITLoginVerifier{
+		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).
+		WithAITLoginVerifiers(map[string]AITLoginVerifier{"lizard-tycoon": other})
+
+	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
+		Kind: KindAITLogin, Value: "must-not-be-exchanged", Referrer: "SANDBOX",
+	})
+	if code := platformerr.CodeOf(err); code != platformerr.CodeProviderConfigInvalid {
+		t.Fatalf("code=%q, want provider_config_invalid", code)
+	}
+	if other.code != "" {
+		t.Fatalf("다른 앱 인증서로 교환했다: %q", other.code)
 	}
 }

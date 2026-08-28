@@ -309,3 +309,35 @@ func TestAdminNeedsEnvironmentAndCatalogWithoutMarketSecrets(t *testing.T) {
 		t.Error("카탈로그 없이 admin role을 통과시켰다")
 	}
 }
+
+// AppsInToss 인증서는 미니앱마다 발급된다. 접미사가 붙은 쌍까지 모두 읽어야
+// 한 프로세스가 여러 앱의 로그인·결제를 각자의 인증서로 처리할 수 있다.
+func TestLoadTossClientsCollectsSuffixedPairs(t *testing.T) {
+	t.Setenv("IAP_TOSS_CLIENT_CERT", "-----BEGIN CERTIFICATE-----legacy")
+	t.Setenv("IAP_TOSS_CLIENT_KEY", "-----BEGIN PRIVATE KEY-----legacy")
+	t.Setenv("IAP_TOSS_CLIENT_CERT_UNGEUL", "-----BEGIN CERTIFICATE-----ungeul")
+	t.Setenv("IAP_TOSS_CLIENT_KEY_UNGEUL", "-----BEGIN PRIVATE KEY-----ungeul")
+
+	clients, err := loadTossClients("IAP_TOSS_CLIENT_CERT", "IAP_TOSS_CLIENT_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 2 {
+		t.Fatalf("clients=%d", len(clients))
+	}
+	sources := []string{clients[0].Source, clients[1].Source}
+	if sources[0] != "IAP_TOSS_CLIENT_CERT" || sources[1] != "IAP_TOSS_CLIENT_CERT_UNGEUL" {
+		t.Fatalf("sources=%v", sources)
+	}
+}
+
+// 한쪽만 있는 쌍을 조용히 넘기면, 인증서만 갈아 끼운 배포가 옛 키로 붙어
+// 원인을 찾기 어려운 인증 실패를 만든다.
+func TestLoadTossClientsRejectsHalfPair(t *testing.T) {
+	t.Setenv("IAP_TOSS_CLIENT_CERT_UNGEUL", "-----BEGIN CERTIFICATE-----ungeul")
+
+	_, err := loadTossClients("IAP_TOSS_CLIENT_CERT", "IAP_TOSS_CLIENT_KEY")
+	if err == nil || !strings.Contains(err.Error(), "IAP_TOSS_CLIENT_KEY_UNGEUL") {
+		t.Fatalf("err=%v", err)
+	}
+}
