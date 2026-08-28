@@ -16,7 +16,7 @@ concurrency:
 jobs:
   publish:
     name: SDK 검증 및 GitHub Packages 발행
-    runs-on: seorilabs-rpi-arm64
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout

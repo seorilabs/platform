@@ -24,7 +24,12 @@ describe('Platform release workflow 계약', () => {
     assert.match(source, /publish:[\s\S]*permissions:\s*\n\s+contents: write/u);
     assert.match(source, new RegExp(`uses: actions/checkout@${ACTION_SHA}`, 'u'));
     assert.match(source, new RegExp(`uses: actions/setup-node@${ACTION_SHA}`, 'u'));
-    assert.match(source, /runs-on: seorilabs-rpi-arm64/u);
+    // 불변 release를 만드는 job은 self-hosted 러너에서 돌리지 않는다.
+    // ARC는 집 RPI 클러스터에 있어서 그 호스트가 곧 release 산출물의
+    // 신뢰 기반이 된다. GitHub-hosted로 고정한다.
+    assert.match(source, /runs-on: ubuntu-latest/u);
+    assert.doesNotMatch(source, /runs-on: seorilabs-/u);
+    assert.doesNotMatch(source, /runs_on: seorilabs-/u);
     assert.match(source, /build-platform-release\.mjs/u);
     assert.match(source, /publish-platform-release\.mjs/u);
     assert.match(source, /needs: sdk/u);
