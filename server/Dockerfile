@@ -36,9 +36,13 @@ COPY . .
 # CGO_ENABLED=0 이어야 정적 바이너리가 나오고 distroless/static 에서 돈다.
 # -s -w 는 디버그 심볼을 빼 이미지를 줄인다.
 #
-# GOARCH는 고정하지 않는다. 빌드 플랫폼이 곧 이미지 아키텍처라, 고정하면
-# arm64에서 만든 이미지가 arm64 base에 amd64 바이너리를 담아 실행되지
-# 않는다. 배포 이미지는 amd64인 Cloud Build가 만든다.
+# GOARCH는 buildx가 채우는 TARGETARCH를 따른다. 빌드 스테이지는
+# BUILDPLATFORM에 고정돼 있으므로 둘이 다를 수 있고, 그 차이가 곧
+# 크로스컴파일이다. 여기를 비워 두면 러너 아키텍처가 그대로 바이너리에
+# 들어가 대상 base 이미지와 어긋난다.
+#
+# CI는 amd64 러너에서 amd64를 만들어 결과적으로 네이티브다. 크로스 경로는
+# arm64 로컬에서 --platform linux/amd64로 빌드할 때 탄다.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" \
     go build -trimpath -ldflags="-s -w" -o /out/platform ./cmd/platform
 
