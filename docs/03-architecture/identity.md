@@ -104,7 +104,8 @@ challenge 소비 결과의 subject hash와 대상 사용자를 함께 저장하�
 응답이 끊겨도 같은 요청을 멱등 재시도할 수 있다.
 
 카카오는 ID token의 raw nonce를, Apple은 raw nonce의 SHA-256 hex를 검증한다. 두 공급자 모두
-레지스트리의 공개 `auth.account_providers.{provider}.audience`와 고정 issuer를 사용한다. provider
+레지스트리의 공개 `auth.account_providers.{provider}.audience`와 고정 issuer를 사용한다.
+카카오 audience는 SDK 초기화에 쓴 **앱 키**(네이티브 앱 키)이고 앱 ID가 아니다. Apple은 bundle ID다. provider
 subject 원문과 이메일은 저장·로그하지 않고 저장소 경계에서 즉시 SHA-256 처리한다.
 
 ### 연결과 복원 규칙

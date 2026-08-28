@@ -29,7 +29,7 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   "require_app_check": true,
   "auth": {
     "account_providers": {
-      "kakao": { "audience": "123456789" },
+      "kakao": { "audience": "0123456789abcdef0123456789abcdef" },
       "apple": { "audience": "com.seorilabs.lizardtycoon" }
     }
   },
@@ -66,7 +66,9 @@ AppsInToss WebView 앱은 실제 서비스와 콘솔 QR 테스트 origin을 각�
 확인하고 registry sync할 때만 true로 전환한다.
 
 `auth.account_providers`는 카카오·Apple OIDC ID token의 공개 audience allowlist다.
-secret이나 authorization token을 넣지 않는다. 계정 연결은 App Check와 Firebase custom-token
+secret이나 authorization token을 넣지 않는다. **카카오 audience는 앱 ID가 아니라 앱 키다** —
+ID token의 `aud`는 "SDK 초기화 시 사용된 앱 키"이므로 네이티브 SDK를 쓰는 앱은 네이티브 앱 키를
+넣는다. Apple은 bundle ID다. 계정 연결은 App Check와 Firebase custom-token
 bridge를 함께 요구한다. `iap.require_linked_account=true`이면 구매, entitlement 복원,
 account reference 발급이 모두 연결 세션에서만 가능하며 활성 IAP와 account provider가 필수다.
 AppsInToss는 mTLS Toss Login 세션을 연결 계정으로 보므로 이 provider 목록을 사용하지 않는다.
