@@ -404,7 +404,11 @@ function trustedKey(trustedPublicKeys, keyId) {
   return key;
 }
 
-function verifyApproval(manifestContent, approval, trustedPublicKeys) {
+export function verifyPlatformReleaseApproval(
+  manifestContent,
+  approval,
+  trustedPublicKeys,
+) {
   assertExactKeys(
     approval,
     ['algorithm', 'keyId', 'payload', 'schemaVersion', 'signature'],
@@ -794,7 +798,11 @@ export function reconcilePlatformFleet({
 }) {
   const nowTimestamp = assertTimestamp(now, 'now');
   const { bytes, manifest } = parseManifestContent(manifestContent);
-  const approvalPayload = verifyApproval(manifestContent, approval, trustedPublicKeys);
+  const approvalPayload = verifyPlatformReleaseApproval(
+    manifestContent,
+    approval,
+    trustedPublicKeys,
+  );
   const manifestDigest = `sha256:${sha256(bytes)}`;
   const normalized = normalizeInputs(expectedConsumers, observations, nowTimestamp);
   const workIndex = existingWorkIndex(existingWorkItems);

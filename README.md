@@ -52,6 +52,8 @@ scripts/        릴리스·검증 스크립트
 - `프로젝트/platform/03-architecture/` — 아키텍처, identity, 이벤트, IAP, RemoteConfig, Firestore 인덱스
 - `프로젝트/platform/08-ops/BREAK-GLASS.md` — 백오피스 다운 시 긴급 조작 런북
 - `프로젝트/platform/09-knowledge/go/` — Go 관용구·함정 학습 기록
+- [`docs/platform-fleet-approval-publisher.md`](docs/platform-fleet-approval-publisher.md) —
+  canary 승인 서명을 immutable release에 create-once로 게시하는 신뢰 경계
 
 저장소에 남는 원장은 두 개다. API 계약은 `spec/openapi.yaml`, 앱 레지스트리는
 `registry/apps/*.json`이다.
