@@ -126,7 +126,7 @@ type Service struct {
 	registry         *registry.Registry
 	verifier         TokenVerifier
 	blocklist        Blocklist
-	aitLogin         AITLoginVerifier
+	aitLogin         map[string]AITLoginVerifier
 	users            UserRepository
 	issuer           *SessionIssuer
 	customTokens     CustomTokenIssuer
@@ -137,8 +137,12 @@ type Service struct {
 	now              func() time.Time
 }
 
-func (s *Service) WithAITLoginVerifier(verifier AITLoginVerifier) *Service {
-	s.aitLogin = verifier
+// WithAITLoginVerifiers는 appID별 AppsInToss 로그인 검증기를 등록한다.
+//
+// 검증기는 미니앱마다 다른 mTLS 인증서를 쥔다. 하나를 모든 앱에 쓰면 토스가
+// 다른 미니앱의 인가코드로 보고 거부한다. 그래서 앱을 키로 들고 있는다.
+func (s *Service) WithAITLoginVerifiers(verifiers map[string]AITLoginVerifier) *Service {
+	s.aitLogin = verifiers
 	return s
 }
 
@@ -442,10 +446,17 @@ func (s *Service) resolveIdentity(
 		if referrer != "DEFAULT" && referrer != "SANDBOX" {
 			return "", false, "", "", platformerr.New(platformerr.CodeRequestInvalid, "AppsInToss referrer가 올바르지 않아요")
 		}
-		if s.aitLogin == nil {
+		if len(s.aitLogin) == 0 {
 			return "", false, "", "", platformerr.New(platformerr.CodePlatformUnavailable, "AppsInToss 로그인이 준비되지 않았어요")
 		}
-		uid, err := s.aitLogin.Verify(ctx, value, referrer)
+		// 이 앱의 인증서가 없으면 다른 앱 인증서로 대신 교환하지 않는다.
+		// 그렇게 하면 토스가 CN 불일치로 거부해 설정 오류가 인증 실패로 둔갑한다.
+		verifier, ok := s.aitLogin[app.AppID]
+		if !ok {
+			return "", false, "", "", platformerr.New(platformerr.CodeProviderConfigInvalid,
+				"이 앱의 AppsInToss 로그인 인증서가 없어요")
+		}
+		uid, err := verifier.Verify(ctx, value, referrer)
 		if err != nil {
 			return "", false, "", "", err
 		}

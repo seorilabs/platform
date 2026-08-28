@@ -13,7 +13,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -205,32 +204,25 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		// Toss Login의 authorization code 교환도 AppsInToss mTLS를 쓴다.
 		// 결제 앱은 자격증명이 이미 격리된 iap role에서 세션을 열고,
 		// 광고 전용 앱은 ads role에서 같은 경계를 사용한다.
-		var aitCertPEM, aitKeyPEM []byte
+		var aitClients []config.TossClientCredential
 		var aitBaseURL, aitRoleName string
 		switch {
 		case cfg.Role == config.RoleIAP && cfg.IAP.Toss.Enabled():
-			aitCertPEM = cfg.IAP.Toss.ClientCertPEM
-			aitKeyPEM = cfg.IAP.Toss.ClientKeyPEM
+			aitClients = cfg.IAP.Toss.Clients
 			aitBaseURL = cfg.IAP.Toss.BaseURL
 			aitRoleName = "iap"
 		case cfg.Role == config.RoleAds && cfg.Ads.AITLoginEnabled():
-			aitCertPEM = cfg.Ads.AITClientCertPEM
-			aitKeyPEM = cfg.Ads.AITClientKeyPEM
+			aitClients = cfg.Ads.AITClients
 			aitBaseURL = cfg.Ads.AITBaseURL
 			aitRoleName = "ads"
 		}
-		if len(aitCertPEM) > 0 {
-			cert, err := tls.X509KeyPair(aitCertPEM, aitKeyPEM)
-			if err != nil {
-				closeStore()
-				return nil, fmt.Errorf("%s: AppsInToss 로그인 인증서를 읽지 못했다: %w", aitRoleName, err)
-			}
-			client, err := identity.NewAITLoginClient(cert, aitBaseURL)
+		if len(aitClients) > 0 {
+			verifiers, err := aitLoginVerifiers(aitClients, aitBaseURL, aitRoleName)
 			if err != nil {
 				closeStore()
 				return nil, err
 			}
-			svc.WithAITLoginVerifier(client)
+			svc.WithAITLoginVerifiers(verifiers)
 		}
 		d.identity = identity.NewHandler(svc)
 		if cfg.KakaoUnlink.Enabled() {
@@ -499,4 +491,27 @@ func serve(ctx context.Context, cfg config.Config, handler http.Handler) error {
 	}
 	slog.Info("정상 종료")
 	return nil
+}
+
+// aitLoginVerifiers는 mTLS 자격증명을 미니앱별 로그인 검증기로 묶는다.
+func aitLoginVerifiers(
+	credentials []config.TossClientCredential,
+	baseURL, roleName string,
+) (map[string]identity.AITLoginVerifier, error) {
+	byApp, err := aitCertificatesByApp(credentials, roleName)
+	if err != nil {
+		return nil, err
+	}
+	verifiers := make(map[string]identity.AITLoginVerifier, len(byApp))
+	for appID, certificate := range byApp {
+		client, err := identity.NewAITLoginClient(certificate.Cert, baseURL)
+		if err != nil {
+			return nil, err
+		}
+		verifiers[appID] = client
+		slog.Info("AppsInToss 로그인 인증서 등록",
+			"role", roleName, "app_id", appID, "source", certificate.Source,
+			"not_after", certificate.NotAfter.Format(time.RFC3339))
+	}
+	return verifiers, nil
 }

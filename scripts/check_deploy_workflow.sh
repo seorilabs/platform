@@ -55,6 +55,15 @@ require(
     text.count("IAP_TOSS_CLIENT_KEY=ait-client-key:latest") == 2,
     "AIT 개인키 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
 )
+# 인증서는 미니앱마다 발급된다. 앱별 쌍도 같은 role 경계를 지켜야 한다.
+require(
+    text.count("IAP_TOSS_CLIENT_CERT_UNGEUL=ait-client-cert-ungeul:latest") == 2,
+    "운글 AIT 인증서 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
+)
+require(
+    text.count("IAP_TOSS_CLIENT_KEY_UNGEUL=ait-client-key-ungeul:latest") == 2,
+    "운글 AIT 개인키 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
+)
 
 
 def command_block(marker: str) -> str:

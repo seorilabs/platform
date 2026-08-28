@@ -75,6 +75,16 @@ func newIAPService(
 	if err != nil {
 		return nil, err
 	}
+
+	// AppsInToss 인증서는 role 단위로 한 번만 파싱한다. 앱마다 다시 읽으면
+	// 같은 인증서를 앱 수만큼 파싱하고, CN 충돌 같은 설정 오류도 앱 수만큼 난다.
+	aitCertificates := map[string]aitCertificate{}
+	if ic.Toss.Enabled() {
+		aitCertificates, err = aitCertificatesByApp(ic.Toss.Clients, "iap")
+		if err != nil {
+			return nil, err
+		}
+	}
 	if len(verifiers) == 0 {
 		return nil, fmt.Errorf("iap: 조립된 마켓 검증기가 하나도 없다")
 	}
@@ -127,7 +137,7 @@ func newIAPService(
 		appLedgerValues[app.AppID] = appLedger
 		appsByID[app.AppID] = app
 		appOutboxes[app.AppID] = appLedger
-		list, err := newVerifiersForApp(ctx, ic, app)
+		list, err := newVerifiersForApp(ctx, ic, app, aitCertificates)
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +224,12 @@ func ledgerForRegistryApp(st *store.Client, app registry.App, env domain.Environ
 	return ledger.NewForApp(st, env, app.AppID)
 }
 
-func newVerifiersForApp(ctx context.Context, ic config.IAPConfig, app registry.App) ([]verify.Verifier, error) {
+func newVerifiersForApp(
+	ctx context.Context,
+	ic config.IAPConfig,
+	app registry.App,
+	aitCertificates map[string]aitCertificate,
+) ([]verify.Verifier, error) {
 	var out []verify.Verifier
 	if app.MarketEnabled(string(domain.PlatformGooglePlay)) && ic.Play.Enabled() {
 		client, err := newPlayHTTPClient(ctx, ic.Play)
@@ -239,11 +254,15 @@ func newVerifiersForApp(ctx context.Context, ic config.IAPConfig, app registry.A
 		out = append(out, v)
 	}
 	if app.MarketEnabled(string(domain.PlatformAppsInToss)) && ic.Toss.Enabled() {
-		cert, err := tls.X509KeyPair(ic.Toss.ClientCertPEM, ic.Toss.ClientKeyPEM)
-		if err != nil {
-			return nil, fmt.Errorf("iap: AppsInToss 인증서를 읽지 못했다: %w", err)
+		// 이 앱의 인증서가 없으면 AppsInToss provider만 건너뛴다. 다른 앱 인증서로
+		// 대신 검증하면 토스가 CN 불일치로 거절해 설정 오류가 결제 실패로 둔갑한다.
+		// 건너뛰는 선택은 validateAppCatalog의 계약과 같다.
+		certificate, ok := aitCertificates[app.AppID]
+		if !ok {
+			slog.Warn("AppsInToss 인증서가 없어 앱의 결제 검증을 건너뛴다", "app_id", app.AppID)
+			return out, nil
 		}
-		v, err := toss.New(toss.Config{ClientCert: cert, BaseURL: ic.Toss.BaseURL})
+		v, err := toss.New(toss.Config{ClientCert: certificate.Cert, BaseURL: ic.Toss.BaseURL})
 		if err != nil {
 			return nil, err
 		}
@@ -329,7 +348,10 @@ func newVerifiers(ctx context.Context, ic config.IAPConfig) ([]verify.Verifier, 
 	}
 
 	if ic.Toss.Enabled() {
-		cert, err := tls.X509KeyPair(ic.Toss.ClientCertPEM, ic.Toss.ClientKeyPEM)
+		// 앱 범위가 없는 legacy 경로다. 앱별 검증기(newVerifiersForApp)가 실제 판정을
+		// 맡고, 여기서는 기존 동작대로 첫 자격증명 하나만 세운다.
+		legacy := ic.Toss.Clients[0]
+		cert, err := tls.X509KeyPair(legacy.CertPEM, legacy.KeyPEM)
 		if err != nil {
 			return nil, nil, fmt.Errorf("iap: AppsInToss 인증서를 읽지 못했다: %w", err)
 		}
