@@ -66,3 +66,63 @@ func TestUngeulAdsRegistryContract(t *testing.T) {
 		t.Fatalf("content reward key=%q, want deep_flow", ungeul.Content.RewardKey)
 	}
 }
+
+// 운글 열람권은 세 마켓의 소모성 상품 한 건을 동일 entitlement로 검증하고,
+// 네이티브 구매는 카카오 또는 Apple로 연결된 계정에만 귀속한다. 상품 카탈로그,
+// 클라이언트, registry가 어긋나면 결제 뒤 지급 또는 복원이 막히므로 운영 계약을 고정한다.
+func TestUngeulIAPRegistryContract(t *testing.T) {
+	source := NewFSSource(os.DirFS("../../../registry"), "apps")
+	apps, err := source.LoadApps(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ungeul *App
+	for i := range apps {
+		if apps[i].AppID == "ungeul" {
+			ungeul = &apps[i]
+			break
+		}
+	}
+	if ungeul == nil {
+		t.Fatal("ungeul registry가 없다")
+	}
+	if !ungeul.FeatureEnabled("iap") {
+		t.Fatal("운글 IAP feature가 비활성이다")
+	}
+	if ungeul.IAP.LedgerEnvironment != LedgerProduction {
+		t.Fatalf("ledger environment=%q, want production", ungeul.IAP.LedgerEnvironment)
+	}
+	wantMarkets := []string{"google_play", "app_store", "apps_in_toss"}
+	if len(ungeul.IAP.Markets) != len(wantMarkets) {
+		t.Fatalf("markets=%v, want %v", ungeul.IAP.Markets, wantMarkets)
+	}
+	for _, market := range wantMarkets {
+		if !ungeul.MarketEnabled(market) {
+			t.Fatalf("market %q가 비활성이다", market)
+		}
+	}
+	if ungeul.IAP.GooglePlayPackageName != "com.seorilabs.ungeul" ||
+		ungeul.IAP.AppStoreBundleID != "com.seorilabs.ungeul" {
+		t.Fatalf("native app identifiers=(%q,%q)",
+			ungeul.IAP.GooglePlayPackageName, ungeul.IAP.AppStoreBundleID)
+	}
+	if len(ungeul.IAP.EntitlementIDs) != 1 ||
+		ungeul.IAP.EntitlementIDs[0] != "deep_reading_ticket" {
+		t.Fatalf("entitlements=%v, want deep_reading_ticket", ungeul.IAP.EntitlementIDs)
+	}
+	if !ungeul.IAP.RequireLinkedAccount {
+		t.Fatal("네이티브 구매의 연결 계정 요구가 비활성이다")
+	}
+	if got := ungeul.Auth.AccountProviders["kakao"].Audience; got != "1559177" {
+		t.Fatalf("Kakao audience=%q, want 1559177", got)
+	}
+	if got := ungeul.Auth.AccountProviders["apple"].Audience; got != "com.seorilabs.ungeul" {
+		t.Fatalf("Apple audience=%q, want com.seorilabs.ungeul", got)
+	}
+	if ungeul.Content.TicketEntitlementID != "deep_reading_ticket" ||
+		ungeul.Content.TicketUnitsPerPurchase != 5 {
+		t.Fatalf("ticket content contract=(%q,%d), want (deep_reading_ticket,5)",
+			ungeul.Content.TicketEntitlementID, ungeul.Content.TicketUnitsPerPurchase)
+	}
+}
