@@ -42,7 +42,7 @@
   "auth": {
     "account_providers": {
       "kakao": {
-        "audience": "1559177"
+        "audience": "4d309d86b98ea5db999bd1603b8c6c29"
       },
       "apple": {
         "audience": "com.seorilabs.ungeul"
