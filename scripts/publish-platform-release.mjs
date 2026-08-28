@@ -39,6 +39,7 @@ function requiredPositiveSize(value, label) {
 async function githubRequest(fetchImpl, url, token, options = {}) {
   const {
     accept = 'application/vnd.github+json',
+    allowNotFound = false,
     allowRedirect = false,
     headers = {},
     redirect = 'error',
@@ -55,7 +56,11 @@ async function githubRequest(fetchImpl, url, token, options = {}) {
       ...headers,
     },
   });
-  if (!response.ok && !(allowRedirect && [301, 302, 303, 307, 308].includes(response.status))) {
+  if (
+    !response.ok
+    && !(allowNotFound && response.status === 404)
+    && !(allowRedirect && [301, 302, 303, 307, 308].includes(response.status))
+  ) {
     const requestId = response.headers.get('x-github-request-id') ?? '';
     const safeRequestId = /^[A-Za-z0-9.-]{1,100}$/u.test(requestId)
       ? ` requestId=${requestId}`
@@ -125,16 +130,12 @@ async function loadReleaseAssets(directory, tag) {
 }
 
 async function findRelease(fetchImpl, apiBase, repository, token, tag) {
-  const url = `${apiBase}/repos/${repository}/releases?per_page=100`;
-  const response = await githubRequest(fetchImpl, url, token);
-  const releases = await response.json();
-  if (response.headers.get('link')?.includes('rel="next"')) {
-    throw new Error('GitHub release 목록이 100개를 초과해 exact tag를 확정하지 못했습니다.');
+  const url = `${apiBase}/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`;
+  const response = await githubRequest(fetchImpl, url, token, { allowNotFound: true });
+  if (response.status === 404) {
+    return undefined;
   }
-  if (!Array.isArray(releases)) {
-    throw new Error('GitHub release 목록 형식이 올바르지 않습니다.');
-  }
-  return releases.find((release) => release.tag_name === tag);
+  return response.json();
 }
 
 async function readAssetResponse(response, maximum, label) {

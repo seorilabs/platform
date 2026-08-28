@@ -72,8 +72,8 @@ describe('GitHub Release immutable draft publisher', () => {
     const uploaded = [];
     const fetchImpl = async (url, options = {}) => {
       calls.push({ url, options });
-      if (url.endsWith('/releases?per_page=100')) {
-        return jsonResponse([]);
+      if (url.endsWith('/releases/tags/v0.6.5')) {
+        return jsonResponse({ message: 'Not Found' }, 404);
       }
       if (url.endsWith('/releases') && options.method === 'POST') {
         return jsonResponse({
@@ -130,6 +130,8 @@ describe('GitHub Release immutable draft publisher', () => {
       state: 'AWAITING_FLEET_APPROVAL',
       tag: 'v0.6.5',
     });
+    assert.equal(calls[0].url.endsWith('/releases/tags/v0.6.5'), true);
+    assert.equal(calls.some(({ url }) => url.includes('/releases?')), false);
     assert.equal(calls.filter(({ url }) => url.startsWith('https://uploads.github.com/')).length, 4);
     assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
   });
@@ -185,7 +187,7 @@ describe('GitHub Release immutable draft publisher', () => {
 
   it('이미 공개된 release는 base publisher가 수정하지 않는다', async (test) => {
     const directory = await releaseDirectory(test);
-    const fetchImpl = async () => jsonResponse([{
+    const fetchImpl = async () => jsonResponse({
       id: 42,
       tag_name: 'v0.6.5',
       target_commitish: 'a'.repeat(40),
@@ -193,7 +195,7 @@ describe('GitHub Release immutable draft publisher', () => {
       prerelease: false,
       assets: [],
       upload_url: 'https://uploads.github.com/repos/seorilabs/platform/releases/42/assets{?name,label}',
-    }]);
+    });
     await assert.rejects(
       publishPlatformRelease({
         apiBase: 'https://api.github.com',
@@ -210,7 +212,7 @@ describe('GitHub Release immutable draft publisher', () => {
 
   it('예상하지 않은 기존 asset이 있으면 변경하지 않고 중단한다', async (test) => {
     const directory = await releaseDirectory(test);
-    const fetchImpl = async () => jsonResponse([{
+    const fetchImpl = async () => jsonResponse({
       id: 42,
       tag_name: 'v0.6.5',
       target_commitish: 'a'.repeat(40),
@@ -218,7 +220,7 @@ describe('GitHub Release immutable draft publisher', () => {
       prerelease: false,
       assets: [{ id: 1, name: 'unexpected.zip', size: 1 }],
       upload_url: 'https://uploads.github.com/repos/seorilabs/platform/releases/42/assets{?name,label}',
-    }]);
+    });
     await assert.rejects(
       publishPlatformRelease({
         apiBase: 'https://api.github.com',

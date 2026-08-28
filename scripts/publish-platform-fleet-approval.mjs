@@ -725,7 +725,6 @@ export function verifyPlatformFleetApprovalPublishingInputs({
   ) {
     throw new Error('publisher trust registry가 고정된 policy digest와 다릅니다.');
   }
-  const manifest = parseJson(manifestBytes, 'platform-release.json');
   const approval = parseJson(approvalBytes, APPROVAL_ASSET_NAME);
   const policyAttestation = parseJson(
     policyAttestationBytes,

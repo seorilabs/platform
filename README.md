@@ -46,7 +46,8 @@ scripts/        릴리스·검증 스크립트
 ## 문서
 
 실행 원장은 이 저장소가 아니라 Obsidian vault의 `프로젝트/platform/`이다.
-저장소에는 코드와 계약만 남긴다.
+저장소에는 코드와 자동화가 직접 검사하는 실행 계약만 남기며, 운영 판단이나 작업 로그의
+원장으로 사용하지 않는다.
 
 - `프로젝트/platform/02-decisions/` — ADR. **되돌리기 어려운 결정은 전부 여기 있다**
 - `프로젝트/platform/03-architecture/` — 아키텍처, identity, 이벤트, IAP, RemoteConfig, Firestore 인덱스
