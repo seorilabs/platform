@@ -13,8 +13,8 @@ GDScript에는 패키지 매니저가 없다. 정식 소비자는 GitHub Release
 다운로드한 Release asset URL을 가리킨다.
 
 아래 script는 Platform checkout의 미발행 source를 확인하는 로컬 개발용이다.
-결과의 floating `SOURCE`와 기존 source checksum을 정식 release provenance로
-사용하지 않는다.
+clean checkout의 exact commit SHA를 `SOURCE`에 기록하므로 branch 이동에는 영향받지 않지만,
+GitHub Release asset과 checksum을 검증한 정식 release provenance로 사용하지 않는다.
 
 ```bash
 # 소비자 저장소에서. <platform>은 이 저장소의 checkout 경로다.

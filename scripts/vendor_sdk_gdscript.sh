@@ -30,6 +30,18 @@ mkdir -p "$target_parent"
 target_dir="$(cd "$target_parent" && pwd)/$(basename "$target_dir")"
 mkdir -p "$target_dir"
 
+# 이 helper는 미발행 checkout 검증용이다. dirty SDK를 commit provenance로 가장하지 않고,
+# branch가 움직여도 같은 내용을 뜻하도록 exact source SHA만 기록한다.
+if [[ -n "$(git -C "$repo_root" status --porcelain --untracked-files=all -- sdk-gdscript)" ]]; then
+  echo "dirty sdk-gdscript checkout은 vendoring할 수 없다." >&2
+  exit 1
+fi
+source_sha="$(git -C "$repo_root" rev-parse HEAD)"
+if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Platform source SHA를 확인할 수 없다." >&2
+  exit 1
+fi
+
 # vendored SDK는 수정하지 않는 계약이다. 제거된 upstream GDScript가 소비자에
 # 남아 죽은 구현이 되는 것을 막기 위해 SDK의 .gd만 정리한다.
 find "$target_dir" -type f -name '*.gd' -delete
@@ -43,5 +55,7 @@ done < <(find "$source_dir" -type f -not -path '*/tools/*' -print0)
 
 cp "$repo_root/sdk-gdscript/VERSION" "$target_dir/VERSION"
 cp "$repo_root/sdk-gdscript/CHECKSUM" "$target_dir/CHECKSUM"
+printf 'https://github.com/seorilabs/platform/tree/%s/sdk-gdscript\n' "$source_sha" \
+  > "$target_dir/SOURCE"
 
 echo "Platform GDScript SDK $(tr -d '[:space:]' < "$target_dir/VERSION") vendored: $target_dir"
