@@ -162,7 +162,7 @@ async function readAssetResponse(response, maximum, label) {
   return Buffer.concat(chunks, total);
 }
 
-function releaseRedirect(location, label) {
+export function validatePlatformReleaseAssetRedirect(location, label) {
   let url;
   try {
     url = new URL(location);
@@ -171,6 +171,7 @@ function releaseRedirect(location, label) {
   }
   if (
     url.protocol !== 'https:'
+    || url.port
     || url.username
     || url.password
     || url.hash
@@ -198,7 +199,10 @@ async function verifyExistingAsset(fetchImpl, token, remote, local, apiBase, rep
     redirect: 'manual',
   });
   if ([301, 302, 303, 307, 308].includes(response.status)) {
-    const redirected = releaseRedirect(response.headers.get('location') ?? '', local.name);
+    const redirected = validatePlatformReleaseAssetRedirect(
+      response.headers.get('location') ?? '',
+      local.name,
+    );
     response = await fetchImpl(redirected, {
       redirect: 'error',
       headers: {

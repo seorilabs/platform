@@ -276,7 +276,7 @@ function indexReleaseAssets(release, expectedBaseNames) {
   return indexed;
 }
 
-function validateReleaseRedirect(location, label) {
+export function validatePlatformFleetReleaseAssetRedirect(location, label) {
   let url;
   try {
     url = new URL(location);
@@ -285,6 +285,7 @@ function validateReleaseRedirect(location, label) {
   }
   if (
     url.protocol !== 'https:'
+    || url.port
     || url.username
     || url.password
     || url.hash
@@ -307,7 +308,10 @@ async function downloadAsset(fetchImpl, token, asset, label) {
     redirect: 'manual',
   });
   if ([301, 302, 303, 307, 308].includes(response.status)) {
-    const redirected = validateReleaseRedirect(response.headers.get('location') ?? '', label);
+    const redirected = validatePlatformFleetReleaseAssetRedirect(
+      response.headers.get('location') ?? '',
+      label,
+    );
     response = await fetchImpl(redirected, {
       redirect: 'error',
       headers: {

@@ -14,6 +14,7 @@ import { sha256 } from './platform-release-lib.mjs';
 import {
   platformFleetPolicyAttestationBytes,
   publishPlatformFleetApproval,
+  validatePlatformFleetReleaseAssetRedirect,
   verifyPlatformFleetApprovalPublishingInputs,
   verifyPlatformFleetImmutablePolicy,
 } from './publish-platform-fleet-approval.mjs';
@@ -386,6 +387,23 @@ function verifyLocal(local, overrides = {}) {
 }
 
 describe('Platform Fleet immutable approval publisher', () => {
+  it('release asset redirect는 기본 HTTPS 포트의 허용 host만 따른다', () => {
+    assert.equal(
+      validatePlatformFleetReleaseAssetRedirect(
+        'https://release-assets.githubusercontent.com/path/to/asset',
+        'fixture asset',
+      ),
+      'https://release-assets.githubusercontent.com/path/to/asset',
+    );
+    assert.throws(
+      () => validatePlatformFleetReleaseAssetRedirect(
+        'https://release-assets.githubusercontent.com:8443/path/to/asset',
+        'fixture asset',
+      ),
+      /redirect origin/u,
+    );
+  });
+
   it('production mutator는 tracked registry와 digest를 내부에서만 고정한다', async (test) => {
     const local = await localFixture(test);
     const [registryBytes, publisherSource] = await Promise.all([

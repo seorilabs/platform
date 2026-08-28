@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { canonicalJson, sha256 } from './platform-release-lib.mjs';
-import { publishPlatformRelease } from './publish-platform-release.mjs';
+import {
+  publishPlatformRelease,
+  validatePlatformReleaseAssetRedirect,
+} from './publish-platform-release.mjs';
 
 async function releaseDirectory(test) {
   const directory = await mkdtemp(join(tmpdir(), 'platform-release-publish-test-'));
@@ -66,6 +69,23 @@ function jsonResponse(value, status = 200) {
 }
 
 describe('GitHub Release immutable draft publisher', () => {
+  it('release asset redirect는 기본 HTTPS 포트의 허용 host만 따른다', () => {
+    assert.equal(
+      validatePlatformReleaseAssetRedirect(
+        'https://release-assets.githubusercontent.com/path/to/asset',
+        'fixture asset',
+      ),
+      'https://release-assets.githubusercontent.com/path/to/asset',
+    );
+    assert.throws(
+      () => validatePlatformReleaseAssetRedirect(
+        'https://release-assets.githubusercontent.com:8443/path/to/asset',
+        'fixture asset',
+      ),
+      /redirect origin/u,
+    );
+  });
+
   it('TypeScript를 포함한 네 asset을 검증한 approval 대기 draft로만 준비한다', async (test) => {
     const directory = await releaseDirectory(test);
     const calls = [];
