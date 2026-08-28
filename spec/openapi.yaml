@@ -28,6 +28,8 @@ tags:
     description: RemoteConfig
   - name: events
     description: 이벤트 수집
+  - name: presence
+    description: RPI Edge의 fail-open 최근 활성 세션
   - name: iap
     description: 인앱결제 검증과 entitlement
   - name: ads
@@ -349,6 +351,81 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /presence/token:
+    post:
+      tags: [presence]
+      summary: RPI Edge presence token 발급
+      description: |
+        앱이 만든 비식별 session ID를 Edge 전용 단기 token으로 교환한다.
+        기능이 꺼졌거나 발급기가 준비되지 않았으면 오류 대신 enabled=false를
+        반환한다. Presence 실패가 앱 동작이나 기존 이벤트 전송을 막아서는 안 된다.
+      operationId: createPresenceToken
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePresenceTokenRequest'
+      responses:
+        '200':
+          description: 활성화 상태와, 활성화된 경우 Edge token
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        $ref: '#/components/schemas/PresenceBootstrap'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /presence/heartbeat:
+    post:
+      servers:
+        - url: https://edge.vzyx.xyz/v1
+          description: vzyx-cluster RPI public Edge
+      tags: [presence]
+      summary: 최근 활성 세션 갱신
+      description: |
+        서버 수신 시각으로 150초 활성 TTL을 갱신한다. 클라이언트 시각은 받지
+        않는다. 네트워크·인증·Edge·DB 실패 시 같은 heartbeat를 재시도하거나
+        outbox에 넣지 않고 다음 주기에 새 heartbeat만 보낸다.
+      operationId: heartbeatPresence
+      security: [{ PresenceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresenceHeartbeatRequest'
+      responses:
+        '200':
+          description: 최신 상태 반영
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [acceptedAt]
+                        additionalProperties: false
+                        properties:
+                          acceptedAt: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -1536,6 +1613,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: '`/auth/session`이 발급한 플랫폼 세션 토큰'
+    PresenceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: '`/presence/token`이 발급한 Edge 전용 Ed25519 token'
     PubSubOidc:
       type: http
       scheme: bearer
@@ -1904,6 +1986,53 @@ components:
               type: string
               enum: [DEFAULT, SANDBOX]
               description: ait-login에서만 필수인 appLogin referrer
+
+    CreatePresenceTokenRequest:
+      type: object
+      required: [sessionId, platform]
+      additionalProperties: false
+      properties:
+        sessionId:
+          type: string
+          minLength: 16
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: 클라이언트 실행마다 새로 만드는 비식별 난수. 서버는 SHA-256만 token에 넣는다
+        platform:
+          $ref: '#/components/schemas/ClientPlatform'
+        appVersion:
+          type: string
+          maxLength: 32
+
+    PresenceBootstrap:
+      type: object
+      required: [enabled, heartbeatIntervalSeconds]
+      additionalProperties: false
+      properties:
+        enabled: { type: boolean }
+        token:
+          type: string
+          description: enabled=true일 때만 존재하는 Edge 전용 token
+        expiresAt: { type: string, format: date-time }
+        expiresIn:
+          type: integer
+          minimum: 1
+          description: token 수명 초. 기기 wall clock이 틀려도 갱신 시점을 잡기 위한 값
+        edgeUrl: { type: string, format: uri, example: 'https://edge.vzyx.xyz' }
+        heartbeatIntervalSeconds: { type: integer, minimum: 60, maximum: 300 }
+
+    PresenceHeartbeatRequest:
+      type: object
+      required: [version, sequence, platform]
+      additionalProperties: false
+      properties:
+        version: { type: integer, enum: [1] }
+        sequence: { type: integer, minimum: 0 }
+        platform:
+          $ref: '#/components/schemas/ClientPlatform'
+        appVersion:
+          type: string
+          maxLength: 32
 
     AdsPolicy:
       type: object

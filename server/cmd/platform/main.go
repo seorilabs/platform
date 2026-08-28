@@ -30,6 +30,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap"
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/operational"
+	"github.com/seorilabs/platform/server/internal/presence"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/remoteconfig"
 	"github.com/seorilabs/platform/server/internal/store"
@@ -99,6 +100,7 @@ type deps struct {
 	content         *contentParts
 	operational     *operational.Dispatcher
 	operationalRepo *operational.Repository
+	presence        *presence.Handler
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
@@ -118,6 +120,22 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		store:    st,
 		registry: reg,
 		config:   remoteconfig.NewService(st),
+	}
+	if cfg.Role == config.RoleIngest {
+		var issuer presence.TokenIssuer
+		if cfg.Presence.Enabled() {
+			privateKey, err := presence.ParsePrivateKey(cfg.Presence.PrivateKeyRaw)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			issuer, err = presence.NewIssuer(privateKey, presence.DefaultTokenTTL)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+		}
+		d.presence = presence.NewHandler(reg, issuer, cfg.Presence.EdgeURL)
 	}
 	if cfg.Operational.Enabled() {
 		repo := operational.NewRepository(st)
@@ -383,6 +401,10 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 			sessions = d.identity
 		}
 		events.NewHandler(d.events, d.registry, sessions).Register(mux)
+		if d.presence == nil {
+			return nil, errors.New("ingest role에 presence handler가 필요하다")
+		}
+		d.presence.Register(mux)
 
 	case config.RoleAdmin:
 		if d.iap == nil {

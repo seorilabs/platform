@@ -27,6 +27,8 @@ server/
     ├── identity/          토큰 검증, platform_user
     ├── config/            RemoteConfig
     ├── events/            이벤트 수집 → BigQuery
+    ├── presence/          Edge token 발급과 공개키 검증 계약
+    ├── presenceedge/      RPI MySQL 최신 세션 projection
     ├── operational/       확정 운영 이벤트 outbox + 서명 전달
     ├── ads/               앱별 광고 정책, claim, SSV 검증과 상태
     ├── content/           private GCS 릴리스, selector, 한도와 심화 권한
@@ -77,6 +79,8 @@ flowchart TD
   OPS --> STORE
   CFG --> STORE
   EV --> ERR
+  PRESENCE["presence"] --> ERR
+  EDGE["presenceedge"] --> PRESENCE
   STORE --> FSPATH["fspath"]
   DOM --> ERR
 ```
