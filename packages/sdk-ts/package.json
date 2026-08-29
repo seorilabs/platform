@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "description": "Seorilabs 공통 플랫폼 클라이언트 SDK",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/seorilabs/platform.git",
