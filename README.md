@@ -150,5 +150,4 @@ Firestore 에뮬레이터가 필요한 통합 테스트는 `-tags=integration`�
 
 ## 라이선스
 
-별도 라이선스를 부여하지 않는다. 소스는 열람할 수 있지만 저작권은 Seorilabs에
-있다.
+[MIT](LICENSE). 저작권은 Seorilabs에 있다.
