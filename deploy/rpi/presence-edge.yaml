@@ -5,8 +5,8 @@
 # system:serviceaccount:platform:ci-deployer가 ns platform에서 deployments만
 # 다룰 수 있고 services와 ingresses 권한이 없기 때문이다.
 #
-# 따라서 아래 Service, Ingress, env, resources, probe를 바꾸면 사람이 직접
-# apply해야 클러스터에 반영된다.
+# 따라서 아래에서 image 외의 모든 필드는 CI가 반영하지 않는다. Service, Ingress,
+# env, resources, probe, replicas 등을 바꾸면 사람이 직접 apply해야 한다.
 #
 #   kubectl -n platform apply -f deploy/rpi/presence-edge.yaml
 #

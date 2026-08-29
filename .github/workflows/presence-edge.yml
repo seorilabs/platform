@@ -22,8 +22,9 @@ name: RPI Presence Edge
 # ns platform에서 deployments만 다룰 수 있고 services와 ingresses 권한이
 # 없다. 이미지 배포마다 Service와 Ingress를 다시 쓸 이유도 없다.
 #
-# 따라서 deploy/rpi/presence-edge.yaml의 Service, Ingress, env, resources를
-# 바꾸면 이 workflow가 아니라 사람이 직접 apply해야 반영된다.
+# 따라서 deploy/rpi/presence-edge.yaml에서 image 외의 모든 필드는 이 workflow가
+# 반영하지 않는다. Service, Ingress, env, resources, probe, replicas 등을 바꾸면
+# 사람이 직접 apply해야 한다.
 
 on:
   workflow_dispatch:
