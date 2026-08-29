@@ -51,13 +51,28 @@ jobs:
       - name: Verify tag and package versions
         run: node scripts/check-sdk-ts-release.mjs "$GITHUB_REF_NAME"
 
+      - name: Resolve approved release base
+        id: release-base
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="$(node scripts/resolve-platform-release-base.mjs)"
+          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
       - name: Pack TypeScript SDK
         id: pack
         shell: bash
         run: |
           set -euo pipefail
           tarball="$RUNNER_TEMP/$(npm pack ./packages/sdk-ts --pack-destination "$RUNNER_TEMP" --silent)"
-          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          integrity="$(node scripts/typescript-registry-artifact.mjs integrity \
+            --artifact "$tarball")"
+          {
+            echo "tarball=$tarball"
+            echo "integrity=$integrity"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install pinned oasdiff
         run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"
@@ -70,7 +85,9 @@ jobs:
           node scripts/build-platform-release.mjs \
             --release-tag "$release_tag" \
             --source-sha "$GITHUB_SHA" \
+            --base-ref "${{ steps.release-base.outputs.sha }}" \
             --typescript-artifact "${{ steps.pack.outputs.tarball }}" \
+            --typescript-registry-integrity "${{ steps.pack.outputs.integrity }}" \
             --oasdiff "$RUNNER_TEMP/oasdiff" \
             --output-dir "$RUNNER_TEMP/platform-release-validation"
 
