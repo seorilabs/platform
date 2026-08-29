@@ -70,6 +70,14 @@ flowchart LR
 API 계약은 `/v1` 하나이고 **영구히 깨지 않는다.** 마켓에 배포된 구버전 SDK가
 2~3년 산다. 필드는 추가만 하고, 제거나 의미 변경은 `/v2`다.
 
+새 `platform-release.json`은 source SHA, 두 SDK의 exact version·artifact digest,
+OpenAPI/conformance revision, 변경 분류와 함께 영향 consumer 선택 계약을 서명 대상에
+포함한다. consumer repo 목록은 release 뒤에도 바뀌므로 immutable asset에 복사하지 않고
+`backoffice-active-apps` cohort를 `reconcile-time`에 exact repo ID로 확정하며, 하나라도
+관측이 빠지면 전체 fan-out을 중단한다.
+이미 발행된 `v0.6.7`에 선택 필드가 없던 경우만 같은 cohort로 읽으며, 다른 version의
+누락은 계약 오류로 거부한다.
+
 ## 구조
 
 ```text

@@ -118,6 +118,10 @@ async function localFixture(test) {
     },
     contract: {
       affectedCapabilities: ['core'],
+      affectedConsumers: {
+        cohort: 'backoffice-active-apps',
+        resolution: 'reconcile-time',
+      },
       affectedTracks: ['gdscript', 'typescript'],
       baseRevision: `sha256:${'1'.repeat(64)}`,
       classification: 'implementation-only',

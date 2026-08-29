@@ -55,6 +55,10 @@ function requiredInteger(value, label, minimum = 0) {
   return value;
 }
 
+function allowsAffectedConsumersOmission(version) {
+  return version === '0.6.7';
+}
+
 function canonicalize(value) {
   if (Array.isArray(value)) {
     return value.map(canonicalize);
@@ -187,18 +191,27 @@ function validateManifest(manifest) {
   }
 
   const contract = manifest.contract;
-  assertExactKeys(
-    contract,
-    [
-      'affectedCapabilities',
-      'affectedTracks',
-      'baseRevision',
-      'classification',
-      'revision',
-      'supportedApiMajor',
-    ],
-    'manifest.contract',
-  );
+  const contractKeys = [
+    'affectedCapabilities',
+    'affectedTracks',
+    'baseRevision',
+    'classification',
+    'revision',
+    'supportedApiMajor',
+  ];
+  // 이미 발행된 v0.6.7 asset만 이 필드가 없다. 새 generator는 반드시 명시하며,
+  // 다른 과거/미래 version까지 호환 범위를 넓히지 않는다.
+  assertRecord(contract, 'manifest.contract');
+  if (Object.hasOwn(contract, 'affectedConsumers')) {
+    contractKeys.push('affectedConsumers');
+  }
+  assertExactKeys(contract, contractKeys, 'manifest.contract');
+  if (
+    contract.affectedConsumers === undefined
+    && !allowsAffectedConsumersOmission(gdscript.version)
+  ) {
+    throw new Error('manifest.contract.affectedConsumers 선택 계약이 필요합니다.');
+  }
   requiredString(contract.revision, 'manifest.contract.revision', SHA256_REVISION_PATTERN);
   requiredString(contract.baseRevision, 'manifest.contract.baseRevision', SHA256_REVISION_PATTERN);
   if (!CONTRACT_CLASSIFICATIONS.includes(contract.classification)) {
@@ -207,6 +220,19 @@ function validateManifest(manifest) {
   requiredInteger(contract.supportedApiMajor, 'manifest.contract.supportedApiMajor', 1);
   assertUniqueSortedStrings(contract.affectedTracks, TRACKS, 'manifest.contract.affectedTracks');
   assertUniqueSortedStrings(contract.affectedCapabilities, undefined, 'manifest.contract.affectedCapabilities');
+  if (contract.affectedConsumers !== undefined) {
+    assertExactKeys(
+      contract.affectedConsumers,
+      ['cohort', 'resolution'],
+      'manifest.contract.affectedConsumers',
+    );
+    if (
+      contract.affectedConsumers.cohort !== 'backoffice-active-apps'
+      || contract.affectedConsumers.resolution !== 'reconcile-time'
+    ) {
+      throw new Error('manifest.contract.affectedConsumers 선택 계약이 올바르지 않습니다.');
+    }
+  }
   if (contract.affectedCapabilities.some((value) => !/^[a-z][a-z0-9_-]*$/u.test(value))) {
     throw new Error('manifest.contract.affectedCapabilities 값이 올바르지 않습니다.');
   }

@@ -47,6 +47,10 @@ async function releaseDirectory(test) {
     },
     contract: {
       affectedCapabilities: ['core'],
+      affectedConsumers: {
+        cohort: 'backoffice-active-apps',
+        resolution: 'reconcile-time',
+      },
       affectedTracks: ['gdscript'],
       baseRevision: `sha256:${'d'.repeat(64)}`,
       classification: 'implementation-only',

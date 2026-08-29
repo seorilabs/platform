@@ -327,6 +327,7 @@ export async function buildPlatformRelease(options) {
       baseRevision: computeContractRevision(baseContractFiles),
       classification,
       supportedApiMajor,
+      affectedConsumers: impact.affectedConsumers,
       affectedTracks: impact.affectedTracks,
       affectedCapabilities: impact.affectedCapabilities,
     },
