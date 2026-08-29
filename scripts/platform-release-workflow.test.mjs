@@ -49,6 +49,8 @@ describe('Platform release workflow 계약', () => {
     assert.match(approvalPublisherSource, /--grant-fd/u);
     assert.match(approvalPublisherSource, /--policy-attestation/u);
     assert.match(approvalPublisherSource, /--token-fd/u);
+    assert.match(approvalPublisherSource, /make_latest: 'true'/u);
+    assert.match(approvalPublisherSource, /releases\/latest/u);
     assert.doesNotMatch(approvalPublisherSource, /--trusted-keys/u);
   });
 

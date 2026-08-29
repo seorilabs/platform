@@ -55,6 +55,10 @@ TTL을 결합한다.
 - 동시 upload가 422로 충돌하면 기존 파일이 동일 byte일 때만 성공으로 인정한다.
 - tag·ruleset·setting·다섯 asset이 그대로일 때만 draft를 공개하며, 최종
   `immutable=true`와 tag commit, 다섯 asset을 다시 검증한다.
+- draft 공개 요청은 `make_latest=true`를 명시한다. 게시 후 `GET /releases/latest`가 같은
+  release ID, tag, source SHA와 다섯 asset identity를 반환해야만 `fleet-approved latest`로
+  인정한다. GitHub의 latest 표시는 단독 승인 근거가 아니며 `fleet-approved.json`이 없으면
+  fail-closed한다.
 - asset download redirect는 GitHub release asset host allowlist만 token 없이 따르고,
   signed size를 넘는 streaming response는 즉시 중단한다.
 - GitHub 오류 응답 body는 로그나 예외에 포함하지 않는다.
@@ -66,6 +70,16 @@ identity·immutable setting·inherited ruleset readback과 서명 원문을 대�
 
 raw JSON을 `workflow_dispatch` 입력으로 받거나 공개된 release에 asset을 뒤늦게 붙이거나
 사람이 GitHub UI에서 asset을 교체하는 경로는 이 계약에 포함되지 않는다.
+
+## 변경 분류와 Fleet 동작
+
+- `implementation-only`는 계약 호환 release다. 뒤처진 official SDK를 exact version·digest로
+  올리는 PR intent를 repo별 하나만 만든다.
+- `contract-additive`와 `contract-breaking`은 계약 변경 release다. 두 SDK track의 영향을
+  고정하고 `P1`, `autopilot`, `platform`, `platform-contract` Issue intent를 repo별 하나만
+  만든다.
+- GitHub latest와 signed approval readback이 맞아도 Backoffice의 현재 latest generation CAS와
+  consumer observation 재확인이 끝나기 전에는 PR이나 Issue를 생성하지 않는다.
 
 ## 남은 P6 broker gate
 

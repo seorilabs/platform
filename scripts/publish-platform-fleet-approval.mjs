@@ -27,6 +27,8 @@ const POLICY_ATTESTATION_PURPOSE = 'seorilabs-platform-release-policy-attestatio
 const MAX_INPUT_BYTES = 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_RELEASE_ASSET_BYTES = 256 * 1024 * 1024;
+const LATEST_READBACK_ATTEMPTS = 5;
+const LATEST_READBACK_DELAY_MS = 500;
 const SHA256_REVISION_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u;
@@ -257,6 +259,110 @@ function validateReleaseShape(release, { sourceSha, tag }) {
     throw new Error('GitHub Release asset 이름이 없거나 중복되었습니다.');
   }
   return release;
+}
+
+function releaseAssetIdentity(release) {
+  return release.assets.map((asset) => {
+    if (
+      !Number.isSafeInteger(asset?.id)
+      || asset.id < 1
+      || typeof asset.name !== 'string'
+      || asset.name.length === 0
+      || !Number.isSafeInteger(asset.size)
+      || asset.size < 1
+    ) {
+      throw new Error('GitHub Release asset identity가 올바르지 않습니다.');
+    }
+    return { id: asset.id, name: asset.name, size: asset.size };
+  }).sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+}
+
+// GitHub의 `latest` 표시는 승인 서명 자체가 아니다. 이미 서명과 asset byte를
+// 검증한 immutable Release와 exact provider readback이 같은 리소스를 가리킬 때만
+// Fleet latest 승격 증거로 사용한다.
+export function verifyPlatformFleetLatestReadback({ approvedRelease, latestRelease }) {
+  if (!isRecord(approvedRelease)) {
+    throw new Error('승인된 GitHub Release readback이 필요합니다.');
+  }
+  const tag = requiredString(
+    approvedRelease.tag_name,
+    'approved release tag',
+    /^v\d+\.\d+\.\d+$/u,
+  );
+  const sourceSha = requiredString(
+    approvedRelease.target_commitish,
+    'approved release source SHA',
+    SOURCE_SHA_PATTERN,
+  );
+  const approved = validateReleaseShape(approvedRelease, { sourceSha, tag });
+  const latest = validateReleaseShape(latestRelease, { sourceSha, tag });
+  const approvedAssets = releaseAssetIdentity(approved);
+  const latestAssets = releaseAssetIdentity(latest);
+  const version = tag.slice(1);
+  const approvedNames = approvedAssets.map(({ name }) => name);
+  const requiredNames = [
+    APPROVAL_ASSET_NAME,
+    'platform-release.json',
+    `seorilabs-platform-gdscript-${version}.tar.gz`,
+    `seorilabs-platform-gdscript-${version}.tar.gz.sha256`,
+  ];
+  const typescriptAssets = approvedNames.filter((name) => (
+    /^seorilabs-platform-sdk-\d+\.\d+\.\d+\.tgz$/u.test(name)
+  ));
+  if (
+    approved.draft !== false
+    || approved.immutable !== true
+    || approvedNames.length !== 5
+    || requiredNames.some((name) => !approvedNames.includes(name))
+    || typescriptAssets.length !== 1
+    || latest.id !== approved.id
+    || JSON.stringify(latestAssets) !== JSON.stringify(approvedAssets)
+  ) {
+    throw new Error('GitHub latest release가 immutable Fleet approval release와 일치하지 않습니다.');
+  }
+  return Object.freeze({
+    latest: true,
+    releaseId: approved.id,
+    sourceSha,
+    tag,
+  });
+}
+
+function waitForLatestReadback(milliseconds) {
+  return new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
+}
+
+// release publish와 `/releases/latest` projection 사이의 짧은 eventual consistency만
+// 제한적으로 재확인한다. 다른 release나 asset identity를 성공으로 낮추지 않는다.
+export async function readPlatformFleetLatest({
+  approvedRelease,
+  fetchImpl = fetch,
+  token,
+  waitImpl = waitForLatestReadback,
+}) {
+  requiredString(token, 'GitHub latest read token');
+  if (typeof fetchImpl !== 'function' || typeof waitImpl !== 'function') {
+    throw new Error('GitHub latest readback adapter가 올바르지 않습니다.');
+  }
+  let lastError;
+  for (let attempt = 1; attempt <= LATEST_READBACK_ATTEMPTS; attempt += 1) {
+    try {
+      const { value } = await githubJson(
+        fetchImpl,
+        `${GITHUB_API_BASE}/repos/${RELEASE_REPOSITORY}/releases/latest`,
+        token,
+      );
+      return verifyPlatformFleetLatestReadback({ approvedRelease, latestRelease: value });
+    } catch (error) {
+      lastError = error;
+      if (attempt < LATEST_READBACK_ATTEMPTS) {
+        await waitImpl(LATEST_READBACK_DELAY_MS);
+      }
+    }
+  }
+  throw new Error('GitHub latest release가 immutable Fleet approval과 일치하지 않습니다.', {
+    cause: lastError,
+  });
 }
 
 function indexReleaseAssets(release, expectedBaseNames) {
@@ -704,7 +810,7 @@ async function publishDraft(fetchImpl, token, release) {
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draft: false }),
+      body: JSON.stringify({ draft: false, make_latest: 'true' }),
     },
   );
   if (!response.ok && ![409, 422].includes(response.status)) {
@@ -879,9 +985,15 @@ export async function publishPlatformFleetApproval(options) {
     throw new Error('immutable release에 fleet-approved.json이 없습니다.');
   }
   await verifyApprovalAsset(fetchImpl, token, finalApproval, approvalBytes);
+  const latest = await readPlatformFleetLatest({
+    approvedRelease: finalRelease,
+    fetchImpl,
+    token,
+  });
   return Object.freeze({
     approvalSha256: `sha256:${sha256(approvalBytes)}`,
     immutable: true,
+    latest: latest.latest,
     policyAttestationSha256: verified.policyAttestationSha256,
     policyDigest: finalPolicy.policyDigest,
     releaseId: finalRelease.id,

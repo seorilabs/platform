@@ -14,9 +14,11 @@ import { sha256 } from './platform-release-lib.mjs';
 import {
   platformFleetPolicyAttestationBytes,
   publishPlatformFleetApproval,
+  readPlatformFleetLatest,
   validatePlatformFleetReleaseAssetRedirect,
   verifyPlatformFleetApprovalPublishingInputs,
   verifyPlatformFleetImmutablePolicy,
+  verifyPlatformFleetLatestReadback,
 } from './publish-platform-fleet-approval.mjs';
 
 const SOURCE_SHA = 'a'.repeat(40);
@@ -420,6 +422,8 @@ describe('Platform Fleet immutable approval publisher', () => {
       publisherSource,
       /export async function publishPlatformFleetApproval\(options\)/u,
     );
+    assert.match(publisherSource, /make_latest: 'true'/u);
+    assert.match(publisherSource, /releases\/latest/u);
     let calls = 0;
     const fetchImpl = async () => {
       calls += 1;
@@ -438,6 +442,103 @@ describe('Platform Fleet immutable approval publisher', () => {
       trustRegistryExpectedSha256: sha256(local.trustRegistryBytes),
     }), /production mutator 필드가 올바르지 않습니다/u);
     assert.equal(calls, 0);
+  });
+
+  it('검증된 immutable approval release와 같은 provider resource만 latest로 인정한다', () => {
+    const assets = [
+      { id: 1, name: 'platform-release.json', size: 100 },
+      { id: 2, name: 'seorilabs-platform-sdk-0.7.0.tgz', size: 200 },
+      { id: 3, name: 'seorilabs-platform-gdscript-0.7.0.tar.gz', size: 300 },
+      { id: 4, name: 'seorilabs-platform-gdscript-0.7.0.tar.gz.sha256', size: 107 },
+      { id: 5, name: 'fleet-approved.json', size: 400 },
+    ];
+    const approvedRelease = {
+      id: 42,
+      tag_name: TAG,
+      target_commitish: SOURCE_SHA,
+      draft: false,
+      prerelease: false,
+      immutable: true,
+      assets,
+    };
+    const latestRelease = structuredClone(approvedRelease);
+    latestRelease.assets.reverse();
+    assert.deepEqual(
+      verifyPlatformFleetLatestReadback({ approvedRelease, latestRelease }),
+      { latest: true, releaseId: 42, sourceSha: SOURCE_SHA, tag: TAG },
+    );
+
+    for (const changed of [
+      { ...latestRelease, id: 43 },
+      { ...latestRelease, target_commitish: '0'.repeat(40) },
+      { ...latestRelease, immutable: false },
+      { ...latestRelease, assets: latestRelease.assets.slice(1) },
+    ]) {
+      assert.throws(
+        () => verifyPlatformFleetLatestReadback({ approvedRelease, latestRelease: changed }),
+        /latest release|exact tag|승인 대기 draft/u,
+      );
+    }
+  });
+
+  it('latest projection의 짧은 지연만 제한적으로 재확인한다', async () => {
+    const assets = [
+      { id: 1, name: 'platform-release.json', size: 100 },
+      { id: 2, name: 'seorilabs-platform-sdk-0.7.0.tgz', size: 200 },
+      { id: 3, name: 'seorilabs-platform-gdscript-0.7.0.tar.gz', size: 300 },
+      { id: 4, name: 'seorilabs-platform-gdscript-0.7.0.tar.gz.sha256', size: 107 },
+      { id: 5, name: 'fleet-approved.json', size: 400 },
+    ];
+    const approvedRelease = {
+      id: 42,
+      tag_name: TAG,
+      target_commitish: SOURCE_SHA,
+      draft: false,
+      prerelease: false,
+      immutable: true,
+      assets,
+    };
+    let reads = 0;
+    let waits = 0;
+    const result = await readPlatformFleetLatest({
+      approvedRelease,
+      fetchImpl: async () => {
+        reads += 1;
+        return jsonResponse(reads === 1 ? { ...approvedRelease, id: 41 } : approvedRelease);
+      },
+      token: 'credential-canary-token',
+      waitImpl: async (milliseconds) => {
+        assert.equal(milliseconds, 500);
+        waits += 1;
+      },
+    });
+    assert.deepEqual(result, {
+      latest: true,
+      releaseId: 42,
+      sourceSha: SOURCE_SHA,
+      tag: TAG,
+    });
+    assert.equal(reads, 2);
+    assert.equal(waits, 1);
+  });
+
+  it('승인 asset이 없는 공개 release는 GitHub latest여도 Fleet latest가 아니다', () => {
+    const release = {
+      id: 42,
+      tag_name: TAG,
+      target_commitish: SOURCE_SHA,
+      draft: false,
+      prerelease: false,
+      immutable: true,
+      assets: [{ id: 1, name: 'platform-release.json', size: 100 }],
+    };
+    assert.throws(
+      () => verifyPlatformFleetLatestReadback({
+        approvedRelease: release,
+        latestRelease: structuredClone(release),
+      }),
+      /Fleet approval release/u,
+    );
   });
 
   it('임의 key fixture는 mutation 없는 pure verifier에서만 검증한다', async (test) => {
