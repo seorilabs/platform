@@ -14,6 +14,17 @@ name: RPI Presence Edge
 #
 # 러너가 x64이므로 kubectl은 linux/amd64 빌드를 받는다. 배포 대상 노드가
 # arm64인 것과 무관하다.
+#
+# ## 배포 범위
+#
+# deploy는 매니페스트 전체를 apply하지 않고 Deployment의 image만 고정 SHA로
+# 바꾼다. kubeconfig identity인 system:serviceaccount:platform:ci-deployer는
+# ns platform에서 deployments만 다룰 수 있고 services와 ingresses 권한이
+# 없다. 이미지 배포마다 Service와 Ingress를 다시 쓸 이유도 없다.
+#
+# 따라서 deploy/rpi/presence-edge.yaml에서 image 외의 모든 필드는 이 workflow가
+# 반영하지 않는다. Service, Ingress, env, resources, probe, replicas 등을 바꾸면
+# 사람이 직접 apply해야 한다.
 
 on:
   workflow_dispatch:
@@ -86,8 +97,8 @@ jobs:
     timeout-minutes: 10
     environment: production
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Apply fixed SHA and verify rollout
+      # 저장소 파일을 읽지 않는다. image 태그만 바꾸므로 checkout이 필요 없다.
+      - name: Set fixed SHA and verify rollout
         env:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
         run: |
@@ -103,7 +114,6 @@ jobs:
           chmod +x /tmp/kubectl
           printf '%s' "$KUBECONFIG_B64" | base64 -d > /tmp/presence-kubeconfig
           export KUBECONFIG=/tmp/presence-kubeconfig
-          sed "s|${IMAGE}:latest|${IMAGE}:${GITHUB_SHA}|" deploy/rpi/presence-edge.yaml \
-            | /tmp/kubectl apply -f -
+          /tmp/kubectl -n platform set image deployment/platform-presence-edge \
+            "edge=${IMAGE}:${GITHUB_SHA}"
           /tmp/kubectl -n platform rollout status deployment/platform-presence-edge --timeout=180s
-          /tmp/kubectl -n platform get ingress platform-presence-edge
