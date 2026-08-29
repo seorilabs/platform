@@ -12,6 +12,17 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
 
 **파일을 고치는 것만으로는 아무 일도 일어나지 않는다.** 실제로 이 함정을 밟았다 — `features.iap`가 `false`인 채 배포되어 결제는 되는데 백오피스 IAP 관리만 403이었다. 검증 경로가 admin에만 있어 증상이 한쪽에서만 났다.
 
+```mermaid
+flowchart LR
+  A["registry/apps/app-id.json<br/>PR"] --> B["CI — regsync --dry-run<br/>스키마 검증 · 미지 키 거부"]
+  B --> C["main 병합"]
+  C --> D["메인테이너가 regsync 실행"]
+  D --> E[("Firestore apps/app-id")]
+  E --> F["런타임 캐시<br/>TTL 60초"]
+  F --> G["SDK 호출 허용"]
+  C -.->|regsync 누락| H["파일만 바뀌고 런타임은 옛 값<br/>app_unknown 계속"]
+```
+
 ## 형식
 
 ```jsonc
