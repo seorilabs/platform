@@ -184,6 +184,10 @@ describe('영향 범위', () => {
       changedPaths: [],
     });
     assert.deepEqual(result, {
+      affectedConsumers: {
+        cohort: 'backoffice-active-apps',
+        resolution: 'reconcile-time',
+      },
       affectedTracks: ['gdscript', 'typescript'],
       affectedCapabilities: ['events', 'presence'],
     });
@@ -199,6 +203,10 @@ describe('영향 범위', () => {
       changedPaths: ['sdk-gdscript/addons/seorilabs_platform/core/presence_client.gd'],
     });
     assert.deepEqual(result, {
+      affectedConsumers: {
+        cohort: 'backoffice-active-apps',
+        resolution: 'reconcile-time',
+      },
       affectedTracks: ['gdscript'],
       affectedCapabilities: ['presence'],
     });
@@ -214,6 +222,10 @@ describe('영향 범위', () => {
       changedPaths: [],
     });
     assert.deepEqual(result, {
+      affectedConsumers: {
+        cohort: 'backoffice-active-apps',
+        resolution: 'reconcile-time',
+      },
       affectedTracks: ['gdscript'],
       affectedCapabilities: ['core'],
     });

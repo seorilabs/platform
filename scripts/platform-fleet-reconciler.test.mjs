@@ -34,8 +34,7 @@ function digestPlan(plan) {
   return `sha256:${createHash('sha256').update(JSON.stringify(stable(unsigned))).digest('hex')}`;
 }
 
-function manifest(classification = 'implementation-only') {
-  const version = '0.7.0';
+function manifest(classification = 'implementation-only', version = '0.7.0') {
   const artifactName = `seorilabs-platform-gdscript-${version}.tar.gz`;
   return {
     schemaVersion: 1,
@@ -72,6 +71,10 @@ function manifest(classification = 'implementation-only') {
       baseRevision: BASE_CONTRACT_REVISION,
       classification,
       supportedApiMajor: 1,
+      affectedConsumers: {
+        cohort: 'backoffice-active-apps',
+        resolution: 'reconcile-time',
+      },
       affectedTracks: classification === 'implementation-only'
         ? ['gdscript', 'typescript']
         : ['gdscript', 'typescript'],
@@ -294,6 +297,51 @@ describe('Platform Fleet release 승인', () => {
       ),
       /고정 source URL/u,
     );
+  });
+
+  it('새 release의 영향 consumer 선택 계약을 검증하고 v0.6.7 omission만 읽기 허용한다', () => {
+    const invalid = manifest();
+    invalid.contract.affectedConsumers.cohort = 'repository-file-list';
+    assert.throws(
+      () => platformReleaseApprovalPayload(
+        `${JSON.stringify(invalid)}\n`,
+        canaryApprovalEvidence(),
+      ),
+      /affectedConsumers/u,
+    );
+
+    const legacy = manifest();
+    assert.throws(
+      () => platformReleaseApprovalPayload(
+        `${JSON.stringify({
+          ...legacy,
+          contract: Object.fromEntries(
+            Object.entries(legacy.contract).filter(([key]) => key !== 'affectedConsumers'),
+          ),
+        })}\n`,
+        canaryApprovalEvidence(),
+      ),
+      /affectedConsumers/u,
+    );
+
+    const publishedLegacy = manifest('implementation-only', '0.6.7');
+    delete publishedLegacy.contract.affectedConsumers;
+    assert.doesNotThrow(() => platformReleaseApprovalPayload(
+      `${JSON.stringify(publishedLegacy)}\n`,
+      canaryApprovalEvidence(),
+    ));
+
+    for (const version of ['0.6.6', '0.6.8']) {
+      const unsupportedOmission = manifest('implementation-only', version);
+      delete unsupportedOmission.contract.affectedConsumers;
+      assert.throws(
+        () => platformReleaseApprovalPayload(
+          `${JSON.stringify(unsupportedOmission)}\n`,
+          canaryApprovalEvidence(),
+        ),
+        /affectedConsumers/u,
+      );
+    }
   });
 });
 
