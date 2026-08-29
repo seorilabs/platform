@@ -1,3 +1,18 @@
+# RPI Presence Edge의 desired state.
+#
+# CI(presence-edge.yml)는 이 파일을 apply하지 않는다. Deployment의 image만
+# 고정 SHA로 바꾼다. 배포 kubeconfig identity인
+# system:serviceaccount:platform:ci-deployer가 ns platform에서 deployments만
+# 다룰 수 있고 services와 ingresses 권한이 없기 때문이다.
+#
+# 따라서 아래 Service, Ingress, env, resources, probe를 바꾸면 사람이 직접
+# apply해야 클러스터에 반영된다.
+#
+#   kubectl -n platform apply -f deploy/rpi/presence-edge.yaml
+#
+# image의 :latest는 자리표시자다. 실제 운영 태그는 CI가 set image로 넣은
+# 커밋 SHA다. 이 파일을 그대로 apply하면 태그가 :latest로 되돌아가므로
+# 되돌린 직후 CI를 다시 돌리거나 set image로 SHA를 복원한다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
