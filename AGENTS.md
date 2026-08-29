@@ -73,8 +73,8 @@ Obsidian `프로젝트/platform/03-architecture/iap.md`의 불변식 12개는 **
 
 ## GitHub Actions
 
-- 저장소는 public이다. CI와 배포는 GitHub-hosted `ubuntu-latest`에서 돈다. self-hosted ARC 러너는 `presence-edge`의 `deploy` job에만 남아 있다 — RPI k8s API가 클러스터 밖으로 열려 있지 않기 때문이다. 그 job을 다룰 때만 `seorilabs-arc-runners` 스킬을 쓴다.
-- `pull_request`로 트리거되는 워크플로에 self-hosted 러너를 넣지 않는다. fork PR 코드가 클러스터에서 실행된다.
+- 저장소는 public이다. 모든 job은 GitHub-hosted `ubuntu-latest`에서 돈다. self-hosted ARC 러너를 쓰지 않는다 — fork PR 코드가 클러스터에서 실행되고, RPI 레지스트리와 k8s API 모두 TLS로 공개 도달 가능해 hosted에서 붙을 수 있다.
+- 러너는 x64다. RPI에 배포하는 job이라도 러너에서 받는 CLI(kubectl 등)는 `linux/amd64` 빌드를 쓴다.
 - 컨테이너 이미지는 러너에서 buildx로 만든다. Cloud Build 위임은 없다. arm64 대상은 QEMU가 아니라 `FROM --platform=$BUILDPLATFORM` + `GOARCH=$TARGETARCH` 크로스컴파일이다. QEMU로 Go 컴파일러를 돌리면 segfault가 난다.
 - action 버전은 GitHub 공식 repo/API 기준 최신 stable major를 확인하고 SHA로 고정한다. `@latest`나 branch 참조를 쓰지 않는다.
 - `main` 병합은 곧 production 배포 파이프라인 시작이다. `deploy` job은 environment `production`의 required reviewer 승인에서 멈춘다.

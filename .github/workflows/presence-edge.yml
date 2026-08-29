@@ -2,17 +2,18 @@ name: RPI Presence Edge
 
 # ## 러너
 #
-# deploy job만 ARC에 남는다. RPI k8s API에 kubeconfig로 붙어야 하고 그
-# API는 클러스터 밖으로 열려 있지 않다.
-#
-# verify와 build는 hosted로 돌린다.
+# 세 job 모두 GitHub-hosted `ubuntu-latest`에서 돈다. self-hosted 러너는 쓰지
+# 않는다.
 #
 # - verify는 순수 Go test/build라 클러스터와 무관하다
 # - build는 registry.vzyx.xyz로 push하는데 이 레지스트리는 TLS로 공개
 #   도달 가능하다. arm64 이미지는 QEMU가 아니라 Go 크로스컴파일로 만든다
 #   — Dockerfile.edge가 BUILDPLATFORM과 GOARCH를 쓴다
+# - deploy가 붙는 RPI k8s API도 TLS로 공개 도달 가능하다. KUBECONFIG_B64의
+#   server는 클러스터 내부 주소가 아니라 그 공개 주소여야 한다
 #
-# GitHub-hosted로 옮기면 클러스터 자격증명과 API를 외부 러너에 노출해야 한다.
+# 러너가 x64이므로 kubectl은 linux/amd64 빌드를 받는다. 배포 대상 노드가
+# arm64인 것과 무관하다.
 
 on:
   workflow_dispatch:
@@ -81,7 +82,7 @@ jobs:
     name: Deploy to RPI
     if: ${{ inputs.deploy }}
     needs: build
-    runs-on: seorilabs-rpi-arm64
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
     steps:
@@ -91,7 +92,14 @@ jobs:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl"
+          # kubeconfig에 클러스터 자격증명이 들어가므로 이 step이 만드는
+          # 파일은 전부 0600으로 떨어뜨린다.
+          umask 077
+          version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          base="https://dl.k8s.io/release/${version}/bin/linux/amd64"
+          curl -fsSL -o /tmp/kubectl "${base}/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 "${base}/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check
           chmod +x /tmp/kubectl
           printf '%s' "$KUBECONFIG_B64" | base64 -d > /tmp/presence-kubeconfig
           export KUBECONFIG=/tmp/presence-kubeconfig
