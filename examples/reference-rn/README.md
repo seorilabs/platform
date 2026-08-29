@@ -1,21 +1,21 @@
 # React Native 레퍼런스 — 플랫폼 SDK 붙이기
 
-RN 앱이 플랫폼을 쓰는 최소 형태.
+RN 앱이 플랫폼을 쓰는 최소 형태. 전체 가이드는
+[Wiki: TypeScript SDK](https://github.com/seorilabs/platform/wiki/TypeScript-SDK)를 본다.
 
 ## 1. 설치
 
-```jsonc
-// package.json
-{
-  "dependencies": {
-    "@seorilabs/platform-sdk": "0.1.0"
-  }
-}
+GitHub Release의 tarball을 직접 설치한다. 인증이 필요 없다.
+
+```bash
+pnpm add https://github.com/seorilabs/platform/releases/download/v0.6.7/seorilabs-platform-sdk-0.4.0.tgz
 ```
 
-private GitHub Packages이므로 소비 저장소와 CI 모두 `read:packages` 인증이
-필요하다. 저장소에는 `@seorilabs:registry=https://npm.pkg.github.com`만 두고
+GitHub Packages(`@seorilabs/platform-sdk@0.4.0`)로 받을 수도 있다. 이 경우
+`.npmrc`에 `@seorilabs:registry=https://npm.pkg.github.com`만 두고, `read:packages`
 토큰은 파일이나 번들에 넣지 않는다.
+
+Node 20 이상, `fetch` 전역이 필요하다. RN은 내장한다.
 
 ## 2. 조립
 
@@ -23,24 +23,28 @@ private GitHub Packages이므로 소비 저장소와 CI 모두 `read:packages` �
 import { createPlatform } from "@seorilabs/platform-sdk";
 
 export const platform = createPlatform({
-  baseUrl: "https://platform-api-….run.app",
-  ingestBaseUrl: "https://platform-ingest-….run.app",
-  iapBaseUrl: "https://platform-iap-….run.app",
+  baseUrl: "https://platform-api-306278488979.asia-northeast3.run.app",
+  iapBaseUrl: "https://platform-iap-306278488979.asia-northeast3.run.app",
+  ingestBaseUrl: "https://platform-ingest-306278488979.asia-northeast3.run.app",
+  adsBaseUrl: "https://platform-ads-306278488979.asia-northeast3.run.app",
   appId: "my-app",
   eventAllowlist: ["seori_session_start", "onboarding_complete"],
+  // 실제 앱은 react-native-device-info 등으로 채운다. 함수를 넘기면 flush
+  // 시점에 평가되므로 앱 안에서 언어가 바뀌어도 다음 배치부터 반영된다.
   eventContext: {
     platform: "android",
     appVersion: "1.0.0",
     locale: "ko-KR",
   },
   sessionStore: new AsyncStorageSessionStore(),
+  presenceEnabled: false,
 });
 
 platform.start();  // 이벤트 자동 전송 시작
 ```
 
-세 URL은 Secret이 아니다. 별도 이벤트·IAP URL을 생략하면 하위 호환을 위해
-`baseUrl`을 사용한다.
+URL은 Secret이 아니다. 역할별 URL을 생략하면 `baseUrl`로 간다. `appId`는
+[`registry/apps/`](../../registry/apps/README.md)에 등록된 값이어야 한다.
 
 ### 세션 저장소
 
@@ -84,7 +88,7 @@ await platform.signIn({ kind: "firebase-id-token", value: idToken });
 AppsInToss에서는 Firebase ID 토큰이 없다. `appLogin()` 결과를 쓴다.
 
 ```ts
-await platform.signIn({ kind: "ait-login", value: aitLoginToken });
+await platform.signIn({ kind: "ait-login", value: code, referrer: "DEFAULT" });
 ```
 
 **익명은 결제할 수 없다.** 조회와 이벤트만 된다.
@@ -98,8 +102,8 @@ platform.events.track({
 });
 ```
 
-즉시 보내지 않는다. 20건이 쌓이거나 주기가 되면 배치로 나간다.
-실패한 배치는 outbox에 남아 다음 주기에 다시 시도한다.
+즉시 보내지 않는다. 20건이 쌓이거나 10초 주기가 되면 배치로 나간다.
+실패한 배치는 outbox(기본 500건)에 남아 다음 주기에 다시 시도한다.
 
 **던지지 않는다.** 계측 때문에 화면이 멈추면 안 된다.
 
@@ -148,6 +152,9 @@ try {
 }
 ```
 
+`token`은 마켓마다 다르다 — Play `purchaseToken`, App Store `transactionId`,
+AppsInToss `orderId`.
+
 신규 구매 전에 계정 참조를 마켓 결제 화면에 넣는다. 그래야 다른
 사용자가 시작한 구매를 가로채지 못한다.
 
@@ -155,14 +162,15 @@ try {
 const refs = await platform.iap.accountReferences();
 await RNIap.requestPurchase({
   sku,
-  obfuscatedAccountIdAndroid: refs.googlePlay,
-  appAccountToken: refs.appStore,
+  obfuscatedAccountIdAndroid: refs.googlePlayObfuscatedAccountId,
+  appAccountToken: refs.appStoreAppAccountToken,
 });
 ```
 
 ## 6. 오류 처리
 
-`code`로만 분기한다.
+`code`로만 분기한다. 전체 목록은
+[Wiki: Error Codes](https://github.com/seorilabs/platform/wiki/Error-Codes).
 
 ```ts
 function handlePurchaseError(code: string): void {
@@ -186,6 +194,9 @@ function handlePurchaseError(code: string): void {
 ## 7. RemoteConfig
 
 ```ts
+import { Platform } from "react-native";
+import DeviceInfo from "react-native-device-info";
+
 const config = await platform.config.fetch({
   appVersion: DeviceInfo.getVersion(),
   platform: Platform.OS === "ios" ? "ios" : "android",
@@ -206,5 +217,6 @@ await platform.shutdown();   // 남은 이벤트를 보내고 타이머를 멈�
 
 ## 관련
 
+- 전체 가이드: [Wiki: TypeScript SDK](https://github.com/seorilabs/platform/wiki/TypeScript-SDK)
 - 계약: `spec/conformance/*.json`
 - 서버 API: `spec/openapi.yaml`

@@ -49,7 +49,7 @@
 
 ## Go 규약
 
-- Go 1.24+. 라우팅은 **표준 `net/http`** — Go 1.22+ `ServeMux` 패턴으로 충분하므로 외부 라우터를 도입하지 않는다.
+- Go 1.25. 라우팅은 **표준 `net/http`** — Go 1.22+ `ServeMux` 패턴으로 충분하므로 외부 라우터를 도입하지 않는다.
 - 테스트는 **표준 `testing` + 테이블 드리븐**. assert 라이브러리를 도입하지 않는다.
 - ORM을 도입하지 않는다. Firestore·BigQuery 클라이언트를 repository 포트 뒤에 둔다.
 - `internal/`을 경계로 쓴다. 외부에서 import되면 안 되는 것은 전부 `internal/` 아래.
@@ -71,12 +71,13 @@
 
 Obsidian `프로젝트/platform/03-architecture/iap.md`의 불변식 12개는 **언어·저장소와 무관하게 보존한다.** 이를 바꾸는 변경은 ADR 없이 하지 않는다.
 
-## GitHub Actions / ARC
+## GitHub Actions
 
-- Seorilabs GitHub Actions 또는 ARC runner 라우팅을 작성·수정·진단할 때는 `seorilabs-arc-runners` 스킬을 사용한다.
-- 먼저 `/Users/syous/Workspace/kubectl/github-actions-runners/global-versions.yaml`을 확인한다.
-- action 버전은 GitHub 공식 repo/API 기준 최신 stable major를 확인한다. `@latest`나 branch 참조를 쓰지 않는다.
-- **Go는 크로스컴파일이 네이티브**라 ARC arm64 러너에서 `GOOS=linux GOARCH=amd64`로 Cloud Run용 amd64 바이너리를 QEMU 없이 빌드한다. Cloud Build 위임이 불필요하다.
+- 저장소는 public이다. CI와 배포는 GitHub-hosted `ubuntu-latest`에서 돈다. self-hosted ARC 러너는 `presence-edge`의 `deploy` job에만 남아 있다 — RPI k8s API가 클러스터 밖으로 열려 있지 않기 때문이다. 그 job을 다룰 때만 `seorilabs-arc-runners` 스킬을 쓴다.
+- `pull_request`로 트리거되는 워크플로에 self-hosted 러너를 넣지 않는다. fork PR 코드가 클러스터에서 실행된다.
+- 컨테이너 이미지는 러너에서 buildx로 만든다. Cloud Build 위임은 없다. arm64 대상은 QEMU가 아니라 `FROM --platform=$BUILDPLATFORM` + `GOARCH=$TARGETARCH` 크로스컴파일이다. QEMU로 Go 컴파일러를 돌리면 segfault가 난다.
+- action 버전은 GitHub 공식 repo/API 기준 최신 stable major를 확인하고 SHA로 고정한다. `@latest`나 branch 참조를 쓰지 않는다.
+- `main` 병합은 곧 production 배포 파이프라인 시작이다. `deploy` job은 environment `production`의 required reviewer 승인에서 멈춘다.
 - 아티팩트는 `retention-days: 3`.
 
 ## PR
