@@ -185,7 +185,7 @@ describe('영향 범위', () => {
     });
     assert.deepEqual(result, {
       affectedConsumers: {
-        cohort: 'backoffice-active-apps',
+        cohort: 'backoffice-managed-product-apps',
         resolution: 'reconcile-time',
       },
       affectedTracks: ['gdscript', 'typescript'],
@@ -204,7 +204,7 @@ describe('영향 범위', () => {
     });
     assert.deepEqual(result, {
       affectedConsumers: {
-        cohort: 'backoffice-active-apps',
+        cohort: 'backoffice-managed-product-apps',
         resolution: 'reconcile-time',
       },
       affectedTracks: ['gdscript'],
@@ -223,7 +223,7 @@ describe('영향 범위', () => {
     });
     assert.deepEqual(result, {
       affectedConsumers: {
-        cohort: 'backoffice-active-apps',
+        cohort: 'backoffice-managed-product-apps',
         resolution: 'reconcile-time',
       },
       affectedTracks: ['gdscript'],

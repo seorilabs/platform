@@ -72,7 +72,7 @@ function manifest(classification = 'implementation-only', version = '0.7.0') {
       classification,
       supportedApiMajor: 1,
       affectedConsumers: {
-        cohort: 'backoffice-active-apps',
+        cohort: 'backoffice-managed-product-apps',
         resolution: 'reconcile-time',
       },
       affectedTracks: classification === 'implementation-only'
@@ -311,7 +311,7 @@ describe('Platform Fleet release 승인', () => {
     );
 
     const invalid = manifest();
-    invalid.contract.affectedConsumers.cohort = 'repository-file-list';
+    invalid.contract.affectedConsumers.cohort = 'backoffice-active-apps';
     assert.throws(
       () => platformReleaseApprovalPayload(
         `${JSON.stringify(invalid)}\n`,

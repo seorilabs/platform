@@ -48,7 +48,7 @@ async function releaseDirectory(test) {
     contract: {
       affectedCapabilities: ['core'],
       affectedConsumers: {
-        cohort: 'backoffice-active-apps',
+        cohort: 'backoffice-managed-product-apps',
         resolution: 'reconcile-time',
       },
       affectedTracks: ['gdscript'],
