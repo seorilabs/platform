@@ -29,11 +29,13 @@ export const platform = createPlatform({
   adsBaseUrl: "https://platform-ads-306278488979.asia-northeast3.run.app",
   appId: "my-app",
   eventAllowlist: ["seori_session_start", "onboarding_complete"],
-  eventContext: () => ({
-    platform: Platform.OS === "ios" ? "ios" : "android",
-    appVersion: DeviceInfo.getVersion(),
-    locale: getLocale(),
-  }),
+  // 실제 앱은 react-native-device-info 등으로 채운다. 함수를 넘기면 flush
+  // 시점에 평가되므로 앱 안에서 언어가 바뀌어도 다음 배치부터 반영된다.
+  eventContext: {
+    platform: "android",
+    appVersion: "1.0.0",
+    locale: "ko-KR",
+  },
   sessionStore: new AsyncStorageSessionStore(),
   presenceEnabled: false,
 });
@@ -192,6 +194,9 @@ function handlePurchaseError(code: string): void {
 ## 7. RemoteConfig
 
 ```ts
+import { Platform } from "react-native";
+import DeviceInfo from "react-native-device-info";
+
 const config = await platform.config.fetch({
   appVersion: DeviceInfo.getVersion(),
   platform: Platform.OS === "ios" ? "ios" : "android",

@@ -19,7 +19,8 @@ tar -xzf "seorilabs-platform-gdscript-$V.tar.gz" -C game/addons/
 
 archive 안의 `SOURCE`, `VERSION`, `CHECKSUM`을 addon과 같은 커밋에 넣는다.
 `SOURCE`는 다운로드한 Release asset URL을 가리키므로 나중에 어느 배포본인지
-바로 알 수 있다. `tools/`는 SDK 자체 검증용이라 지워도 된다.
+바로 알 수 있다. addon 안의 `addons/seorilabs_platform/tools/`는 SDK 자체
+검증용이라 지워도 된다. 프로젝트 루트의 `tools/`와는 다른 디렉토리다.
 
 복사본은 조용히 갈라진다 — foam-party와 lucid-chess가 같은 파일을 md5가 다른
 채로 갖고 있었다. 파일을 직접 고치지 않고, 올릴 때는 새 tarball로 통째로 바꾼다.
@@ -184,7 +185,7 @@ match String(res["code"]):
 
 ```bash
 sha256sum -c seorilabs-platform-gdscript-0.6.7.tar.gz.sha256   # 가져올 때
-godot --headless --script tools/platform_switch_probe.gd         # 앱의 스위치 probe
+godot --headless --script tools/platform_switch_probe.gd         # 프로젝트 루트 tools/ — 앱이 직접 만드는 스위치 probe
 ```
 
 Godot은 `SCRIPT ERROR`가 나도 실행을 계속한다. exit code만 보면
