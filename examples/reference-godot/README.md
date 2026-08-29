@@ -1,25 +1,28 @@
 # Godot 레퍼런스 — 플랫폼 SDK 붙이기
 
-Godot 앱이 플랫폼을 쓰는 최소 형태. 복사해서 시작점으로 쓴다.
-
-lizard-tycoon이 실제 적용 사례다. 여기서는 배선만 보여준다.
+Godot 4.3 앱이 플랫폼을 쓰는 최소 형태. 복사해서 시작점으로 쓴다. 전체 가이드는
+[Wiki: GDScript SDK](https://github.com/seorilabs/platform/wiki/GDScript-SDK)를 본다.
 
 ## 1. SDK 가져오기
 
-```bash
-cp -r <platform>/sdk-gdscript/addons/seorilabs_platform game/addons/
-rm -rf game/addons/seorilabs_platform/tools
-cp <platform>/sdk-gdscript/{VERSION,CHECKSUM} game/addons/seorilabs_platform/
-```
-
-`tools/`는 SDK 자체 검증용이라 가져가지 않는다.
-
-체크섬 대조 스크립트를 함께 둔다. 복사본은 조용히 갈라진다 —
-foam-party와 lucid-chess가 같은 파일을 md5가 다른 채로 갖고 있었다.
+GDScript에는 패키지 매니저가 없다. GitHub Release의 tarball을 받아 sha256을
+검증한 뒤 `addons/` 아래에 푼다.
 
 ```bash
-cp <lizard-tycoon>/scripts/check_platform_sdk.sh scripts/
+V=0.6.7
+B=https://github.com/seorilabs/platform/releases/download/v$V
+curl -fsSLO "$B/seorilabs-platform-gdscript-$V.tar.gz"
+curl -fsSLO "$B/seorilabs-platform-gdscript-$V.tar.gz.sha256"
+sha256sum -c "seorilabs-platform-gdscript-$V.tar.gz.sha256"   # macOS: shasum -a 256 -c
+tar -xzf "seorilabs-platform-gdscript-$V.tar.gz" -C game/addons/
 ```
+
+archive 안의 `SOURCE`, `VERSION`, `CHECKSUM`을 addon과 같은 커밋에 넣는다.
+`SOURCE`는 다운로드한 Release asset URL을 가리키므로 나중에 어느 배포본인지
+바로 알 수 있다. `tools/`는 SDK 자체 검증용이라 지워도 된다.
+
+복사본은 조용히 갈라진다 — foam-party와 lucid-chess가 같은 파일을 md5가 다른
+채로 갖고 있었다. 파일을 직접 고치지 않고, 올릴 때는 새 tarball로 통째로 바꾼다.
 
 ## 2. 전환 스위치
 
@@ -42,7 +45,7 @@ cp <lizard-tycoon>/scripts/check_platform_sdk.sh scripts/
 ## 3. composition root
 
 ```gdscript
-const PLATFORM_CLIENT_SCRIPT := preload("res://game/addons/seorilabs_platform/platform_client.gd")
+const PLATFORM_CLIENT_SCRIPT := preload("res://addons/seorilabs_platform/platform_client.gd")
 const PLATFORM_CONFIG_SCRIPT := preload("res://game/infra/platform/seori_platform_config.gd")
 
 var _platform: Node = null
@@ -62,6 +65,13 @@ func _create_platform_client() -> Node:
     client.configure({
         "base_url": String(config.get("baseUrl", "")),
         "app_id": String(config.get("appId", "")),
+        "event_context": func():
+            return {
+                "platform": "android",
+                "appVersion": ProjectSettings.get_setting("application/config/version"),
+                "locale": TranslationServer.get_locale(),
+            },
+        "presence_enabled": false,
     })
     # HTTPRequest가 동작하려면 트리에 있어야 한다.
     add_child(client)
@@ -69,7 +79,7 @@ func _create_platform_client() -> Node:
 ```
 
 꺼져 있으면 `null`이다. 이후 코드는 전부 `is_instance_valid()`로 감싼다 —
-`_create_purchase_port()`의 fail-closed 관용구와 같다.
+fail-closed 관용구다.
 
 ## 4. 로그인
 
@@ -93,6 +103,10 @@ platform.sign_in({"kind": "firebase-id-token", "value": id_token},
 
 **익명은 결제할 수 없다.** 해시는 bearer 자격증명이 아니라 타인 사칭이
 가능하다. 조회와 이벤트는 익명도 된다.
+
+Firebase 계정이 아직 없는 사용자는 `create_firebase_custom_token`으로 플랫폼이
+발급한 custom token을 받아 Firebase에 로그인한 뒤 ID 토큰으로 `sign_in`한다.
+이 흐름은 `adapters/firebase_identity_adapter.gd`가 표준으로 구현한다.
 
 ## 5. 이벤트
 
@@ -149,7 +163,8 @@ platform.verify_purchase(
 
 ## 7. 오류 처리
 
-`code`로만 분기한다. `message`는 사람이 읽는 문장이라 언제든 바뀐다.
+`code`로만 분기한다. `message`는 사람이 읽는 문장이라 언제든 바뀐다. 전체 목록은
+[Wiki: Error Codes](https://github.com/seorilabs/platform/wiki/Error-Codes).
 
 ```gdscript
 match String(res["code"]):
@@ -168,8 +183,8 @@ match String(res["code"]):
 ## 8. 검증
 
 ```bash
-bash scripts/check_platform_sdk.sh    # vendoring 드리프트
-godot --headless --script tools/platform_switch_probe.gd
+sha256sum -c seorilabs-platform-gdscript-0.6.7.tar.gz.sha256   # 가져올 때
+godot --headless --script tools/platform_switch_probe.gd         # 앱의 스위치 probe
 ```
 
 Godot은 `SCRIPT ERROR`가 나도 실행을 계속한다. exit code만 보면
@@ -177,6 +192,6 @@ Godot은 `SCRIPT ERROR`가 나도 실행을 계속한다. exit code만 보면
 
 ## 관련
 
+- 전체 가이드: [Wiki: GDScript SDK](https://github.com/seorilabs/platform/wiki/GDScript-SDK)
 - SDK 문서: `sdk-gdscript/README.md`
 - 계약: `spec/conformance/*.json`
-- lizard-tycoon 적용 사례: `game/main.gd`, `game/infra/godot_analytics.gd`
