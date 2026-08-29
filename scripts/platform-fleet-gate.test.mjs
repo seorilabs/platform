@@ -69,7 +69,7 @@ function releaseManifest() {
       classification: 'implementation-only',
       supportedApiMajor: 1,
       affectedConsumers: {
-        cohort: 'backoffice-active-apps',
+        cohort: 'backoffice-managed-product-apps',
         resolution: 'reconcile-time',
       },
       affectedTracks: ['gdscript', 'typescript'],

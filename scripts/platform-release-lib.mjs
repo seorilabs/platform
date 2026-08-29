@@ -356,7 +356,7 @@ export function deriveReleaseImpact({
 
   return {
     affectedConsumers: {
-      cohort: 'backoffice-active-apps',
+      cohort: 'backoffice-managed-product-apps',
       resolution: 'reconcile-time',
     },
     affectedTracks: [...tracks].sort(compareUtf8),

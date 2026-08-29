@@ -227,7 +227,7 @@ function validateManifest(manifest) {
       'manifest.contract.affectedConsumers',
     );
     if (
-      contract.affectedConsumers.cohort !== 'backoffice-active-apps'
+      contract.affectedConsumers.cohort !== 'backoffice-managed-product-apps'
       || contract.affectedConsumers.resolution !== 'reconcile-time'
     ) {
       throw new Error('manifest.contract.affectedConsumers 선택 계약이 올바르지 않습니다.');
