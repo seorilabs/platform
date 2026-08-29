@@ -16,6 +16,7 @@ import {
   parseSupportedApiMajor,
   sha256,
 } from './platform-release-lib.mjs';
+import { verifyTypescriptArtifactIntegrity } from './typescript-registry-artifact.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OPENAPI_PATH = 'spec/openapi.yaml';
@@ -65,29 +66,17 @@ function resolveRevision(revision) {
 }
 
 function resolveBaseRevision(sourceSha, requestedBase) {
-  if (requestedBase) {
-    const baseSha = resolveRevision(requestedBase);
-    run('git', ['merge-base', '--is-ancestor', baseSha, sourceSha], {
-      label: 'base revision ancestor 확인',
-    });
-    if (baseSha === sourceSha) {
-      throw new Error('base revision은 source SHA와 달라야 합니다.');
-    }
-    return baseSha;
+  if (!requestedBase) {
+    throw new Error('검증된 Fleet 승인 또는 bootstrap base revision이 필요합니다.');
   }
-
-  const parent = resolveRevision(`${sourceSha}^`);
-  const tag = run('git', [
-    'describe',
-    '--tags',
-    '--abbrev=0',
-    '--match',
-    'v[0-9]*.[0-9]*.[0-9]*',
-    '--match',
-    'sdk-ts-v[0-9]*.[0-9]*.[0-9]*',
-    parent,
-  ], { label: '이전 Platform SDK tag 탐색' }).trim();
-  return resolveRevision(tag);
+  const baseSha = resolveRevision(requestedBase);
+  run('git', ['merge-base', '--is-ancestor', baseSha, sourceSha], {
+    label: 'base revision ancestor 확인',
+  });
+  if (baseSha === sourceSha) {
+    throw new Error('base revision은 source SHA와 달라야 합니다.');
+  }
+  return baseSha;
 }
 
 function parseTree(output) {
@@ -193,6 +182,7 @@ function parseArguments(argv) {
     '--release-tag',
     '--source-sha',
     '--typescript-artifact',
+    '--typescript-registry-integrity',
   ]);
   for (const name of Object.keys(options)) {
     if (!allowed.has(name)) {
@@ -205,6 +195,8 @@ function parseArguments(argv) {
     '--release-tag',
     '--source-sha',
     '--typescript-artifact',
+    '--base-ref',
+    '--typescript-registry-integrity',
   ]) {
     if (!options[required]) {
       throw new Error(`필수 인자가 없습니다: ${required}`);
@@ -271,6 +263,10 @@ export async function buildPlatformRelease(options) {
 
   const typescriptArtifactPath = resolve(options['--typescript-artifact']);
   const typescriptArtifact = await readFile(typescriptArtifactPath);
+  verifyTypescriptArtifactIntegrity(
+    typescriptArtifact,
+    options['--typescript-registry-integrity'],
+  );
   assertTypescriptPackageArtifact(
     typescriptArtifact,
     typescriptPackage.name,

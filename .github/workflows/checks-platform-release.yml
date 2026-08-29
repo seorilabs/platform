@@ -14,6 +14,8 @@ on:
       - ".github/workflows/checks-platform-release.yml"
       - ".github/workflows/publish-sdk-gdscript.yml"
       - ".github/workflows/publish-sdk-ts.yml"
+      - ".github/platform-release-bootstrap-base.json"
+      - ".github/platform-fleet-trusted-release-keys.json"
   push:
     branches: [main]
     paths:
@@ -28,6 +30,8 @@ on:
       - ".github/workflows/checks-platform-release.yml"
       - ".github/workflows/publish-sdk-gdscript.yml"
       - ".github/workflows/publish-sdk-ts.yml"
+      - ".github/platform-release-bootstrap-base.json"
+      - ".github/platform-fleet-trusted-release-keys.json"
 
 permissions:
   contents: read
@@ -72,17 +76,31 @@ jobs:
       - name: Install pinned oasdiff
         run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"
 
+      - name: Resolve approved release base
+        id: release-base
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="$(node scripts/resolve-platform-release-base.mjs)"
+          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
       - name: Build deterministic release twice
         shell: bash
         run: |
           set -euo pipefail
           typescript_artifact="$RUNNER_TEMP/$(npm pack ./packages/sdk-ts --pack-destination "$RUNNER_TEMP" --silent)"
+          typescript_integrity="$(node scripts/typescript-registry-artifact.mjs integrity \
+            --artifact "$typescript_artifact")"
           release_tag="v$(tr -d '[:space:]' < sdk-gdscript/VERSION)"
           for output in first second; do
             node scripts/build-platform-release.mjs \
               --release-tag "$release_tag" \
               --source-sha "$GITHUB_SHA" \
+              --base-ref "${{ steps.release-base.outputs.sha }}" \
               --typescript-artifact "$typescript_artifact" \
+              --typescript-registry-integrity "$typescript_integrity" \
               --oasdiff "$RUNNER_TEMP/oasdiff" \
               --output-dir "$RUNNER_TEMP/platform-release-$output"
           done

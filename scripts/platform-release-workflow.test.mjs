@@ -31,6 +31,11 @@ describe('Platform release workflow 계약', () => {
     assert.doesNotMatch(source, /runs-on: seorilabs-/u);
     assert.doesNotMatch(source, /runs_on: seorilabs-/u);
     assert.match(source, /build-platform-release\.mjs/u);
+    assert.match(source, /resolve-platform-release-base\.mjs/u);
+    assert.match(source, /typescript-registry-artifact\.mjs fetch/u);
+    assert.match(source, /packages: read/u);
+    assert.match(source, /--typescript-registry-integrity/u);
+    assert.doesNotMatch(source, /npm pack \.\/packages\/sdk-ts/u);
     assert.match(source, /publish-platform-release\.mjs/u);
     assert.match(source, /needs: sdk/u);
     assert.doesNotMatch(source, /\b(?:gcloud|kubectl|firebase)\b/u);
@@ -58,6 +63,9 @@ describe('Platform release workflow 계약', () => {
     const source = await workflow('checks-platform-release.yml');
     assert.match(source, /for output in first second/u);
     assert.match(source, /diff -rq/u);
+    assert.match(source, /resolve-platform-release-base\.mjs/u);
+    assert.match(source, /--base-ref "\$\{\{ steps\.release-base\.outputs\.sha \}\}"/u);
+    assert.match(source, /--typescript-registry-integrity "\$typescript_integrity"/u);
     assert.match(source, /fetch-depth: 0/u);
     assert.match(source, new RegExp(`uses: actions/checkout@${ACTION_SHA}`, 'u'));
     assert.match(source, new RegExp(`uses: actions/setup-node@${ACTION_SHA}`, 'u'));
@@ -68,8 +76,28 @@ describe('Platform release workflow 계약', () => {
     assert.match(source, /sdk-ts-v\*\.\*\.\*/u);
     assert.match(source, /build-platform-release\.mjs/u);
     assert.match(source, /install-oasdiff\.mjs/u);
+    assert.match(source, /resolve-platform-release-base\.mjs/u);
+    assert.match(source, /typescript-registry-artifact\.mjs integrity/u);
+    assert.match(source, /--typescript-registry-integrity/u);
     assert.match(source, /fetch-depth: 0/u);
     assert.match(source, /npm publish "\$\{\{ steps\.pack\.outputs\.tarball \}\}"/u);
+  });
+
+  it('release builder는 mutable tag 추론 없이 승인 또는 bootstrap exact base만 요구한다', async () => {
+    const [builderSource, bootstrapSource] = await Promise.all([
+      readFile(resolve(root, 'scripts/build-platform-release.mjs'), 'utf8'),
+      readFile(resolve(root, '.github/platform-release-bootstrap-base.json'), 'utf8'),
+    ]);
+    const bootstrap = JSON.parse(bootstrapSource);
+    assert.doesNotMatch(builderSource, /git['"], \['describe'/u);
+    assert.match(builderSource, /'--base-ref'/u);
+    assert.match(builderSource, /검증된 Fleet 승인 또는 bootstrap base revision/u);
+    assert.deepEqual(bootstrap, {
+      schemaVersion: 1,
+      purpose: 'seorilabs-platform-release-bootstrap-base-v1',
+      releaseTag: 'v0.6.6',
+      sourceSha: '97f046ce2d9df5d72bc7a49fc81bb7c366ebaa17',
+    });
   });
 
   it('tracked GDScript SOURCE는 현재 VERSION의 immutable Release asset을 가리킨다', async () => {

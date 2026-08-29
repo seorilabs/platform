@@ -29,6 +29,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
+      packages: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -40,6 +41,8 @@ jobs:
         with:
           node-version: "24.16.0"
           check-latest: false
+          registry-url: https://npm.pkg.github.com
+          scope: "@seorilabs"
 
       - name: Verify tag is on main
         shell: bash
@@ -66,13 +69,32 @@ jobs:
       - name: Verify GDScript SDK
         run: bash scripts/sdk_gdscript_checksum.sh --check
 
-      - name: Pack TypeScript SDK
+      - name: Resolve approved release base
+        id: release-base
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="$(node scripts/resolve-platform-release-base.mjs)"
+          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Download published TypeScript SDK bytes
         id: pack
         shell: bash
         run: |
           set -euo pipefail
-          tarball="$RUNNER_TEMP/$(npm pack ./packages/sdk-ts --pack-destination "$RUNNER_TEMP" --silent)"
-          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          version="$(node -p "require('./packages/sdk-ts/package.json').version")"
+          tarball="$RUNNER_TEMP/seorilabs-platform-sdk-$version.tgz"
+          integrity="$(node scripts/typescript-registry-artifact.mjs fetch \
+            --version "$version" \
+            --output "$tarball")"
+          {
+            echo "tarball=$tarball"
+            echo "integrity=$integrity"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
 
       - name: Install pinned oasdiff
         run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"
@@ -84,7 +106,9 @@ jobs:
           node scripts/build-platform-release.mjs \
             --release-tag "$GITHUB_REF_NAME" \
             --source-sha "$GITHUB_SHA" \
+            --base-ref "${{ steps.release-base.outputs.sha }}" \
             --typescript-artifact "${{ steps.pack.outputs.tarball }}" \
+            --typescript-registry-integrity "${{ steps.pack.outputs.integrity }}" \
             --oasdiff "$RUNNER_TEMP/oasdiff" \
             --output-dir "$RUNNER_TEMP/platform-release"
 
