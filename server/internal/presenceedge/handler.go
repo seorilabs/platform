@@ -103,7 +103,8 @@ func (h *Handler) heartbeat(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	now := h.now().UTC()
-	allowed, saturated := h.limiter.Allow(verified.AppID+":"+verified.SessionHash, now)
+	limiterKey := verified.AppID + ":" + verified.SessionHash
+	allowed, saturated := h.limiter.Allow(limiterKey, now)
 	if saturated {
 		w.Header().Set("Retry-After", "300")
 		return platformerr.New(platformerr.CodeRateLimited, "presence 수신이 혼잡해요")
@@ -120,6 +121,10 @@ func (h *Handler) heartbeat(w http.ResponseWriter, r *http.Request) error {
 			LastSeenAt:  now,
 			ExpiresAt:   now.Add(presence.ActiveTTL),
 		}); err != nil {
+			// 실패한 쓰기가 rate limit 슬롯을 먹으면 안 된다. 기록을 남기면
+			// 클라이언트가 곧바로 재시도해도 minimumWritePeriod 동안 조용히
+			// 합쳐져 200으로 돌아가고, 그 구간의 presence가 통째로 사라진다.
+			h.limiter.Forget(limiterKey)
 			w.Header().Set("Retry-After", "300")
 			return platformerr.Wrap(err, platformerr.CodePlatformUnavailable, "presence를 저장하지 못했어요")
 		}
@@ -203,4 +208,11 @@ func (l *sessionLimiter) Allow(key string, now time.Time) (allowed, saturated bo
 	}
 	l.last[key] = now
 	return true, false
+}
+
+// Forget은 쓰기에 실패한 key의 기록을 지워 다음 요청이 다시 쓰기를 시도하게 한다.
+func (l *sessionLimiter) Forget(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.last, key)
 }
