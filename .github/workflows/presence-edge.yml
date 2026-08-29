@@ -92,7 +92,14 @@ jobs:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          # kubeconfig에 클러스터 자격증명이 들어가므로 이 step이 만드는
+          # 파일은 전부 0600으로 떨어뜨린다.
+          umask 077
+          version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          base="https://dl.k8s.io/release/${version}/bin/linux/amd64"
+          curl -fsSL -o /tmp/kubectl "${base}/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 "${base}/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check
           chmod +x /tmp/kubectl
           printf '%s' "$KUBECONFIG_B64" | base64 -d > /tmp/presence-kubeconfig
           export KUBECONFIG=/tmp/presence-kubeconfig
