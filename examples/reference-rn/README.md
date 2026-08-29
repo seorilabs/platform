@@ -3,6 +3,25 @@
 RN 앱이 플랫폼을 쓰는 최소 형태. 전체 가이드는
 [Wiki: TypeScript SDK](https://github.com/seorilabs/platform/wiki/TypeScript-SDK)를 본다.
 
+## 전체 흐름
+
+```mermaid
+sequenceDiagram
+  participant App as 앱
+  participant SDK as Platform SDK
+  participant API as platform-api
+  participant ING as platform-ingest
+  participant IAP as platform-iap
+  App->>SDK: signIn — Firebase ID 토큰
+  SDK->>API: POST /v1/auth/session
+  API-->>SDK: 세션 · config
+  App->>SDK: events.track
+  SDK-->>ING: POST /v1/events — 배치 · 비동기
+  App->>SDK: iap.verifyPurchase
+  SDK->>IAP: POST /v1/iap/verify — noRetry
+  IAP-->>SDK: entitlements · completion
+```
+
 ## 1. 설치
 
 GitHub Release의 tarball을 직접 설치한다. 인증이 필요 없다.

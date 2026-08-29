@@ -20,6 +20,43 @@ GDScript(Godot)다.
 | **presence** | opt-in 최근 활성 세션 heartbeat. fail-open |
 | **admin** | 백오피스 전용 운영 API. Google OIDC로만 접근 |
 
+## 전체 그림
+
+```mermaid
+flowchart LR
+  subgraph Client["앱"]
+    SDK["Platform SDK<br/>TypeScript 또는 GDScript"]
+  end
+  subgraph Roles["Cloud Run — asia-northeast3"]
+    API["platform-api<br/>세션 · 설정 · 계정 연결"]
+    IAP["platform-iap<br/>결제 검증 · 마켓 자격증명 격리"]
+    INGEST["platform-ingest<br/>이벤트 · presence 토큰"]
+    ADS["platform-ads<br/>광고 정책 · reward claim"]
+    ADMIN["platform-admin<br/>운영 API — Google OIDC 전용"]
+    WORKER["platform-worker<br/>마켓 완료 재시도"]
+  end
+  FS[("Firestore<br/>사용자 매핑 · IAP 원장 · 레지스트리")]
+  MARKET["Google Play · App Store · AppsInToss"]
+  ADMOB["AdMob SSV"]
+  EDGE["presence edge — RPI"]
+  BO["Backoffice"]
+  SDK --> API
+  SDK --> IAP
+  SDK --> INGEST
+  SDK --> ADS
+  SDK -.->|opt-in heartbeat| EDGE
+  API --> FS
+  IAP --> FS
+  INGEST --> FS
+  ADS --> FS
+  WORKER --> FS
+  ADMIN --> FS
+  IAP -->|구매 확인| MARKET
+  MARKET -->|환불 웹훅| IAP
+  ADMOB -->|SSV 콜백| ADS
+  BO -->|OIDC| ADMIN
+```
+
 ## 현재 상태
 
 | 구성 요소 | 버전 / 상태 |

@@ -3,6 +3,25 @@
 Godot 4.3 앱이 플랫폼을 쓰는 최소 형태. 복사해서 시작점으로 쓴다. 전체 가이드는
 [Wiki: GDScript SDK](https://github.com/seorilabs/platform/wiki/GDScript-SDK)를 본다.
 
+## 전체 흐름
+
+```mermaid
+sequenceDiagram
+  participant App as 앱
+  participant SDK as Platform SDK
+  participant API as platform-api
+  participant ING as platform-ingest
+  participant IAP as platform-iap
+  App->>SDK: sign_in — Firebase ID 토큰
+  SDK->>API: POST /v1/auth/session
+  API-->>SDK: 세션 · config
+  App->>SDK: track / flush_events
+  SDK-->>ING: POST /v1/events — 배치 · 비동기
+  App->>SDK: verify_purchase
+  SDK->>IAP: POST /v1/iap/verify — 일반 재시도 없음
+  IAP-->>SDK: entitlements · completion
+```
+
 ## 1. SDK 가져오기
 
 GDScript에는 패키지 매니저가 없다. GitHub Release의 tarball을 받아 sha256을
@@ -51,11 +70,9 @@ const PLATFORM_CONFIG_SCRIPT := preload("res://game/infra/platform/seori_platfor
 
 var _platform: Node = null
 
-
 func _ready() -> void:
     _platform = _create_platform_client()
     _analytics.set_platform(_platform)
-
 
 func _create_platform_client() -> Node:
     var config: Dictionary = PLATFORM_CONFIG_SCRIPT.load_config()
