@@ -300,6 +300,16 @@ describe('Platform Fleet release 승인', () => {
   });
 
   it('새 release의 영향 consumer 선택 계약을 검증하고 v0.6.7 omission만 읽기 허용한다', () => {
+    const malformed = manifest();
+    malformed.contract = null;
+    assert.throws(
+      () => platformReleaseApprovalPayload(
+        `${JSON.stringify(malformed)}\n`,
+        canaryApprovalEvidence(),
+      ),
+      /manifest\.contract 형식이 올바르지 않습니다/u,
+    );
+
     const invalid = manifest();
     invalid.contract.affectedConsumers.cohort = 'repository-file-list';
     assert.throws(

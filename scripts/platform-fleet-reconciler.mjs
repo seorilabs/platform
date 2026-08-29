@@ -201,6 +201,7 @@ function validateManifest(manifest) {
   ];
   // 이미 발행된 v0.6.7 asset만 이 필드가 없다. 새 generator는 반드시 명시하며,
   // 다른 과거/미래 version까지 호환 범위를 넓히지 않는다.
+  assertRecord(contract, 'manifest.contract');
   if (Object.hasOwn(contract, 'affectedConsumers')) {
     contractKeys.push('affectedConsumers');
   }
