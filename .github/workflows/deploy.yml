@@ -124,9 +124,9 @@ jobs:
         if: steps.exists.outputs.found == 'false'
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
-      # 캐시는 GitHub Actions 캐시에 둔다. go mod download 레이어가 재사용되면
-      # 소스만 바뀐 빌드에서 그 시간이 통째로 빠진다.
-      #
+      # GitHub Actions cache의 mode=max는 실행마다 BuildKit blob을 누적해 조직
+      # 저장공간을 소진한다. 최종 이미지의 inline cache만 하나의 mutable
+      # buildcache tag로 보관해 같은 레지스트리 안에서 재사용한다.
       # Cloud Run은 amd64 전용이고 러너도 amd64라 크로스컴파일이 없다.
       - name: Build and push image
         if: steps.exists.outputs.found == 'false'
@@ -135,10 +135,12 @@ jobs:
           context: server
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.meta.outputs.image }}
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PATH }}:buildcache
           provenance: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PATH }}:buildcache
+          cache-to: type=inline
 
       # push가 성공했다고 태그가 우리가 기대한 자리에 생겼다는 보장은 없다.
       # 배포가 없는 이미지를 가리키기 전에 여기서 끊는다.

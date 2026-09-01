@@ -146,4 +146,19 @@ describe('Platform release workflow 계약', () => {
       assert.doesNotMatch(source, /secrets:\s*inherit/u, name);
     }
   });
+
+  it('production image build는 Actions cache 대신 registry inline cache를 쓴다', async () => {
+    const source = await workflow('deploy.yml');
+    assert.doesNotMatch(source, /cache-(?:from|to):\s*type=gha/u);
+    assert.doesNotMatch(source, /cache-to:[^\n]*mode=max/u);
+    assert.match(
+      source,
+      /cache-from: type=registry,ref=\$\{\{ env\.REGISTRY \}\}\/\$\{\{ env\.IMAGE_PATH \}\}:buildcache/u,
+    );
+    assert.match(source, /cache-to: type=inline/u);
+    assert.match(
+      source,
+      /\$\{\{ env\.REGISTRY \}\}\/\$\{\{ env\.IMAGE_PATH \}\}:buildcache/u,
+    );
+  });
 });
