@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: read
-  packages: write
+  id-token: write
 
 concurrency:
   group: publish-sdk-ts-${{ github.ref }}
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   publish:
-    name: SDK 검증 및 GitHub Packages 발행
+    name: SDK 검증 및 npm 공개 발행
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,12 +24,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node and GitHub Packages
+      - name: Setup Node and npm registry
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "24.16.0"
           check-latest: false
-          registry-url: https://npm.pkg.github.com
+          registry-url: https://registry.npmjs.org
           scope: "@seorilabs"
 
       - name: Enable pnpm
@@ -101,7 +101,5 @@ jobs:
           cd "$smoke_dir"
           node --input-type=module -e "import('@seorilabs/platform-sdk').then(({SDK_VERSION}) => { if (!SDK_VERSION) process.exit(1) })"
 
-      - name: Publish private package
+      - name: Publish public package via trusted publishing
         run: npm publish "${{ steps.pack.outputs.tarball }}"
-        env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
