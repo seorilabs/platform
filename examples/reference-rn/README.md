@@ -30,9 +30,9 @@ GitHub Release의 tarball을 직접 설치한다. 인증이 필요 없다.
 pnpm add https://github.com/seorilabs/platform/releases/download/v0.6.7/seorilabs-platform-sdk-0.4.0.tgz
 ```
 
-GitHub Packages(`@seorilabs/platform-sdk@0.4.0`)로 받을 수도 있다. 이 경우
-`.npmrc`에 `@seorilabs:registry=https://npm.pkg.github.com`만 두고, `read:packages`
-토큰은 파일이나 번들에 넣지 않는다.
+npm 공개 레지스트리(`@seorilabs/platform-sdk`)로 받을 수도 있다. 공개 패키지라
+`.npmrc` 레지스트리 설정이나 토큰 없이 `pnpm add @seorilabs/platform-sdk`로 설치된다.
+과거 GitHub Packages 게시본(0.4.0 이하)을 쓰는 lockfile은 그대로 동작한다.
 
 Node 20 이상, `fetch` 전역이 필요하다. RN은 내장한다.
 

@@ -29,7 +29,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
-      packages: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -41,7 +40,7 @@ jobs:
         with:
           node-version: "24.16.0"
           check-latest: false
-          registry-url: https://npm.pkg.github.com
+          registry-url: https://registry.npmjs.org
           scope: "@seorilabs"
 
       - name: Verify tag is on main
@@ -93,8 +92,6 @@ jobs:
             echo "tarball=$tarball"
             echo "integrity=$integrity"
           } >> "$GITHUB_OUTPUT"
-        env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
 
       - name: Install pinned oasdiff
         run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"

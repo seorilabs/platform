@@ -47,7 +47,7 @@ function manifest(classification = 'implementation-only', version = '0.7.0') {
       typescript: {
         package: '@seorilabs/platform-sdk',
         version: '0.5.0',
-        registry: 'https://npm.pkg.github.com',
+        registry: 'https://registry.npmjs.org',
         artifact: {
           name: 'seorilabs-platform-sdk-0.5.0.tgz',
           sha256: TS_ARTIFACT_SHA,
@@ -296,6 +296,23 @@ describe('Platform Fleet release 승인', () => {
         canaryApprovalEvidence(),
       ),
       /고정 source URL/u,
+    );
+
+    const unknownRegistry = manifest();
+    unknownRegistry.sdk.typescript.registry = 'https://registry.npmjs.example';
+    assert.throws(
+      () => platformReleaseApprovalPayload(
+        `${JSON.stringify(unknownRegistry)}\n`,
+        canaryApprovalEvidence(),
+      ),
+      /registry가 허용된 값과 다릅니다/u,
+    );
+
+    const legacyRegistry = manifest();
+    legacyRegistry.sdk.typescript.registry = 'https://npm.pkg.github.com';
+    platformReleaseApprovalPayload(
+      `${JSON.stringify(legacyRegistry)}\n`,
+      canaryApprovalEvidence(),
     );
   });
 
