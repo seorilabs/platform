@@ -9,12 +9,11 @@ import { fileURLToPath } from 'node:url';
 import { assertTypescriptPackageArtifact, sha256 } from './platform-release-lib.mjs';
 
 const PACKAGE_NAME = '@seorilabs/platform-sdk';
-const REGISTRY = 'https://npm.pkg.github.com';
+const REGISTRY = 'https://registry.npmjs.org';
 const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SHA1_PATTERN = /^[0-9a-f]{40}$/u;
 const SHA512_INTEGRITY_PATTERN = /^sha512-[A-Za-z0-9+/]+={0,2}$/u;
-const REGISTRY_REDIRECT_HOSTS = new Set(['pkg-npm.githubusercontent.com']);
 
 function requiredString(value, label, pattern) {
   if (typeof value !== 'string' || value.length === 0 || (pattern && !pattern.test(value))) {
@@ -60,10 +59,10 @@ function validateRegistryMetadata(metadata, packageName, version) {
   } catch (error) {
     throw new Error('TypeScript registry tarball URL을 해석하지 못했습니다.', { cause: error });
   }
-  const expectedPath = `/download/${packageName}/${version}/${shasum}`;
+  const expectedPath = `/${packageName}/-/platform-sdk-${version}.tgz`;
   if (
     url.protocol !== 'https:'
-    || url.hostname !== 'npm.pkg.github.com'
+    || url.hostname !== 'registry.npmjs.org'
     || url.username !== ''
     || url.password !== ''
     || url.pathname !== expectedPath
@@ -73,24 +72,6 @@ function validateRegistryMetadata(metadata, packageName, version) {
     throw new Error('TypeScript registry tarball URL이 exact package 경계와 다릅니다.');
   }
   return Object.freeze({ integrity, shasum, tarball: url.href });
-}
-
-function validateRegistryRedirect(location) {
-  let redirect;
-  try {
-    redirect = new URL(location);
-  } catch (error) {
-    throw new Error('TypeScript registry redirect URL을 해석하지 못했습니다.', { cause: error });
-  }
-  if (
-    redirect.protocol !== 'https:'
-    || redirect.username !== ''
-    || redirect.password !== ''
-    || !REGISTRY_REDIRECT_HOSTS.has(redirect.hostname)
-  ) {
-    throw new Error('TypeScript registry redirect origin을 신뢰할 수 없습니다.');
-  }
-  return redirect.href;
 }
 
 async function readResponseBounded(response, maximum) {
@@ -204,17 +185,7 @@ export async function fetchTypescriptRegistryArtifact({
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  let response = await fetchImpl(dist.tarball, { headers, redirect: 'manual' });
-  if ([301, 302, 303, 307, 308].includes(response.status)) {
-    const redirect = validateRegistryRedirect(response.headers.get('location'));
-    response = await fetchImpl(redirect, {
-      headers: {
-        Accept: 'application/octet-stream',
-        'User-Agent': 'seorilabs-platform-release',
-      },
-      redirect: 'error',
-    });
-  }
+  const response = await fetchImpl(dist.tarball, { headers, redirect: 'error' });
   if (!response.ok) {
     throw new Error(`TypeScript registry artifact download 실패: status=${response.status}`);
   }
@@ -265,10 +236,7 @@ async function main() {
       new Set(['--output', '--version']),
       ['--output', '--version'],
     );
-    const token = process.env.NODE_AUTH_TOKEN;
-    if (!token) {
-      throw new Error('NODE_AUTH_TOKEN이 필요합니다.');
-    }
+    const token = process.env.NODE_AUTH_TOKEN ?? '';
     const version = options['--version'];
     const result = await fetchTypescriptRegistryArtifact({
       metadata: readRegistryMetadata(PACKAGE_NAME, version),

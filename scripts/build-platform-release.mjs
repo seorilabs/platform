@@ -295,7 +295,7 @@ export async function buildPlatformRelease(options) {
       typescript: {
         package: typescriptPackage.name,
         version: typescriptPackage.version,
-        registry: 'https://npm.pkg.github.com',
+        registry: 'https://registry.npmjs.org',
         artifact: {
           name: typescriptArtifactName,
           sha256: sha256(typescriptArtifact),

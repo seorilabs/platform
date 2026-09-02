@@ -156,9 +156,10 @@ function validateManifest(manifest) {
     ['artifact', 'package', 'registry', 'version'],
     'manifest.sdk.typescript',
   );
+  // npm.pkg.github.com은 v0.6.x 이하 릴리스 매니페스트가 실제로 가리키는 과거 레지스트리다.
   if (
     typescript.package !== '@seorilabs/platform-sdk'
-    || typescript.registry !== 'https://npm.pkg.github.com'
+    || !['https://registry.npmjs.org', 'https://npm.pkg.github.com'].includes(typescript.registry)
   ) {
     throw new Error('TypeScript SDK package 또는 registry가 허용된 값과 다릅니다.');
   }
