@@ -33,7 +33,9 @@ describe('Platform release workflow 계약', () => {
     assert.match(source, /build-platform-release\.mjs/u);
     assert.match(source, /resolve-platform-release-base\.mjs/u);
     assert.match(source, /typescript-registry-artifact\.mjs fetch/u);
-    assert.match(source, /packages: read/u);
+    // 공개 npm registry에서 받으므로 packages 권한과 registry 토큰이 없어야 한다.
+    assert.doesNotMatch(source, /packages: read/u);
+    assert.doesNotMatch(source, /NODE_AUTH_TOKEN/u);
     assert.match(source, /--typescript-registry-integrity/u);
     assert.doesNotMatch(source, /npm pack \.\/packages\/sdk-ts/u);
     assert.match(source, /publish-platform-release\.mjs/u);

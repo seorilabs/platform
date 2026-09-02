@@ -30,7 +30,7 @@ function metadata(bytes, overrides = {}) {
   return {
     integrity: typescriptArtifactIntegrity(bytes),
     shasum,
-    tarball: `https://npm.pkg.github.com/download/${PACKAGE_NAME}/${VERSION}/${shasum}`,
+    tarball: `https://registry.npmjs.org/${PACKAGE_NAME}/-/platform-sdk-${VERSION}.tgz`,
     ...overrides,
   };
 }
@@ -46,14 +46,6 @@ describe('TypeScript registry artifact byte 계약', () => {
     const result = await fetchTypescriptRegistryArtifact({
       fetchImpl: async (url, options) => {
         requests.push({ url, options });
-        if (requests.length === 1) {
-          return new Response(null, {
-            status: 302,
-            headers: {
-              Location: 'https://pkg-npm.githubusercontent.com/fixture/artifact.tgz?signature=x',
-            },
-          });
-        }
         return new Response(bytes, {
           status: 200,
           headers: { 'Content-Length': String(bytes.length) },
@@ -61,7 +53,6 @@ describe('TypeScript registry artifact byte 계약', () => {
       },
       metadata: metadata(bytes),
       outputPath,
-      token: 'fixture-token',
       version: VERSION,
     });
 
@@ -69,10 +60,13 @@ describe('TypeScript registry artifact byte 계약', () => {
     assert.equal(result.integrity, typescriptArtifactIntegrity(bytes));
     assert.equal(result.sha256, sha256(bytes));
     assert.equal(result.size, bytes.length);
-    assert.equal(requests[0].options.redirect, 'manual');
-    assert.equal(requests[0].options.headers.Authorization, 'Bearer fixture-token');
-    assert.equal(requests[1].options.redirect, 'error');
-    assert.equal(Object.hasOwn(requests[1].options.headers, 'Authorization'), false);
+    assert.equal(requests.length, 1);
+    assert.equal(
+      requests[0].url,
+      `https://registry.npmjs.org/${PACKAGE_NAME}/-/platform-sdk-${VERSION}.tgz`,
+    );
+    assert.equal(requests[0].options.redirect, 'error');
+    assert.equal(Object.hasOwn(requests[0].options.headers, 'Authorization'), false);
   });
 
   it('registry integrity가 다른 byte를 저장 전에 거부한다', async (test) => {
@@ -94,7 +88,7 @@ describe('TypeScript registry artifact byte 계약', () => {
     await assert.rejects(readFile(outputPath), /ENOENT/u);
   });
 
-  it('look-alike registry origin과 redirect를 거부한다', async (test) => {
+  it('look-alike registry origin과 redirect 응답을 거부한다', async (test) => {
     const directory = await mkdtemp(join(tmpdir(), 'typescript-registry-origin-'));
     test.after(() => rm(directory, { recursive: true, force: true }));
     const bytes = artifact();
@@ -104,7 +98,7 @@ describe('TypeScript registry artifact byte 계약', () => {
       fetchTypescriptRegistryArtifact({
         fetchImpl: async () => new Response(bytes, { status: 200 }),
         metadata: metadata(bytes, {
-          tarball: `https://npm.pkg.github.example/download/${PACKAGE_NAME}/${VERSION}/x`,
+          tarball: `https://registry.npmjs.example/${PACKAGE_NAME}/-/platform-sdk-${VERSION}.tgz`,
         }),
         outputPath,
         version: VERSION,
@@ -121,7 +115,7 @@ describe('TypeScript registry artifact byte 계약', () => {
         outputPath,
         version: VERSION,
       }),
-      /redirect origin/u,
+      /download 실패: status=302/u,
     );
   });
 
