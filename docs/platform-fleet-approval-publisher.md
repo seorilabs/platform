@@ -5,13 +5,19 @@
 
 ## 실행 순서
 
-1. canary readback을 검증한 signer가 `sign-platform-fleet-release.mjs`로 승인 파일을 만든다.
-2. base publisher가 네 asset을 GitHub draft release에 올리고 공개하지 않은 채 종료한다.
-3. trusted mutation adapter가 다음 세 공개 파일을 일반 파일로 전달한다.
+1. trusted canary observer가 RN·Godot exact readback payload를 검증하고
+   `sign-platform-fleet-canary-evidence.mjs`로 서명한다.
+2. 승인 signer가 canary evidence와 공개 키 registry를 상속 FD로 받아
+   `sign-platform-fleet-release.mjs`로 승인 파일을 만든다.
+3. 조직 정책 observer가 GitHub의 repository identity, immutable releases 설정,
+   조직 소유 tag ruleset 상세를 다시 읽고 `sign-platform-fleet-policy-attestation.mjs`로
+   4분짜리 정책 attestation을 만든다.
+4. base publisher가 네 asset을 GitHub draft release에 올리고 공개하지 않은 채 종료한다.
+5. trusted mutation adapter가 다음 세 공개 파일을 일반 파일로 전달한다.
    - 발행된 `platform-release.json`
    - 서명된 `fleet-approved.json`
    - 조직 정책 observer가 같은 pinned key로 서명한 `platform-policy-attestation.json`
-4. adapter는 broker가 1회용으로 소진해야 하는 grant와 GitHub App token을 서로 다른
+6. adapter는 broker가 1회용으로 소진해야 하는 grant와 GitHub App token을 서로 다른
    상속 FD에만 주입한다.
    공개키 registry는 저장소에 고정된 파일과 publisher의 SHA-256 pin을 함께 사용한다.
 
@@ -28,6 +34,29 @@ node scripts/publish-platform-fleet-approval.mjs \
 argv, 일반 파일, 환경변수, stdout에 전달하지 않는다. grant는 repository, release tag,
 source SHA, manifest·approval·trusted registry digest, approval key ID, 1회 사용과 5분 이하
 TTL을 결합한다.
+
+canary와 정책 observer는 private key와 GitHub token을 argv·환경변수·일반 파일로 받지
+않는다. broker가 서로 다른 상속 FD로 주입하고, 출력 경로에는 기존 파일이 없어야 한다.
+
+```bash
+node scripts/sign-platform-fleet-canary-evidence.mjs \
+  --key-id "$CANARY_KEY_ID" \
+  --manifest /trusted-input/platform-release.json \
+  --payload /trusted-input/canary-readback-payload.json \
+  --private-key-fd 3 \
+  --output /trusted-output/canary-evidence.json
+
+node scripts/sign-platform-fleet-policy-attestation.mjs \
+  --manifest /trusted-input/platform-release.json \
+  --approval /trusted-input/fleet-approved.json \
+  --private-key-fd 3 \
+  --token-fd 4 \
+  --output /trusted-output/platform-policy-attestation.json
+```
+
+위 예시의 `CANARY_KEY_ID`는 공개 식별자다. private key와 token 값은 shell 변수에 넣지
+않으며, adapter가 FD 3·4를 실행 시점에 연결한다. 정책 observer token은 저장소와
+immutable releases 설정, 적용된 ruleset 목록, 조직 ruleset 상세를 읽을 수 있어야 한다.
 
 ## 불변 조건
 

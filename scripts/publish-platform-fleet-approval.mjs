@@ -498,6 +498,14 @@ function exactIsoTimestamp(value, label) {
   return timestamp;
 }
 
+function canonicalIsoTimestamp(value, label) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`${label} 값이 RFC3339 timestamp가 아닙니다.`);
+  }
+  return new Date(timestamp).toISOString();
+}
+
 function verifyPolicyAttestation({ approval, approvalBytes, attestation, trustedPublicKeys }) {
   exactKeys(
     attestation,
@@ -673,7 +681,8 @@ async function verifyImmutablePolicy(fetchImpl, token, policyAttestation) {
     || !Number.isSafeInteger(candidates[0].id)
     || candidates[0].id < 1
     || candidates[0].enforcement !== 'active'
-    || candidates[0].updated_at !== policyAttestation.rulesetUpdatedAt
+    || canonicalIsoTimestamp(candidates[0].updated_at, 'GitHub ruleset updated_at')
+      !== policyAttestation.rulesetUpdatedAt
   ) {
     throw new Error('immutable Platform tag ruleset을 정확히 하나 찾지 못했습니다.');
   }
@@ -699,6 +708,118 @@ async function verifyImmutablePolicy(fetchImpl, token, policyAttestation) {
       },
       repositoryIdentity,
       rulesetBinding,
+    }),
+  });
+}
+
+/**
+ * 정책 서명기는 요약 목록이 생략하는 bypass/condition/rule을 조직 소유 원본에서
+ * 다시 읽는다. 반환값은 비밀을 포함하지 않으며 그대로 짧은 수명의 attestation에
+ * 결합할 수 있는 canonical UTC snapshot이다.
+ */
+export async function readPlatformFleetImmutablePolicy({
+  fetchImpl = fetch,
+  token,
+}) {
+  requiredString(token, 'GitHub policy read token');
+  const [repository, setting, listed] = await Promise.all([
+    githubJson(fetchImpl, `${GITHUB_API_BASE}/repos/${RELEASE_REPOSITORY}`, token),
+    githubJson(
+      fetchImpl,
+      `${GITHUB_API_BASE}/repos/${RELEASE_REPOSITORY}/immutable-releases`,
+      token,
+    ),
+    githubJson(
+      fetchImpl,
+      `${GITHUB_API_BASE}/repos/${RELEASE_REPOSITORY}/rulesets?includes_parents=true&per_page=100`,
+      token,
+    ),
+  ]);
+  if (
+    !isRecord(repository.value)
+    || !Number.isSafeInteger(repository.value.id)
+    || repository.value.id < 1
+    || repository.value.full_name !== RELEASE_REPOSITORY
+    || repository.value.owner?.login !== RELEASE_ORGANIZATION
+    || repository.value.owner?.type !== 'Organization'
+  ) {
+    throw new Error('GitHub repository identity를 정책 서명에 사용할 수 없습니다.');
+  }
+  if (
+    !isRecord(setting.value)
+    || setting.value.enabled !== true
+    || setting.value.enforced_by_owner !== true
+  ) {
+    throw new Error('조직 소유 immutable releases 정책이 강제되지 않았습니다.');
+  }
+  if (listed.response.headers.get('link')?.includes('rel="next"')) {
+    throw new Error('tag ruleset 목록이 100개를 초과해 exact 정책을 확정하지 못했습니다.');
+  }
+  if (!Array.isArray(listed.value)) {
+    throw new Error('GitHub ruleset 목록 형식이 올바르지 않습니다.');
+  }
+  const candidates = listed.value.filter((entry) => (
+    Number.isSafeInteger(entry?.id)
+    && entry.id > 0
+    && entry.name === IMMUTABLE_TAG_RULESET_NAME
+    && entry.source_type === 'Organization'
+    && entry.source === RELEASE_ORGANIZATION
+    && entry.target === 'tag'
+    && entry.enforcement === 'active'
+  ));
+  if (candidates.length !== 1) {
+    throw new Error('조직 소유 immutable Platform tag ruleset을 정확히 하나 찾지 못했습니다.');
+  }
+  const summary = candidates[0];
+  const detail = (await githubJson(
+    fetchImpl,
+    `${GITHUB_API_BASE}/orgs/${RELEASE_ORGANIZATION}/rulesets/${summary.id}`,
+    token,
+  )).value;
+  const repositoryIds = detail?.conditions?.repository_id?.repository_ids;
+  const refName = detail?.conditions?.ref_name;
+  const ruleTypes = Array.isArray(detail?.rules)
+    ? detail.rules.map((rule) => rule?.type).sort()
+    : null;
+  if (
+    !isRecord(detail)
+    || detail.id !== summary.id
+    || detail.name !== IMMUTABLE_TAG_RULESET_NAME
+    || detail.source_type !== 'Organization'
+    || detail.source !== RELEASE_ORGANIZATION
+    || detail.target !== 'tag'
+    || detail.enforcement !== 'active'
+    || !Array.isArray(detail.bypass_actors)
+    || detail.bypass_actors.length !== 0
+    || !Array.isArray(repositoryIds)
+    || repositoryIds.length !== 1
+    || repositoryIds[0] !== repository.value.id
+    || !isRecord(refName)
+    || JSON.stringify(refName.include) !== JSON.stringify(['refs/tags/v*'])
+    || JSON.stringify(refName.exclude) !== JSON.stringify([])
+    || JSON.stringify(ruleTypes) !== JSON.stringify(['deletion', 'update'])
+    || canonicalIsoTimestamp(detail.updated_at, 'GitHub ruleset updated_at')
+      !== canonicalIsoTimestamp(summary.updated_at, 'GitHub ruleset summary updated_at')
+  ) {
+    throw new Error('조직 소유 immutable Platform tag ruleset 상세가 계약과 다릅니다.');
+  }
+  return Object.freeze({
+    repositoryId: String(repository.value.id),
+    immutableReleases: Object.freeze({ enabled: true, enforcedByOwner: true }),
+    ruleset: Object.freeze({
+      id: String(detail.id),
+      name: detail.name,
+      sourceType: detail.source_type,
+      source: detail.source,
+      target: detail.target,
+      enforcement: detail.enforcement,
+      bypassActors: Object.freeze([]),
+      refName: Object.freeze({
+        include: Object.freeze(['refs/tags/v*']),
+        exclude: Object.freeze([]),
+      }),
+      ruleTypes: Object.freeze(ruleTypes),
+      updatedAt: canonicalIsoTimestamp(detail.updated_at, 'GitHub ruleset updated_at'),
     }),
   });
 }

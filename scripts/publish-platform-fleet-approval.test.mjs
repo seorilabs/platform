@@ -14,6 +14,7 @@ import { sha256 } from './platform-release-lib.mjs';
 import {
   platformFleetPolicyAttestationBytes,
   publishPlatformFleetApproval,
+  readPlatformFleetImmutablePolicy,
   readPlatformFleetLatest,
   validatePlatformFleetReleaseAssetRedirect,
   verifyPlatformFleetApprovalPublishingInputs,
@@ -304,14 +305,32 @@ function githubFixture(local, overrides = {}) {
       return jsonResponse(overrides.missingRuleset ? [] : [{
         id: 88,
         name: 'Immutable Platform release tags',
+        target: 'tag',
         enforcement: 'active',
         source_type: overrides.repositoryRuleset ? 'Repository' : 'Organization',
         source: overrides.repositoryRuleset ? 'seorilabs/platform' : 'seorilabs',
         node_id: overrides.rulesetVolatile ?? 'RRS_fixture_one',
         updated_at: overrides.policyChange && policyReads > 1
           ? '2026-08-29T00:01:00.000Z'
-          : RULESET_UPDATED_AT,
+          : (overrides.rulesetUpdatedAt ?? RULESET_UPDATED_AT),
       }]);
+    }
+    if (url.endsWith('/orgs/seorilabs/rulesets/88')) {
+      return jsonResponse({
+        id: 88,
+        name: 'Immutable Platform release tags',
+        target: 'tag',
+        enforcement: 'active',
+        source_type: 'Organization',
+        source: 'seorilabs',
+        updated_at: overrides.rulesetUpdatedAt ?? RULESET_UPDATED_AT,
+        bypass_actors: overrides.rulesetBypassActors ?? [],
+        conditions: {
+          ref_name: { include: ['refs/tags/v*'], exclude: [] },
+          repository_id: { repository_ids: [Number(REPOSITORY_ID)] },
+        },
+        rules: [{ type: 'update' }, { type: 'deletion' }],
+      });
     }
     if (url.endsWith(`/releases/tags/${TAG}`)) {
       releaseReads += 1;
@@ -640,6 +659,52 @@ describe('Platform Fleet immutable approval publisher', () => {
     assert.equal(
       remote.calls.some(({ url }) => url.includes('/orgs/seorilabs/rulesets/')),
       false,
+    );
+  });
+
+  it('정책 서명용 상세 readback은 조직 규칙 전체를 읽고 UTC로 정규화한다', async (test) => {
+    const local = await localFixture(test);
+    const remote = githubFixture(local, {
+      rulesetUpdatedAt: '2026-08-29T09:00:00.000+09:00',
+    });
+    const policy = await readPlatformFleetImmutablePolicy({
+      fetchImpl: remote.fetchImpl,
+      token: 'credential-canary-token',
+    });
+    assert.deepEqual(policy, {
+      repositoryId: REPOSITORY_ID,
+      immutableReleases: { enabled: true, enforcedByOwner: true },
+      ruleset: {
+        id: RULESET_ID,
+        name: 'Immutable Platform release tags',
+        sourceType: 'Organization',
+        source: 'seorilabs',
+        target: 'tag',
+        enforcement: 'active',
+        bypassActors: [],
+        refName: { include: ['refs/tags/v*'], exclude: [] },
+        ruleTypes: ['deletion', 'update'],
+        updatedAt: RULESET_UPDATED_AT,
+      },
+    });
+    assert.equal(remote.calls.some(({ options }) => options.method), false);
+    assert.equal(
+      remote.calls.filter(({ url }) => url.endsWith('/orgs/seorilabs/rulesets/88')).length,
+      1,
+    );
+  });
+
+  it('정책 서명용 상세 readback은 ruleset bypass를 거부한다', async (test) => {
+    const local = await localFixture(test);
+    const remote = githubFixture(local, {
+      rulesetBypassActors: [{ actor_type: 'Team', actor_id: 1 }],
+    });
+    await assert.rejects(
+      readPlatformFleetImmutablePolicy({
+        fetchImpl: remote.fetchImpl,
+        token: 'credential-canary-token',
+      }),
+      /ruleset 상세/u,
     );
   });
 
