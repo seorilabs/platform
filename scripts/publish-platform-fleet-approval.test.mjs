@@ -708,7 +708,7 @@ describe('Platform Fleet immutable approval publisher', () => {
     );
   });
 
-  it('정책 digest는 정책과 무관한 GitHub 응답 필드에 영향받지 않는다', async (test) => {
+  it('정책 digest는 무관한 필드와 동등한 RFC3339 표기에 영향받지 않는다', async (test) => {
     const local = await localFixture(test);
     const verified = verifyLocal(local);
     const first = await verifyPlatformFleetImmutablePolicy({
@@ -723,6 +723,7 @@ describe('Platform Fleet immutable approval publisher', () => {
       fetchImpl: githubFixture(local, {
         repositoryVolatile: '2026-08-29T00:01:00.000Z',
         rulesetVolatile: 'RRS_fixture_two',
+        rulesetUpdatedAt: '2026-08-29T09:00:00.000+09:00',
       }).fetchImpl,
       policyAttestation: verified.policyAttestation,
       token: 'credential-canary-token',

@@ -692,7 +692,7 @@ async function verifyImmutablePolicy(fetchImpl, token, policyAttestation) {
     name: candidates[0].name,
     source: candidates[0].source,
     sourceType: candidates[0].source_type,
-    updatedAt: candidates[0].updated_at,
+    updatedAt: canonicalIsoTimestamp(candidates[0].updated_at, 'GitHub ruleset updated_at'),
   });
   return Object.freeze({
     enforcedByOwner: true,
