@@ -30,7 +30,7 @@ import {
   type Session,
   type SessionStore,
 } from "./session.ts";
-import { Transport, type TransportOptions } from "./transport.ts";
+import { Transport, type ClientContext, type TransportOptions } from "./transport.ts";
 import { SDK_VERSION } from "./version.ts";
 
 export { PlatformError } from "./transport.ts";
@@ -68,7 +68,7 @@ export type {
   AccountReferences,
 } from "./iap.ts";
 export type { RemoteConfig, ConfigTarget, SdkStatus, Maintenance } from "./config.ts";
-export type { TransportOptions, RequestOptions } from "./transport.ts";
+export type { TransportOptions, RequestOptions, ClientContext } from "./transport.ts";
 export type { ParamValue } from "./normalize.ts";
 export type {
   ContentAccess,
@@ -123,6 +123,13 @@ export interface PlatformOptions extends TransportOptions {
   presenceEnabled?: boolean;
   /** 생략하면 eventContext의 platform과 appVersion을 사용한다. */
   presenceContext?: PresenceContextProvider;
+  /**
+   * 요청 헤더에 붙일 실행 환경. 생략하면 eventContext의 appVersion을 쓴다.
+   *
+   * runtime은 eventContext에 없는 축이라 앱이 직접 알려 줘야 한다.
+   * 예 `godot-native-android`, `ait-rn`, `web`.
+   */
+  clientContext?: () => ClientContext;
 }
 
 /** SDK 진입점. */
@@ -138,6 +145,16 @@ export class Platform {
   readonly presence: Presence;
 
   constructor(opts: PlatformOptions) {
+    // 앱이 이미 eventContext로 주고 있는 버전을 헤더에도 그대로 쓴다.
+    // 같은 사실을 두 군데 설정하게 만들지 않는다.
+    const clientContext: () => ClientContext = opts.clientContext ?? (() => {
+      const value = typeof opts.eventContext === "function"
+        ? opts.eventContext()
+        : (opts.eventContext ?? {});
+      return { appVersion: value.appVersion };
+    });
+    opts = { ...opts, clientContext };
+
     this.transport = new Transport(opts);
     const ingestTransport = new Transport({
       ...opts,

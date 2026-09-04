@@ -234,7 +234,7 @@ func TestCreateSession(t *testing.T) {
 	res, err := svc.CreateSession(context.Background(), "lizard-tycoon", Credential{
 		Kind:  KindFirebaseIDToken,
 		Value: "uid-abc",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -269,6 +269,7 @@ func TestCreateFirebaseCustomTokenPreservesExistingUID(t *testing.T) {
 		context.Background(),
 		"lizard-tycoon",
 		"existing-firebase-uid",
+		ClientInfo{},
 	)
 	if err != nil {
 		t.Fatalf("custom token bridge 실패: %v", err)
@@ -404,7 +405,7 @@ func TestCreateFirebaseCustomTokenGeneratesServerUID(t *testing.T) {
 	repo := newMemRepo()
 	svc := newBridgeTestService(t, fakeVerifier{}, repo, customTokens)
 
-	result, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+	result, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "", ClientInfo{})
 	if err != nil {
 		t.Fatalf("custom token bridge 실패: %v", err)
 	}
@@ -429,7 +430,7 @@ func TestCreateFirebaseCustomTokenFailsClosed(t *testing.T) {
 		svc := newTestService(t, fakeVerifier{}, newMemRepo()).WithCustomTokenIssuer(
 			&fakeCustomTokenIssuer{token: "unused"},
 		)
-		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "", ClientInfo{})
 		if code := platformerr.CodeOf(err); code != platformerr.CodeAuthForbidden {
 			t.Fatalf("code = %q, want auth_forbidden", code)
 		}
@@ -442,7 +443,7 @@ func TestCreateFirebaseCustomTokenFailsClosed(t *testing.T) {
 			newMemRepo(),
 			&fakeCustomTokenIssuer{err: errors.New("signJwt denied")},
 		)
-		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "", ClientInfo{})
 		if code := platformerr.CodeOf(err); code != platformerr.CodePlatformUnavailable {
 			t.Fatalf("code = %q, want platform_unavailable", code)
 		}
@@ -466,7 +467,7 @@ func TestCreateSessionIsIdempotent(t *testing.T) {
 			res, err := svc.CreateSession(context.Background(), "lizard-tycoon", Credential{
 				Kind:  KindFirebaseIDToken,
 				Value: "동시요청-uid",
-			})
+			}, ClientInfo{})
 			if err != nil {
 				t.Errorf("세션 생성 실패: %v", err)
 				return
@@ -493,7 +494,7 @@ func TestCreateSessionRejectsUnknownApp(t *testing.T) {
 	_, err := svc.CreateSession(context.Background(), "없는-앱", Credential{
 		Kind:  KindFirebaseIDToken,
 		Value: "uid",
-	})
+	}, ClientInfo{})
 	if code := platformerr.CodeOf(err); code != platformerr.CodeAppUnknown {
 		t.Errorf("code = %q, want app_unknown", code)
 	}
@@ -510,7 +511,7 @@ func TestCreateSessionRejectsPausedApp(t *testing.T) {
 	_, err := svc.CreateSession(context.Background(), "lizard-tycoon", Credential{
 		Kind:  KindFirebaseIDToken,
 		Value: "uid",
-	})
+	}, ClientInfo{})
 	if code := platformerr.CodeOf(err); code != platformerr.CodeAppPaused {
 		t.Errorf("code = %q, want app_paused", code)
 	}
@@ -524,7 +525,7 @@ func TestCredentialKinds(t *testing.T) {
 		res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 			Kind:  KindAnonymous,
 			Value: "anon-key-hash",
-		})
+		}, ClientInfo{})
 		if err != nil {
 			t.Fatalf("익명 세션 생성 실패: %v", err)
 		}
@@ -550,7 +551,7 @@ func TestCredentialKinds(t *testing.T) {
 		_, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 			Kind:  KindAITLogin,
 			Value: "ait-token",
-		})
+		}, ClientInfo{})
 		if err == nil {
 			t.Fatal("검증 경로가 없는데 통과시켰다")
 		}
@@ -560,7 +561,7 @@ func TestCredentialKinds(t *testing.T) {
 		_, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 			Kind:  "made-up",
 			Value: "x",
-		})
+		}, ClientInfo{})
 		if code := platformerr.CodeOf(err); code != platformerr.CodeRequestInvalid {
 			t.Errorf("code = %q, want request_invalid", code)
 		}
@@ -570,7 +571,7 @@ func TestCredentialKinds(t *testing.T) {
 		_, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 			Kind:  KindFirebaseIDToken,
 			Value: "   ",
-		})
+		}, ClientInfo{})
 		if code := platformerr.CodeOf(err); code != platformerr.CodeAuthRequired {
 			t.Errorf("code = %q, want auth_required", code)
 		}
@@ -597,7 +598,7 @@ func TestAITLoginAllowsAppsInTossAdsAndStoresOnlyHashedIdentity(t *testing.T) {
 
 	res, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "one-time-authorization-code", Referrer: "sandbox",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +621,7 @@ func TestAITLoginAllowsAppsInTossAdsAndStoresOnlyHashedIdentity(t *testing.T) {
 
 	_, err = svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "another-code", Referrer: "unknown",
-	})
+	}, ClientInfo{})
 	if platformerr.CodeOf(err) != platformerr.CodeRequestInvalid {
 		t.Fatalf("invalid referrer code=%q", platformerr.CodeOf(err))
 	}
@@ -643,7 +644,7 @@ func TestAITLoginAllowsAppsInTossIAPWithoutAds(t *testing.T) {
 
 	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "iap-authorization-code", Referrer: "SANDBOX",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +676,7 @@ func TestAITLoginRejectsAdMobOnlyApp(t *testing.T) {
 
 	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "must-not-be-exchanged", Referrer: "DEFAULT",
-	})
+	}, ClientInfo{})
 	if code := platformerr.CodeOf(err); code != platformerr.CodeAuthForbidden {
 		t.Fatalf("code=%q, want auth_forbidden", code)
 	}
@@ -692,7 +693,7 @@ func TestRefreshRotatesToken(t *testing.T) {
 
 	first, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "uid-refresh",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -728,7 +729,7 @@ func TestAuthenticateRejectsCrossAppToken(t *testing.T) {
 
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "uid",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -745,7 +746,7 @@ func TestAuthenticateRejectsBlockedUID(t *testing.T) {
 
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "곧-차단될-uid",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -767,7 +768,7 @@ func TestAuthenticateFailsWhenBlocklistUnavailable(t *testing.T) {
 
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "uid-1",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -823,7 +824,7 @@ func TestFirebaseAnonymousCanPay(t *testing.T) {
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind:  KindFirebaseIDToken,
 		Value: "firebase-uid-1",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -851,7 +852,7 @@ func TestAnonymousKeyStillCannotPay(t *testing.T) {
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind:  KindAnonymous,
 		Value: "anon-key-hash",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("익명 세션 생성 실패: %v", err)
 	}
@@ -889,7 +890,7 @@ func TestAITLoginRejectsAppWithoutItsOwnCertificate(t *testing.T) {
 
 	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "must-not-be-exchanged", Referrer: "SANDBOX",
-	})
+	}, ClientInfo{})
 	if code := platformerr.CodeOf(err); code != platformerr.CodeProviderConfigInvalid {
 		t.Fatalf("code=%q, want provider_config_invalid", code)
 	}

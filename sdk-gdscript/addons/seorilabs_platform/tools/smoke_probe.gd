@@ -68,6 +68,7 @@ func _initialize() -> void:
 	_check_internal_fallback_cancelled_by_sign_out()
 	_check_iap_non_auth_failures()
 	_check_standard_adapters()
+	_check_observation_headers()
 	_check_guards()
 
 	if _failures.is_empty():
@@ -1094,6 +1095,50 @@ func _expect_iap_request(
 
 
 ## 잘못된 입력이 네트워크를 타지 않고 즉시 거부되는지 본다.
+## 관측 헤더는 전송 계층이 붙인다. 여기서만 실제 헤더 줄을 확인할 수 있다.
+func _check_observation_headers() -> void:
+	var transport := HttpTransport.new()
+	root.add_child(transport)
+	transport.configure("https://platform.test", "lizard-tycoon")
+	transport.set_client_context(
+		"0.6.8",
+		func() -> Dictionary:
+			return {"appVersion": " 1.2.4 ", "runtime": "godot-native-android"},
+	)
+
+	var headers := Array(transport._build_headers({}))
+	if not headers.has("X-Seori-Sdk: gd/0.6.8"):
+		_fail("SDK 헤더가 빠졌다: %s" % [headers])
+	if not headers.has("X-Seori-AppVer: 1.2.4"):
+		_fail("앱 버전 헤더가 빠졌다: %s" % [headers])
+	if not headers.has("X-Seori-Runtime: godot-native-android"):
+		_fail("런타임 헤더가 빠졌다: %s" % [headers])
+
+	# 형식을 어긴 값은 잘라 보내지 않고 뺀다. 개행이 섞이면 요청이 통째로 깨진다.
+	transport.set_client_context(
+		"0.6.8",
+		func() -> Dictionary:
+			return {"appVersion": "1.2.4\r\nX-Seori-App: other", "runtime": "web"},
+	)
+	var dirty := Array(transport._build_headers({}))
+	for header: String in dirty:
+		if header.begins_with("X-Seori-AppVer"):
+			_fail("형식을 어긴 버전이 헤더에 실렸다: %s" % [dirty])
+	if not dirty.has("X-Seori-Runtime: web"):
+		_fail("멀쩡한 축까지 비웠다: %s" % [dirty])
+
+	# 실행 환경을 모르는 앱은 관측 헤더를 지어내지 않는다.
+	var bare := HttpTransport.new()
+	root.add_child(bare)
+	bare.configure("https://platform.test", "lizard-tycoon")
+	for header: String in Array(bare._build_headers({})):
+		if header.begins_with("X-Seori-AppVer") or header.begins_with("X-Seori-Runtime"):
+			_fail("설정 없이 관측 헤더가 붙었다: %s" % header)
+
+	transport.queue_free()
+	bare.queue_free()
+
+
 func _check_guards() -> void:
 	var client := PlatformClient.new()
 	client.configure({"base_url": "https://platform.invalid", "app_id": "probe"})

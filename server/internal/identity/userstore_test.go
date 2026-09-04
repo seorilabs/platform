@@ -56,7 +56,7 @@ func TestFirebaseSessionCarriesSignInProvider(t *testing.T) {
 	svc := newTestService(t, fakeVerifier{}, repo)
 	if _, err := svc.CreateSession(context.Background(), testApp().AppID, Credential{
 		Kind: KindFirebaseIDToken, Value: "id-token",
-	}); err != nil {
+	}, ClientInfo{}); err != nil {
 		t.Fatal(err)
 	}
 	if repo.lastIdentity.SignInProvider != "anonymous" {
@@ -70,7 +70,7 @@ func TestAnonymousCredentialCarriesNoSignInProvider(t *testing.T) {
 	svc := newTestService(t, fakeVerifier{}, repo)
 	if _, err := svc.CreateSession(context.Background(), testApp().AppID, Credential{
 		Kind: KindAnonymous, Value: "device-hash",
-	}); err != nil {
+	}, ClientInfo{}); err != nil {
 		t.Fatal(err)
 	}
 	if repo.lastIdentity.SignInProvider != "" {
@@ -83,7 +83,7 @@ func TestFirebaseSessionPassesNoReferrer(t *testing.T) {
 	svc := newTestService(t, fakeVerifier{}, repo)
 	if _, err := svc.CreateSession(context.Background(), testApp().AppID, Credential{
 		Kind: KindFirebaseIDToken, Value: "id-token",
-	}); err != nil {
+	}, ClientInfo{}); err != nil {
 		t.Fatal(err)
 	}
 	if repo.lastReferrer != "" {

@@ -78,6 +78,56 @@ describe("Transport", () => {
     assert.equal(f.calls[0]!.headers["X-Seori-App"], "lizard-tycoon");
   });
 
+  it("SDK 버전은 앱 설정 없이도 붙는다", async () => {
+    const f = fakeFetch([ok({})]);
+    await newTransport(f.impl).request({ method: "GET", path: "/v1/test" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-Sdk"], `ts/${SDK_VERSION}`);
+  });
+
+  it("실행 환경을 관측 헤더로 붙인다", async () => {
+    const f = fakeFetch([ok({})]);
+    const transport = new Transport({
+      baseUrl: "https://platform.test",
+      appId: "lizard-tycoon",
+      fetchImpl: f.impl,
+      clientContext: () => ({ appVersion: " 1.2.4 ", runtime: "ait-rn" }),
+    });
+    await transport.request({ method: "GET", path: "/v1/test" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], "1.2.4");
+    assert.equal(f.calls[0]!.headers["X-Seori-Runtime"], "ait-rn");
+  });
+
+  for (const [label, appVersion] of [
+    ["상한 초과", "9".repeat(33)],
+    ["개행 주입", "1.2.4\r\nX-Seori-App: other"],
+    ["공백 섞임", "1.2.4 dirty"],
+  ] as const) {
+    it(`형식을 어긴 관측 값(${label})은 잘라 보내지 않고 뺀다`, async () => {
+      // 잘라 보내면 관측에 없는 버전 문자열이 만들어지고, 개행은 요청을 깨뜨린다.
+      const f = fakeFetch([ok({})]);
+      const transport = new Transport({
+        baseUrl: "https://platform.test",
+        appId: "lizard-tycoon",
+        fetchImpl: f.impl,
+        clientContext: () => ({ appVersion, runtime: "web" }),
+      });
+      await transport.request({ method: "GET", path: "/v1/test" });
+
+      assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], undefined);
+      assert.equal(f.calls[0]!.headers["X-Seori-Runtime"], "web");
+    });
+  }
+
+  it("실행 환경을 모르면 관측 헤더를 지어내지 않는다", async () => {
+    const f = fakeFetch([ok({})]);
+    await newTransport(f.impl).request({ method: "GET", path: "/v1/test" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], undefined);
+    assert.equal(f.calls[0]!.headers["X-Seori-Runtime"], undefined);
+  });
+
   it("App Check 공급자의 최신 토큰을 붙인다", async () => {
     const f = fakeFetch([ok({}), ok({})]);
     let token = "attested-1";
@@ -493,6 +543,28 @@ describe("Platform routing", () => {
       locale: "ko-KR",
       sdkVersion: SDK_VERSION,
     });
+    // 앱이 이미 준 버전을 헤더에도 그대로 쓴다. 같은 사실을 두 번 설정하게 하지 않는다.
+    assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], "1.2.3");
+    assert.equal(f.calls[1]!.headers["X-Seori-AppVer"], "1.2.3");
+  });
+
+  it("clientContext를 주면 eventContext 대신 그 값을 헤더로 쓴다", async () => {
+    const f = fakeFetch([ok({ values: {}, features: {}, sdk: { status: "ok" }, maintenance: { active: false } })]);
+    const platform = new Platform({
+      baseUrl: "https://api.platform.test",
+      appId: "happy-farm",
+      fetchImpl: f.impl,
+      maxRetries: 0,
+      eventFlushIntervalMs: 0,
+      eventContext: { platform: "ait", appVersion: "1.2.3" },
+      // runtime은 eventContext에 없는 축이라 앱이 직접 알려 준다.
+      clientContext: () => ({ appVersion: "1.2.4", runtime: "ait-rn" }),
+    });
+
+    await platform.config.fetch({ appVersion: "1.2.4", platform: "android" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], "1.2.4");
+    assert.equal(f.calls[0]!.headers["X-Seori-Runtime"], "ait-rn");
   });
 
   it("IAP는 별도 호스트를 사용한다", async () => {

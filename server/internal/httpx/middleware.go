@@ -48,11 +48,16 @@ var corsAllowedHeaders = map[string]struct{}{
 	"x-firebase-appcheck": {},
 	"x-seori-app":         {},
 	"x-seori-appver":      {},
+	"x-seori-runtime":     {},
+	"x-seori-sdk":         {},
 }
 
 const (
 	corsAllowMethods = "DELETE, GET, POST"
-	corsAllowHeaders = "Authorization, Content-Type, If-None-Match, X-Firebase-AppCheck, X-Seori-App, X-Seori-AppVer"
+	// 관측 헤더가 빠지면 브라우저 preflight가 400으로 끊긴다. SDK가 보내기 시작하기
+	// 전에 서버가 먼저 허용하고 있어야 한다.
+	corsAllowHeaders = "Authorization, Content-Type, If-None-Match, " +
+		"X-Firebase-AppCheck, X-Seori-App, X-Seori-AppVer, X-Seori-Runtime, X-Seori-Sdk"
 )
 
 // CORS는 앱 레지스트리에 명시된 웹 origin만 허용하고 preflight를 종결한다.

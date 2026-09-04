@@ -52,6 +52,10 @@ var (
 			prefix: "identity_", outcome: "created",
 			attributes: setOf("authType", "signInProvider", "anonymous", "referrer"),
 		},
+		"app.version.first_seen": {
+			prefix: "app_version_", outcome: "observed",
+			attributes: setOf("appVersion", "runtime", "sdk"),
+		},
 		"iap.granted": {
 			prefix: "iap_", outcome: "granted",
 			attributes: setOf("platform", "entitlementId"),
