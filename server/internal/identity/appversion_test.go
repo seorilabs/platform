@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -189,5 +190,37 @@ func TestAppVersionPathSeparatesAdjacentValues(t *testing.T) {
 	}
 	if first.String() == second.String() {
 		t.Fatalf("서로 다른 조합이 같은 경로를 쓴다: %v", first)
+	}
+}
+
+func TestMalformedObservationHeaderStillIssuesToken(t *testing.T) {
+	// 헤더를 읽는 곳이 아니라 요청 전체가 끝까지 처리되는지 본다. 관측 축 하나가
+	// 형식을 어겼다고 발급이 막히면 안 된다.
+	observer := &fakeAppVersionObserver{}
+	service := newBridgeTestService(
+		t, fakeVerifier{}, newMemRepo(), &fakeCustomTokenIssuer{token: "signed-custom-token"},
+	).WithAppVersionObserver(observer)
+	mux := http.NewServeMux()
+	NewHandler(service).Register(mux)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/auth/firebase-custom-token",
+		bytes.NewBufferString(`{"appId":"lizard-tycoon"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(AppHeader, "lizard-tycoon")
+	request.Header.Set(appVersionHeader, "**1.2.4**")
+	request.Header.Set(runtimeHeader, "ait-rn")
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	// 버전을 읽지 못했으니 관측할 조합도 없다. 형식을 어긴 값으로 문서를 만들지 않는다.
+	if len(observer.calls) != 0 {
+		t.Fatalf("형식을 어긴 버전으로 관측했다: %+v", observer.calls)
 	}
 }
