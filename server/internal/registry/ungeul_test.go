@@ -10,6 +10,12 @@ import (
 // 세운과 열두 달 월운을 함께 연다. 클라이언트, AdMob 콘솔, Platform registry가
 // 다른 placement나 보상값을 쓰면 광고를 끝까지 보고도 SSV가 거부되므로 여기서
 // 운영 계약을 고정한다.
+//
+// AppsInToss 도 같은 지면을 쓴다. 서버는 보상 claim 에서 지면에 등록된 provider 만
+// 허용하므로 `apps_in_toss` 가 빠지면 광고를 끝까지 봐도 청구가 막힌다. ad group id
+// 는 클라이언트가 `VITE_AIT_REWARD_AD_GROUP_ID` 로 굽는 값과 같아야 한다 — 서버는
+// 지면에 provider 가 있는지만 보고 group id 는 대조하지 않아서 어긋나도 런타임에
+// 드러나지 않는다.
 func TestUngeulAdsRegistryContract(t *testing.T) {
 	source := NewFSSource(os.DirFS("../../../registry"), "apps")
 	apps, err := source.LoadApps(context.Background())
@@ -61,6 +67,14 @@ func TestUngeulAdsRegistryContract(t *testing.T) {
 	}
 	if provider.RewardItem != "deep_flow" || provider.RewardAmount != 1 {
 		t.Fatalf("AdMob reward=(%q,%d), want (deep_flow,1)", provider.RewardItem, provider.RewardAmount)
+	}
+
+	ait, ok := placement.Providers["apps_in_toss"]
+	if !ok {
+		t.Fatal("AppsInToss provider 설정이 없다")
+	}
+	if ait.AdGroupID != "ait.v2.live.44b40e237fed4252" {
+		t.Fatalf("AppsInToss ad group=%q", ait.AdGroupID)
 	}
 	if ungeul.Content.RewardKey != "deep_flow" {
 		t.Fatalf("content reward key=%q, want deep_flow", ungeul.Content.RewardKey)
