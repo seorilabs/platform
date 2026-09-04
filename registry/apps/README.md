@@ -132,6 +132,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `lizard-tycoon` | 비활성 | production | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
 | `lucid-chess` | 활성 | 미사용 | 핵심 퍼널·전면 광고 | 비활성 | 비활성 | — |
 | `lucid-reversi` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `lord-ledger` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `match-picture-app` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `slotmachine-game` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
 | `spiritgate-defenders` | 활성 | 미사용 | 활성 | 비활성 | 활성 | — |
