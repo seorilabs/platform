@@ -160,11 +160,10 @@ func hashHex(s string) string {
 // 여러 개가 만들어지면 같은 사람의 결제 원장이 갈라진다.
 func (r *StoreRepository) EnsureUser(
 	ctx context.Context,
-	appID, uid string,
-	anonymous bool,
-	authType, referrer string,
+	appID string,
+	identity NewIdentity,
 ) (string, error) {
-	idPath, err := identityPath(appID, uid)
+	idPath, err := identityPath(appID, identity.UID)
 	if err != nil {
 		return "", platformerr.Wrap(err, platformerr.CodeInternal, "사용자를 확인하지 못했어요")
 	}
@@ -208,9 +207,9 @@ func (r *StoreRepository) EnsureUser(
 			// identity 매핑과 PII 없는 운영 조회 문서의 lastSeenAt을 같은
 			// 트랜잭션에서 갱신한다.
 			doc.LastSeenAt = now
-			doc.AuthType = authType
+			doc.AuthType = identity.AuthType
 			user.LastSeenAt = now
-			user.AuthType = authType
+			user.AuthType = identity.AuthType
 			if err := tx.Set(idPath, doc); err != nil {
 				return err
 			}
@@ -231,9 +230,9 @@ func (r *StoreRepository) EnsureUser(
 		if err := tx.Set(idPath, identityDoc{
 			PlatformUserID: puid,
 			AppID:          appID,
-			AppUserID:      uid,
-			Anonymous:      anonymous,
-			AuthType:       authType,
+			AppUserID:      identity.UID,
+			Anonymous:      identity.Anonymous,
+			AuthType:       identity.AuthType,
 			FirstSeenAt:    now,
 			LastSeenAt:     now,
 		}); err != nil {
@@ -242,9 +241,9 @@ func (r *StoreRepository) EnsureUser(
 
 		if err := tx.Set(uPath, userDoc{
 			AppID:       appID,
-			AppUserID:   uid,
-			Anonymous:   anonymous,
-			AuthType:    authType,
+			AppUserID:   identity.UID,
+			Anonymous:   identity.Anonymous,
+			AuthType:    identity.AuthType,
 			CreatedAt:   now,
 			LastSeenAt:  now,
 			SupportCode: NewSupportCode(appID, puid),
@@ -257,7 +256,7 @@ func (r *StoreRepository) EnsureUser(
 		return r.operational.EnqueueTx(tx, operational.Event{
 			EventID:    operational.StableEventID("identity", appID, puid),
 			OccurredAt: now.UTC(), Type: "identity.created", AppID: appID, Outcome: "created",
-			Attributes: identityEventAttributes(authType, anonymous, referrer),
+			Attributes: identityEventAttributes(identity),
 		})
 	})
 	if err != nil {
@@ -266,14 +265,27 @@ func (r *StoreRepository) EnsureUser(
 	return result, nil
 }
 
+// maxSignInProviderLen은 운영 이벤트 계약이 허용하는 문자열 상한이다.
+//
+// 이 이벤트는 계정을 만드는 트랜잭션 안에서 enqueue되므로 계약을 어긴 속성 하나가
+// 가입 자체를 되돌린다. 공급자 이름은 관측용이라 실을 수 없으면 뺀다.
+const maxSignInProviderLen = 120
+
 // identityEventAttributes는 신규 계정 이벤트에 실을 속성을 만든다.
 //
-// referrer는 AppsInToss 로그인에만 있다. 빈 값을 실어 보내면 알림에서 유입이
-// "없음"이라는 사실로 읽히므로 값이 있을 때만 넣는다.
-func identityEventAttributes(authType string, anonymous bool, referrer string) map[string]any {
-	attributes := map[string]any{"authType": authType, "anonymous": anonymous}
-	if referrer != "" {
-		attributes["referrer"] = referrer
+// referrer는 AppsInToss 로그인에만 있고 signInProvider는 Firebase ID token을 거친
+// 경로에만 있다. 빈 값을 실어 보내면 알림에서 유입이나 로그인 수단이 "없음"이라는
+// 사실로 읽히므로 값이 있을 때만 넣는다.
+func identityEventAttributes(identity NewIdentity) map[string]any {
+	attributes := map[string]any{
+		"authType":  identity.AuthType,
+		"anonymous": identity.Anonymous,
+	}
+	if identity.Referrer != "" {
+		attributes["referrer"] = identity.Referrer
+	}
+	if n := len(identity.SignInProvider); n > 0 && n <= maxSignInProviderLen {
+		attributes["signInProvider"] = identity.SignInProvider
 	}
 	return attributes
 }
