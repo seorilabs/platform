@@ -172,7 +172,7 @@ func TestAccountLinkHandlers(t *testing.T) {
 
 	guest, err := service.CreateSession(context.Background(), "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "firebase-anonymous-uid",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}

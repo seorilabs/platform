@@ -50,6 +50,7 @@ var _presence: PresenceClient
 var _session: Dictionary = {}
 var _api_base_url := ""
 var _app_id := ""
+var _runtime := ""
 var _iap_base_url := ""
 var _ingest_base_url := ""
 var _ads_base_url := ""
@@ -91,6 +92,7 @@ func _ready() -> void:
 ##   auth_base_url   : String (선택) — 세션 발급·갱신. 없으면 ads_base_url 또는 base_url
 ##   app_id          : String (필수)
 ##   event_context   : Dictionary | Callable (선택) — platform/appVersion/locale/ga4ClientId
+##   runtime         : String (선택) — 실행 환경. 예 `godot-native-android`, `godot-web-ait`
 ##   max_retries     : int (선택, 기본 3)
 ##   presence_enabled: bool (선택, 기본 false) — fail-open RPI Edge heartbeat
 ##
@@ -119,12 +121,14 @@ func configure(options: Dictionary) -> void:
 	_event_context_source = options.get("event_context", {})
 	if typeof(_event_context_source) == TYPE_DICTIONARY:
 		_event_context_source = (_event_context_source as Dictionary).duplicate(true)
+	_runtime = String(options.get("runtime", "")).strip_edges()
 
 	_transport.configure(
 		base,
 		_app_id,
 		int(options.get("max_retries", 3)),
 	)
+	_transport.set_client_context(SDK_VERSION, _client_context)
 	_ensure_presence()
 	_presence.configure({
 		"enabled": bool(options.get("presence_enabled", false)),
@@ -656,6 +660,20 @@ func _resolved_event_context() -> Dictionary:
 	if not ga4_client_id.is_empty():
 		context["ga4ClientId"] = ga4_client_id
 
+	return context
+
+
+## 관측 헤더에 실을 실행 환경.
+##
+## 앱이 이미 event_context로 주는 버전을 그대로 쓴다. 같은 사실을 두 군데
+## 설정하게 만들지 않는다. runtime은 event_context에 없는 축이라 따로 받는다.
+func _client_context() -> Dictionary:
+	var context := {}
+	if not _runtime.is_empty():
+		context["runtime"] = _runtime
+	var event_context := _resolved_event_context()
+	if event_context.has("appVersion"):
+		context["appVersion"] = event_context["appVersion"]
 	return context
 
 

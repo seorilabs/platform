@@ -132,6 +132,10 @@ paths:
       security: []
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+        - $ref: '#/components/parameters/SeoriSdk'
+        - $ref: '#/components/parameters/SeoriRuntime'
+        - $ref: '#/components/parameters/SeoriAppVer'
       requestBody:
         required: true
         content:
@@ -1955,7 +1959,13 @@ components:
     SeoriAppVer:
       name: X-Seori-AppVer
       in: header
-      description: 앱 버전. RemoteConfig 타겟팅에 쓴다
+      description: |
+        앱 버전. RemoteConfig 타겟팅과 세션 경로의 버전 최초 관측에 쓴다.
+
+        세션 발급에서 이 값이 처음 보이는 (앱, 런타임, 버전) 조합은
+        `app.version.first_seen` 운영 이벤트가 된다. 마켓 업로드나 태그가 아니라
+        그 빌드로 실제 세션이 처음 열린 시각이다. 상한을 넘으면 관측만 빠지고
+        요청은 그대로 처리한다.
       schema: { type: string, maxLength: 32 }
     AppCheck:
       name: X-Firebase-AppCheck

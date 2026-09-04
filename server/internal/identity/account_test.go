@@ -172,7 +172,7 @@ func TestAccountLinkIssuesLinkedSession(t *testing.T) {
 
 	guest, err := service.CreateSession(context.Background(), "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "firebase-anonymous-uid",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestAccountLinkRestoresExistingPlatformUser(t *testing.T) {
 
 	guest, err := service.CreateSession(context.Background(), "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "new-install-uid",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}

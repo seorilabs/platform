@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -62,6 +63,27 @@ type AppCheckVerifier interface {
 	Verify(ctx context.Context, token, firebaseProjectID string) error
 }
 
+// ClientInfo는 요청 헤더가 알려 주는 실행 환경이다.
+//
+// 권한이 아니라 관측값이다. 클라이언트가 값을 고르므로 신뢰 경계 안에서는 쓰지
+// 않고 운영 이벤트에만 싣는다. 헤더를 보내지 않는 구버전 SDK가 있어 전부 선택이다.
+type ClientInfo struct {
+	// AppVersion은 X-Seori-AppVer다. 예 `1.2.4`.
+	AppVersion string
+	// Runtime은 X-Seori-Runtime이다. 예 `godot-native-android`, `ait-rn`, `web`.
+	Runtime string
+	// SDK는 X-Seori-Sdk다. 예 `gd/0.6.8`, `ts/0.4.0`.
+	SDK string
+}
+
+// AppVersionObserver는 (앱, 런타임, 버전) 조합을 처음 본 순간을 한 번만 기록한다.
+//
+// 마켓 업로드도 태그도 아닌 "그 빌드로 실제 세션이 처음 열린 시각"이라
+// 새 버전의 실유입 개시를 가른다.
+type AppVersionObserver interface {
+	ObserveAppVersion(ctx context.Context, appID string, client ClientInfo) error
+}
+
 // NewIdentity는 자격증명에서 확인한, 계정을 만들 때 원장과 운영 이벤트에 함께
 // 남길 사실이다.
 type NewIdentity struct {
@@ -81,6 +103,9 @@ type NewIdentity struct {
 	// platform이 uid를 새로 만드는 bridge 게스트 경로에는 아직 로그인이 없어
 	// 비어 있다. 없는 사실을 지어내지 않으려고 그때는 이벤트에도 싣지 않는다.
 	SignInProvider string
+	// Client는 이 계정을 만든 요청의 실행 환경이다. 헤더를 보내지 않는 구버전
+	// 클라이언트에서는 비어 있다.
+	Client ClientInfo
 }
 
 // UserRepository는 identity 저장소다.
@@ -146,6 +171,7 @@ type Service struct {
 	appCheck         AppCheckVerifier
 	accounts         AccountRepository
 	accountProviders map[string]AccountProvider
+	appVersions      AppVersionObserver
 	refreshTTL       time.Duration
 	now              func() time.Time
 }
@@ -199,6 +225,28 @@ func (s *Service) ensureNotBlocked(ctx context.Context, appID, uid string) error
 func (s *Service) WithCustomTokenIssuer(issuer CustomTokenIssuer) *Service {
 	s.customTokens = issuer
 	return s
+}
+
+// WithAppVersionObserver는 세션 경로의 앱 버전 최초 관측을 연결한다.
+//
+// 연결하지 않으면 관측만 꺼지고 세션 발급은 그대로 동작한다.
+func (s *Service) WithAppVersionObserver(observer AppVersionObserver) *Service {
+	s.appVersions = observer
+	return s
+}
+
+// observeAppVersion은 실패해도 요청을 막지 않는다.
+//
+// 이건 관측이지 인증이 아니다. Firestore 한 번 흔들렸다고 로그인이 막히면
+// 얻는 것보다 잃는 게 크다. 대신 조용히 넘기지 않고 로그를 남긴다.
+func (s *Service) observeAppVersion(ctx context.Context, appID string, client ClientInfo) {
+	if s.appVersions == nil || client.AppVersion == "" {
+		return
+	}
+	if err := s.appVersions.ObserveAppVersion(ctx, appID, client); err != nil {
+		slog.WarnContext(ctx, "앱 버전 최초 관측 실패. 세션은 계속한다",
+			"app_id", appID, "app_version", client.AppVersion, "err", err)
+	}
 }
 
 // WithAppCheckVerifier는 공개 bootstrap 경로의 앱 증명을 연결한다.
@@ -255,6 +303,7 @@ func (s *Service) CreateFirebaseCustomToken(
 	ctx context.Context,
 	appID string,
 	existingFirebaseIDToken string,
+	client ClientInfo,
 ) (FirebaseCustomTokenResult, error) {
 	app, err := s.registry.GetUsable(ctx, appID)
 	if err != nil {
@@ -315,10 +364,12 @@ func (s *Service) CreateFirebaseCustomToken(
 		UID:            uid,
 		AuthType:       "firebase_bridge",
 		SignInProvider: signInProvider,
+		Client:         client,
 	})
 	if err != nil {
 		return FirebaseCustomTokenResult{}, err
 	}
+	s.observeAppVersion(ctx, app.AppID, client)
 	return FirebaseCustomTokenResult{
 		FirebaseCustomToken: customToken,
 		AppUserID:           uid,
@@ -372,7 +423,12 @@ func (s *Service) WithClock(now func() time.Time) *Service {
 }
 
 // CreateSession은 자격증명을 플랫폼 세션으로 교환한다.
-func (s *Service) CreateSession(ctx context.Context, appID string, cred Credential) (Result, error) {
+func (s *Service) CreateSession(
+	ctx context.Context,
+	appID string,
+	cred Credential,
+	client ClientInfo,
+) (Result, error) {
 	app, err := s.registry.GetUsable(ctx, appID)
 	if err != nil {
 		return Result{}, err
@@ -382,11 +438,13 @@ func (s *Service) CreateSession(ctx context.Context, appID string, cred Credenti
 	if err != nil {
 		return Result{}, err
 	}
+	identity.Client = client
 
 	puid, err := s.users.EnsureUser(ctx, app.AppID, identity)
 	if err != nil {
 		return Result{}, err
 	}
+	s.observeAppVersion(ctx, app.AppID, client)
 	linked := identity.AuthType == "apps_in_toss"
 	if s.accounts != nil {
 		storedLinked, linkErr := s.accounts.IsAccountLinked(ctx, app.AppID, puid)

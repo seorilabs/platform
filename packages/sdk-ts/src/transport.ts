@@ -6,6 +6,7 @@
 
 import { isRetryableStatus, nextDelayMs } from "./backoff.ts";
 import { parseEnvelope, type PlatformErrorBody } from "./envelope.ts";
+import { SDK_VERSION } from "./version.ts";
 
 /** 플랫폼 호출이 실패했을 때 던지는 오류. */
 export class PlatformError extends Error {
@@ -37,7 +38,27 @@ export interface TransportOptions {
   timeoutMs?: number;
   /** Firebase App Check token 공급자. 요청 시점마다 호출해 만료 토큰을 피한다. */
   appCheckToken?: () => Promise<string>;
+  /**
+   * 요청마다 붙일 실행 환경. `X-Seori-AppVer`, `X-Seori-Runtime`으로 나간다.
+   *
+   * 서버는 이 값으로 구버전 트래픽을 관측하고, 세션 경로에서 처음 보는
+   * (앱, 런타임, 버전) 조합을 새 빌드의 실유입 개시로 기록한다.
+   */
+  clientContext?: () => ClientContext;
 }
+
+export interface ClientContext {
+  appVersion?: string | undefined;
+  runtime?: string | undefined;
+}
+
+/**
+ * 서버가 관측 헤더에 허용하는 값이다. 상한 32자에 안전 문자만 받는다.
+ *
+ * 이 값은 헤더 줄에 그대로 들어가므로 여기서 좁히지 않으면 개행 하나로
+ * 요청이 통째로 실패한다.
+ */
+const CLIENT_CONTEXT_PATTERN = /^[A-Za-z0-9._/+-]{1,32}$/;
 
 export interface RequestOptions {
   method: "GET" | "POST" | "DELETE";
@@ -65,6 +86,7 @@ export class Transport {
   private readonly now: () => number;
   private readonly timeoutMs: number;
   private readonly appCheckToken: (() => Promise<string>) | undefined;
+  private readonly clientContext: (() => ClientContext) | undefined;
 
   constructor(opts: TransportOptions) {
     if (!opts.baseUrl) {
@@ -83,6 +105,7 @@ export class Transport {
     this.now = opts.now ?? Date.now;
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.appCheckToken = opts.appCheckToken;
+    this.clientContext = opts.clientContext;
   }
 
   /**
@@ -205,7 +228,18 @@ export class Transport {
       "Content-Type": "application/json",
       // 서버가 앱을 식별하는 헤더다. 레지스트리 조회의 키가 된다.
       "X-Seori-App": this.appId,
+      // 어느 SDK 버전의 트래픽인지는 SDK가 스스로 안다. 앱 설정에 의존하지 않는다.
+      "X-Seori-Sdk": `ts/${SDK_VERSION}`,
     };
+    const context = this.clientContext?.();
+    const appVersion = boundedHeaderValue(context?.appVersion);
+    if (appVersion) {
+      headers["X-Seori-AppVer"] = appVersion;
+    }
+    const runtime = boundedHeaderValue(context?.runtime);
+    if (runtime) {
+      headers["X-Seori-Runtime"] = runtime;
+    }
     const appCheckToken = await this.appCheckToken?.();
     if (appCheckToken) {
       headers["X-Firebase-AppCheck"] = appCheckToken;
@@ -216,6 +250,14 @@ export class Transport {
     }
     return headers;
   }
+}
+
+// 형식을 어긴 값은 보내지 않는다. 서버가 어차피 버리는 값이고, 잘라 보내면
+// 관측에 없는 버전 문자열이 만들어진다.
+function boundedHeaderValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || !CLIENT_CONTEXT_PATTERN.test(trimmed)) return undefined;
+  return trimmed;
 }
 
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

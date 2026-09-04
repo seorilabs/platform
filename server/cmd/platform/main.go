@@ -178,6 +178,8 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			issuer,
 			d.blocklist,
 		)
+		// 버전 최초 관측은 세션 원장과 같은 Firestore·outbox 자원을 쓴다.
+		svc.WithAppVersionObserver(users)
 		if cfg.Role == config.RoleAPI {
 			customTokens, err := identity.NewIAMCustomTokenIssuer(ctx)
 			if err != nil {

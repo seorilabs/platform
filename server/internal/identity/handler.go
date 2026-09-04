@@ -3,6 +3,8 @@ package identity
 import (
 	"context"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
@@ -14,6 +16,41 @@ import (
 // 권한이 아니다. 헤더를 바꿔도 토큰의 aud 불일치로 거부된다.
 // Obsidian 프로젝트/platform/03-architecture/identity.md 참고.
 const AppHeader = "X-Seori-App"
+
+// 관측 헤더. 스펙이 32자로 제한한다.
+const (
+	appVersionHeader = "X-Seori-AppVer"
+	runtimeHeader    = "X-Seori-Runtime"
+	sdkHeader        = "X-Seori-Sdk"
+	maxClientInfoLen = 32
+)
+
+// observationValuePattern은 관측 헤더가 가질 수 있는 값이다.
+//
+// `1.2.4`, `godot-native-android`, `ait-rn`, `gd/0.6.8`을 담으면 충분하다.
+// 이 값은 Firestore 문서와 Discord 카드까지 그대로 흘러가므로 제어 문자와
+// 서식 문자가 섞이지 않게 여기서 좁힌다.
+var observationValuePattern = regexp.MustCompile(`^[A-Za-z0-9._/+-]{1,32}$`)
+
+// clientInfo는 실행 환경 헤더를 읽는다.
+//
+// 셋 다 선택이고 형식이 어긋나면 그 축만 비운다. 여기서 요청을 거부하면
+// 관측 필드 하나가 로그인을 막는다.
+func clientInfo(r *http.Request) ClientInfo {
+	return ClientInfo{
+		AppVersion: boundedHeader(r, appVersionHeader),
+		Runtime:    boundedHeader(r, runtimeHeader),
+		SDK:        boundedHeader(r, sdkHeader),
+	}
+}
+
+func boundedHeader(r *http.Request, name string) string {
+	value := strings.TrimSpace(r.Header.Get(name))
+	if value == "" || !observationValuePattern.MatchString(value) {
+		return ""
+	}
+	return value
+}
 
 // Handler는 identity HTTP 핸들러다.
 type Handler struct {
@@ -118,6 +155,7 @@ func (h *Handler) createFirebaseCustomToken(w http.ResponseWriter, r *http.Reque
 		r.Context(),
 		appID,
 		req.ExistingFirebaseIDToken,
+		clientInfo(r),
 	)
 	if err != nil {
 		return err
@@ -169,7 +207,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
 		Kind:     CredentialKind(req.Credential.Kind),
 		Value:    req.Credential.Value,
 		Referrer: req.Credential.Referrer,
-	})
+	}, clientInfo(r))
 	if err != nil {
 		return err
 	}

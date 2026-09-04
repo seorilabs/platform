@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -24,6 +25,7 @@ import (
 //	refresh_tokens/{sha256(token)}       → 갱신 토큰
 //	auth_link_challenges/{sha256(nonce)} → 일회성 provider nonce
 //	auth_provider_identities/{app}__{provider}__{sha256(subject)} → platform_user_id
+//	app_versions/{app_id}__{sha256(runtime, version)} → 버전 최초 관측 표시
 //
 // identities 문서 ID를 복합키로 만드는 이유는 쿼리가 아니라 직접 읽기로
 // 끝내기 위해서다. 인덱스가 필요 없고 읽기 1회로 해결된다.
@@ -33,6 +35,7 @@ const (
 	refreshCollection          = "refresh_tokens"
 	accountChallengeCollection = "auth_link_challenges"
 	providerIdentityCollection = "auth_provider_identities"
+	appVersionsCollection      = "app_versions"
 )
 
 type identityDoc struct {
@@ -43,6 +46,16 @@ type identityDoc struct {
 	AuthType       string    `firestore:"authType,omitempty"`
 	FirstSeenAt    time.Time `firestore:"firstSeenAt"`
 	LastSeenAt     time.Time `firestore:"lastSeenAt"`
+}
+
+// appVersionDoc은 이 조합을 처음 본 순간을 남긴다. 존재 자체가 "이미 알렸다"는
+// 표시이므로 나중에 값을 덮어쓰지 않는다.
+type appVersionDoc struct {
+	AppID       string    `firestore:"appId"`
+	AppVersion  string    `firestore:"appVersion"`
+	Runtime     string    `firestore:"runtime,omitempty"`
+	SDK         string    `firestore:"sdk,omitempty"`
+	FirstSeenAt time.Time `firestore:"firstSeenAt"`
 }
 
 type userDoc struct {
@@ -103,6 +116,10 @@ type StoreRepository struct {
 	store       *store.Client
 	now         func() time.Time
 	operational *operational.Repository
+
+	// seenVersions는 이미 알린 (앱, 런타임, 버전) 조합이다. 세션 발급마다 도는
+	// 경로라 Firestore 왕복을 프로세스 안에서 끊는다. 정답은 app_versions 문서다.
+	seenVersions sync.Map
 }
 
 // WithOperationalEvents는 새 사용자 커밋과 같은 transaction에 운영 이벤트를 쌓는다.
@@ -144,6 +161,14 @@ func accountChallengePath(nonce string) (fspath.Path, error) {
 
 func providerIdentityPath(appID, provider, subjectHash string) (fspath.Path, error) {
 	return fspath.Parse(providerIdentityCollection + "/" + appID + "__" + provider + "__" + subjectHash)
+}
+
+func appVersionPath(appID, runtime, appVersion string) (fspath.Path, error) {
+	// 런타임과 버전은 클라이언트 문자열이라 경로에 그대로 넣지 않는다.
+	// 구분자를 함께 해시해 "1.2" + "4"와 "1.2.4"가 같은 문서가 되지 않게 한다.
+	return fspath.Parse(
+		appVersionsCollection + "/" + appID + "__" + hashHex(runtime+"\x00"+appVersion),
+	)
 }
 
 func hashHex(s string) string {
@@ -286,6 +311,86 @@ func identityEventAttributes(identity NewIdentity) map[string]any {
 	}
 	if n := len(identity.SignInProvider); n > 0 && n <= maxSignInProviderLen {
 		attributes["signInProvider"] = identity.SignInProvider
+	}
+	if identity.Client.AppVersion != "" {
+		attributes["appVersion"] = identity.Client.AppVersion
+	}
+	if identity.Client.Runtime != "" {
+		attributes["runtime"] = identity.Client.Runtime
+	}
+	return attributes
+}
+
+// ObserveAppVersion은 (앱, 런타임, 버전) 조합을 처음 본 순간 한 번만 이벤트를 낸다.
+//
+// 세션 발급마다 불리므로 이미 본 조합은 프로세스 캐시에서 끊는다. 캐시는 프로세스
+// 수명 동안만 유효하고, 정답은 Firestore 문서가 쥔다. 새 pod가 뜨면 조합당 읽기
+// 한 번을 더 하지만 문서가 이미 있어 이벤트가 두 번 나가지는 않는다.
+func (r *StoreRepository) ObserveAppVersion(
+	ctx context.Context,
+	appID string,
+	client ClientInfo,
+) error {
+	if client.AppVersion == "" {
+		// 헤더를 보내지 않는 구버전 클라이언트다. 관측할 조합이 없다.
+		return nil
+	}
+	cacheKey := appID + "\x00" + client.Runtime + "\x00" + client.AppVersion
+	if _, seen := r.seenVersions.Load(cacheKey); seen {
+		return nil
+	}
+	path, err := appVersionPath(appID, client.Runtime, client.AppVersion)
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "앱 버전을 기록하지 못했어요")
+	}
+
+	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		exists, _, err := tx.Exists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+		now := r.now()
+		if err := tx.Create(path, appVersionDoc{
+			AppID:       appID,
+			AppVersion:  client.AppVersion,
+			Runtime:     client.Runtime,
+			SDK:         client.SDK,
+			FirstSeenAt: now,
+		}); err != nil {
+			return err
+		}
+		if r.operational == nil {
+			return nil
+		}
+		return r.operational.EnqueueTx(tx, operational.Event{
+			EventID: operational.StableEventID(
+				"app_version", appID, client.Runtime, client.AppVersion,
+			),
+			OccurredAt: now.UTC(),
+			Type:       "app.version.first_seen",
+			AppID:      appID,
+			Outcome:    "observed",
+			Attributes: appVersionEventAttributes(client),
+		})
+	})
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "앱 버전을 기록하지 못했어요")
+	}
+	r.seenVersions.Store(cacheKey, struct{}{})
+	return nil
+}
+
+// appVersionEventAttributes는 버전 최초 관측 이벤트에 실을 속성을 만든다.
+func appVersionEventAttributes(client ClientInfo) map[string]any {
+	attributes := map[string]any{"appVersion": client.AppVersion}
+	if client.Runtime != "" {
+		attributes["runtime"] = client.Runtime
+	}
+	if client.SDK != "" {
+		attributes["sdk"] = client.SDK
 	}
 	return attributes
 }

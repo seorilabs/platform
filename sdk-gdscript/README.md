@@ -56,6 +56,8 @@ platform.configure({
             "appVersion": "1.2.3",
             "locale": "ko-KR",
         },
+    # 실행 환경. 관측 헤더로만 쓰며 생략해도 동작은 같다.
+    "runtime": "godot-native-android",
     # 명시적으로 켠 앱만 별도 2초 timeout의 RPI heartbeat를 시작한다.
     "presence_enabled": true,
 })
@@ -150,6 +152,12 @@ fail-closed한다. `discard_unsettled_claim`은 광고를 보여 주지 못한 �
 보내는 시점에 평가하므로 앱 안에서 언어가 바뀌어도 다음 flush부터 최신 locale이
 들어간다. SDK는 OpenAPI에 선언된 `platform`, `appVersion`, `locale`,
 `ga4ClientId`만 보내고 `sdkVersion`은 배포본 버전으로 고정한다.
+
+SDK는 모든 요청에 `X-Seori-Sdk`를 붙이고, `event_context`의 `appVersion`과
+`runtime` 옵션이 있으면 `X-Seori-AppVer`, `X-Seori-Runtime`을 함께 붙인다.
+버전을 두 군데 설정하지 않도록 `event_context`의 값을 그대로 쓴다. 세션 발급에서
+처음 보는 `(앱, 런타임, 버전)` 조합은 서버가 새 빌드의 실유입 개시로 기록한다.
+32자를 넘거나 `A-Za-z0-9._/+-` 밖 문자가 섞인 값은 잘라 보내지 않고 그 축만 뺀다.
 
 `auth_base_url`은 Toss Login mTLS 자격증명이 격리된 `platform-iap`처럼
 세션 발급 role이 기본 API와 다를 때만 지정한다. 생략하면 `base_url`을 쓴다.
