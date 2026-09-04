@@ -14,7 +14,8 @@
   },
   "ads": {
     "providers": [
-      "admob"
+      "admob",
+      "apps_in_toss"
     ],
     "placements": [
       {
@@ -26,6 +27,9 @@
             "ios_ad_unit_id": "ca-app-pub-2444587584524186/2557921082",
             "reward_item": "deep_flow",
             "reward_amount": 1
+          },
+          "apps_in_toss": {
+            "ad_group_id": "ait.v2.live.44b40e237fed4252"
           }
         },
         "reward": {
