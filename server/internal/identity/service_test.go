@@ -117,6 +117,7 @@ type memRepo struct {
 	deleteOK     bool
 	deleted      int
 	lastReferrer string
+	lastIdentity NewIdentity
 }
 
 func newMemRepo() *memRepo {
@@ -129,16 +130,16 @@ func newMemRepo() *memRepo {
 
 func (m *memRepo) EnsureUser(
 	_ context.Context,
-	appID, uid string,
-	_ bool,
-	_, referrer string,
+	appID string,
+	identity NewIdentity,
 ) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.lastReferrer = referrer
+	m.lastReferrer = identity.Referrer
+	m.lastIdentity = identity
 
-	key := appID + "\x00" + uid
+	key := appID + "\x00" + identity.UID
 	if p, ok := m.users[key]; ok {
 		return p, nil
 	}
@@ -284,6 +285,10 @@ func TestCreateFirebaseCustomTokenPreservesExistingUID(t *testing.T) {
 	if result.PlatformUserID == "" {
 		t.Fatal("platform user 매핑이 생성되지 않았다")
 	}
+	// authType은 이 경로 전부 firebase_bridge라 실제 로그인 수단을 가린다.
+	if repo.lastIdentity.SignInProvider != "anonymous" {
+		t.Fatalf("기존 token의 공급자가 전달되지 않았다: %q", repo.lastIdentity.SignInProvider)
+	}
 }
 
 func TestVerifyAppCheck(t *testing.T) {
@@ -361,10 +366,7 @@ func TestDeleteFirebaseAccount(t *testing.T) {
 	if _, err := repo.EnsureUser(
 		context.Background(),
 		"lizard-tycoon",
-		"firebase-user",
-		false,
-		"firebase",
-		"",
+		NewIdentity{UID: "firebase-user", AuthType: "firebase"},
 	); err != nil {
 		t.Fatalf("test user 생성 실패: %v", err)
 	}
@@ -399,7 +401,8 @@ func TestDeleteFirebaseAccount(t *testing.T) {
 
 func TestCreateFirebaseCustomTokenGeneratesServerUID(t *testing.T) {
 	customTokens := &fakeCustomTokenIssuer{token: "signed-custom-token"}
-	svc := newBridgeTestService(t, fakeVerifier{}, newMemRepo(), customTokens)
+	repo := newMemRepo()
+	svc := newBridgeTestService(t, fakeVerifier{}, repo, customTokens)
 
 	result, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
 	if err != nil {
@@ -414,6 +417,10 @@ func TestCreateFirebaseCustomTokenGeneratesServerUID(t *testing.T) {
 	}
 	if !customTokens.guest {
 		t.Fatal("플랫폼이 새로 만든 Firebase uid에 게스트 claim이 없다")
+	}
+	// 아직 어떤 로그인도 하지 않은 계정이다. 공급자를 지어내지 않는다.
+	if repo.lastIdentity.SignInProvider != "" {
+		t.Fatalf("게스트 계정이 공급자를 지어냈다: %q", repo.lastIdentity.SignInProvider)
 	}
 }
 

@@ -50,7 +50,7 @@ var (
 	eventContracts = map[string]eventContract{
 		"identity.created": {
 			prefix: "identity_", outcome: "created",
-			attributes: setOf("authType", "anonymous", "referrer"),
+			attributes: setOf("authType", "signInProvider", "anonymous", "referrer"),
 		},
 		"iap.granted": {
 			prefix: "iap_", outcome: "granted",

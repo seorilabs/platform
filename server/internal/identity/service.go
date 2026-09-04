@@ -62,21 +62,34 @@ type AppCheckVerifier interface {
 	Verify(ctx context.Context, token, firebaseProjectID string) error
 }
 
+// NewIdentity는 자격증명에서 확인한, 계정을 만들 때 원장과 운영 이벤트에 함께
+// 남길 사실이다.
+type NewIdentity struct {
+	// UID는 앱 사용자 식별자다.
+	UID string
+	// Anonymous는 클라이언트가 값을 고를 수 있어 사칭이 되는 신원인지다.
+	Anonymous bool
+	// AuthType은 계정이 만들어진 인증 경로다.
+	// firebase, firebase_bridge, apps_in_toss, anonymous 중 하나다.
+	AuthType string
+	// Referrer는 AppsInToss 로그인의 DEFAULT/SANDBOX 구분이고 다른 자격증명에서는
+	// 비어 있다. 운영 이벤트에서 실서비스 유입과 샌드박스 테스트를 가른다.
+	Referrer string
+	// SignInProvider는 Firebase ID token의 sign_in_provider다. google.com,
+	// apple.com, anonymous 같은 값이고 AuthType이 가리는 실제 로그인 수단이다.
+	//
+	// platform이 uid를 새로 만드는 bridge 게스트 경로에는 아직 로그인이 없어
+	// 비어 있다. 없는 사실을 지어내지 않으려고 그때는 이벤트에도 싣지 않는다.
+	SignInProvider string
+}
+
 // UserRepository는 identity 저장소다.
 type UserRepository interface {
-	// EnsureUser는 (appID, uid)에 대응하는 platform_user_id를 돌려준다.
+	// EnsureUser는 (appID, identity.UID)에 대응하는 platform_user_id를 돌려준다.
 	//
 	// 없으면 만들고 있으면 기존 것을 쓴다. 동시 호출에도 하나만 만들어야 한다.
 	// 여러 개가 만들어지면 같은 사람의 결제 원장이 갈라진다.
-	//
-	// referrer는 AppsInToss 로그인의 DEFAULT/SANDBOX 구분이고 다른 자격증명에서는
-	// 비어 있다. 운영 이벤트에서 실서비스 유입과 샌드박스 테스트를 가른다.
-	EnsureUser(
-		ctx context.Context,
-		appID, uid string,
-		anonymous bool,
-		authType, referrer string,
-	) (string, error)
+	EnsureUser(ctx context.Context, appID string, identity NewIdentity) (string, error)
 	// LookupUser는 삭제 같은 멱등 경로에서 기존 매핑만 읽는다.
 	// 매핑이 없을 때 새 사용자를 만들면 안 된다.
 	LookupUser(ctx context.Context, appID, uid string) (platformUserID string, found bool, err error)
@@ -260,7 +273,7 @@ func (s *Service) CreateFirebaseCustomToken(
 		)
 	}
 
-	var uid string
+	var uid, signInProvider string
 	platformGuest := false
 	if token := strings.TrimSpace(existingFirebaseIDToken); token != "" {
 		if len(token) > 4096 {
@@ -274,6 +287,7 @@ func (s *Service) CreateFirebaseCustomToken(
 			return FirebaseCustomTokenResult{}, verifyErr
 		}
 		uid = claims.UID
+		signInProvider = claims.SignInProvider
 	} else {
 		platformGuest = true
 		uid, err = NewFirebaseBridgeUserID()
@@ -297,7 +311,11 @@ func (s *Service) CreateFirebaseCustomToken(
 			"Firebase 인증 토큰을 만들지 못했어요",
 		)
 	}
-	platformUserID, err := s.users.EnsureUser(ctx, app.AppID, uid, false, "firebase_bridge", "")
+	platformUserID, err := s.users.EnsureUser(ctx, app.AppID, NewIdentity{
+		UID:            uid,
+		AuthType:       "firebase_bridge",
+		SignInProvider: signInProvider,
+	})
 	if err != nil {
 		return FirebaseCustomTokenResult{}, err
 	}
@@ -360,16 +378,16 @@ func (s *Service) CreateSession(ctx context.Context, appID string, cred Credenti
 		return Result{}, err
 	}
 
-	uid, anonymous, authType, referrer, err := s.resolveIdentity(ctx, app, cred)
+	identity, err := s.resolveIdentity(ctx, app, cred)
 	if err != nil {
 		return Result{}, err
 	}
 
-	puid, err := s.users.EnsureUser(ctx, app.AppID, uid, anonymous, authType, referrer)
+	puid, err := s.users.EnsureUser(ctx, app.AppID, identity)
 	if err != nil {
 		return Result{}, err
 	}
-	linked := authType == "apps_in_toss"
+	linked := identity.AuthType == "apps_in_toss"
 	if s.accounts != nil {
 		storedLinked, linkErr := s.accounts.IsAccountLinked(ctx, app.AppID, puid)
 		if linkErr != nil {
@@ -381,31 +399,31 @@ func (s *Service) CreateSession(ctx context.Context, appID string, cred Credenti
 	return s.issue(ctx, Session{
 		PlatformUserID:  puid,
 		AppID:           app.AppID,
-		AppUserID:       uid,
-		IsAnonymous:     anonymous,
+		AppUserID:       identity.UID,
+		IsAnonymous:     identity.Anonymous,
 		IsLinkedAccount: linked,
 	})
 }
 
-// resolveIdentity는 자격증명에서 앱 사용자 식별자를 얻는다.
+// resolveIdentity는 자격증명에서 계정을 만들 때 남길 사실을 얻는다.
 func (s *Service) resolveIdentity(
 	ctx context.Context,
 	app registry.App,
 	cred Credential,
-) (uid string, anonymous bool, authType, referrer string, err error) {
+) (NewIdentity, error) {
 	value := strings.TrimSpace(cred.Value)
 	if value == "" {
-		return "", false, "", "", platformerr.New(platformerr.CodeAuthRequired, "자격증명이 필요해요")
+		return NewIdentity{}, platformerr.New(platformerr.CodeAuthRequired, "자격증명이 필요해요")
 	}
 
 	switch cred.Kind {
 	case KindFirebaseIDToken:
 		if strings.TrimSpace(cred.Referrer) != "" {
-			return "", false, "", "", platformerr.New(platformerr.CodeRequestInvalid, "Firebase 로그인에는 referrer를 넣을 수 없어요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeRequestInvalid, "Firebase 로그인에는 referrer를 넣을 수 없어요")
 		}
 		claims, err := s.verifier.Verify(ctx, value, app)
 		if err != nil {
-			return "", false, "", "", err
+			return NewIdentity{}, err
 		}
 		// Firebase 익명 로그인은 여기서 익명으로 치지 않는다.
 		//
@@ -419,20 +437,24 @@ func (s *Service) resolveIdentity(
 		//
 		// 실제로 이걸 묶어 두면 lizard-tycoon은 결제가 하나도 되지 않는다.
 		// 전 사용자가 Firebase 익명 계정이기 때문이다.
-		return claims.UID, false, "firebase", "", nil
+		return NewIdentity{
+			UID:            claims.UID,
+			AuthType:       "firebase",
+			SignInProvider: claims.SignInProvider,
+		}, nil
 
 	case KindAnonymous:
 		if strings.TrimSpace(cred.Referrer) != "" {
-			return "", false, "", "", platformerr.New(platformerr.CodeRequestInvalid, "익명 로그인에는 referrer를 넣을 수 없어요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeRequestInvalid, "익명 로그인에는 referrer를 넣을 수 없어요")
 		}
 		// 사칭 가능한 신원이다. 여기서 막지 않고 세션에 표시만 한다.
 		// IAP 같은 민감 경로가 EnsureNotAnonymous로 거부한다.
 		// 이렇게 하는 이유는 RemoteConfig 조회와 이벤트 로그는
 		// 익명으로도 허용해야 하기 때문이다.
 		if err := s.ensureNotBlocked(ctx, app.AppID, value); err != nil {
-			return "", false, "", "", err
+			return NewIdentity{}, err
 		}
-		return "anon:" + value, true, "anonymous", "", nil
+		return NewIdentity{UID: "anon:" + value, Anonymous: true, AuthType: "anonymous"}, nil
 
 	case KindAITLogin:
 		// AppsInToss userKey는 광고와 IAP가 함께 쓰는 앱 범위 신원이다.
@@ -440,33 +462,33 @@ func (s *Service) resolveIdentity(
 		adsEnabled := app.FeatureEnabled("ads") && slices.Contains(app.Ads.Providers, "apps_in_toss")
 		iapEnabled := app.FeatureEnabled("iap") && app.MarketEnabled("apps_in_toss")
 		if !adsEnabled && !iapEnabled {
-			return "", false, "", "", platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 AppsInToss 로그인을 사용하지 않아요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 AppsInToss 로그인을 사용하지 않아요")
 		}
 		referrer := strings.ToUpper(strings.TrimSpace(cred.Referrer))
 		if referrer != "DEFAULT" && referrer != "SANDBOX" {
-			return "", false, "", "", platformerr.New(platformerr.CodeRequestInvalid, "AppsInToss referrer가 올바르지 않아요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeRequestInvalid, "AppsInToss referrer가 올바르지 않아요")
 		}
 		if len(s.aitLogin) == 0 {
-			return "", false, "", "", platformerr.New(platformerr.CodePlatformUnavailable, "AppsInToss 로그인이 준비되지 않았어요")
+			return NewIdentity{}, platformerr.New(platformerr.CodePlatformUnavailable, "AppsInToss 로그인이 준비되지 않았어요")
 		}
 		// 이 앱의 인증서가 없으면 다른 앱 인증서로 대신 교환하지 않는다.
 		// 그렇게 하면 토스가 CN 불일치로 거부해 설정 오류가 인증 실패로 둔갑한다.
 		verifier, ok := s.aitLogin[app.AppID]
 		if !ok {
-			return "", false, "", "", platformerr.New(platformerr.CodeProviderConfigInvalid,
+			return NewIdentity{}, platformerr.New(platformerr.CodeProviderConfigInvalid,
 				"이 앱의 AppsInToss 로그인 인증서가 없어요")
 		}
 		uid, err := verifier.Verify(ctx, value, referrer)
 		if err != nil {
-			return "", false, "", "", err
+			return NewIdentity{}, err
 		}
 		if !isSHA256(uid) {
-			return "", false, "", "", platformerr.New(platformerr.CodeProviderResponseInvalid, "AppsInToss 사용자 응답이 올바르지 않아요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeProviderResponseInvalid, "AppsInToss 사용자 응답이 올바르지 않아요")
 		}
-		return "ait:" + uid, false, "apps_in_toss", referrer, nil
+		return NewIdentity{UID: "ait:" + uid, AuthType: "apps_in_toss", Referrer: referrer}, nil
 
 	default:
-		return "", false, "", "", platformerr.Newf(platformerr.CodeRequestInvalid,
+		return NewIdentity{}, platformerr.Newf(platformerr.CodeRequestInvalid,
 			"알 수 없는 자격증명 종류예요: %s", cred.Kind)
 	}
 }
