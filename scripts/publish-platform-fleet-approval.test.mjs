@@ -16,6 +16,7 @@ import {
   publishPlatformFleetApproval,
   readPlatformFleetImmutablePolicy,
   readPlatformFleetLatest,
+  resolvePlatformFleetRelease,
   validatePlatformFleetReleaseAssetRedirect,
   verifyPlatformFleetApprovalPublishingInputs,
   verifyPlatformFleetImmutablePolicy,
@@ -272,6 +273,7 @@ function githubFixture(local, overrides = {}) {
   let published = overrides.published ?? false;
   let immutable = overrides.published ? (overrides.immutable ?? true) : false;
   let releaseReads = 0;
+  let releaseListReads = 0;
   let tagReads = 0;
   let policyReads = 0;
   const currentRelease = () => ({
@@ -334,7 +336,17 @@ function githubFixture(local, overrides = {}) {
     }
     if (url.endsWith(`/releases/tags/${TAG}`)) {
       releaseReads += 1;
+      // 실제 GitHub은 draft release를 by-tag 조회에서 제외한다.
+      if (overrides.draftNotAddressableByTag && !published) {
+        return jsonResponse({ message: 'Not Found' }, 404);
+      }
       return jsonResponse(currentRelease());
+    }
+    if (url.includes('/releases?per_page=')) {
+      releaseListReads += 1;
+      return jsonResponse(
+        overrides.releaseListPage?.(currentRelease()) ?? [currentRelease()],
+      );
     }
     if (url.endsWith(`/git/ref/tags/${TAG}`)) {
       tagReads += 1;
@@ -396,7 +408,13 @@ function githubFixture(local, overrides = {}) {
     }
     throw new Error(`예상하지 않은 요청: ${options.method ?? 'GET'} ${url}`);
   };
-  return { assets, calls, fetchImpl, get releaseReads() { return releaseReads; } };
+  return {
+    assets,
+    calls,
+    fetchImpl,
+    get releaseReads() { return releaseReads; },
+    get releaseListReads() { return releaseListReads; },
+  };
 }
 
 function verifyLocal(local, overrides = {}) {
@@ -771,5 +789,49 @@ describe('Platform Fleet immutable approval publisher', () => {
       }),
       /정확히 하나/u,
     );
+  });
+
+  const resolveRelease = (remote) => resolvePlatformFleetRelease(
+    remote.fetchImpl,
+    'credential-canary-token',
+    TAG,
+    SOURCE_SHA,
+  );
+
+  it('by-tag 조회에 없는 draft를 release 목록에서 찾아낸다', async (test) => {
+    const local = await localFixture(test);
+    const remote = githubFixture(local, { draftNotAddressableByTag: true });
+    const release = await resolveRelease(remote);
+    assert.equal(release.id, 42);
+    assert.equal(release.draft, true);
+    assert.equal(release.tag_name, TAG);
+    assert.equal(remote.releaseListReads, 1);
+  });
+
+  it('published release는 by-tag 조회만으로 해석한다', async (test) => {
+    const local = await localFixture(test);
+    const remote = githubFixture(local, { published: true });
+    const release = await resolveRelease(remote);
+    assert.equal(release.draft, false);
+    assert.equal(release.immutable, true);
+    assert.equal(remote.releaseListReads, 0);
+  });
+
+  it('같은 tag를 가진 draft 후보가 여럿이면 fail-closed한다', async (test) => {
+    const local = await localFixture(test);
+    const remote = githubFixture(local, {
+      draftNotAddressableByTag: true,
+      releaseListPage: (release) => [release, { ...release, id: 43 }],
+    });
+    await assert.rejects(resolveRelease(remote), /draft Release가 하나가 아닙니다/u);
+  });
+
+  it('by-tag 404 뒤 목록에 draft가 아닌 release만 있으면 거부한다', async (test) => {
+    const local = await localFixture(test);
+    const remote = githubFixture(local, {
+      draftNotAddressableByTag: true,
+      releaseListPage: (release) => [{ ...release, draft: false, immutable: true }],
+    });
+    await assert.rejects(resolveRelease(remote), /draft가 아닙니다/u);
   });
 });
