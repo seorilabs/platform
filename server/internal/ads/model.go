@@ -17,6 +17,39 @@ const (
 	AssuranceClientConfirmed Assurance = "client_confirmed"
 )
 
+// 지금 서버가 아는 보상 provider.
+const (
+	ProviderAdMob      = "admob"
+	ProviderAppsInToss = "apps_in_toss"
+)
+
+// settledAssurance는 provider마다 「보상이 확정됐다」로 인정하는 수준이다.
+//
+// **서로의 것을 인정하지 않는다.** AdMob은 서버가 Google SSV 서명을 검증한
+// server_verified만 확정이다. AppsInToss에는 SSV 자체가 없어서 서버가 지면의 일일
+// 한도와 cooldown을 원자적으로 걸고 받은 client_confirmed가 확정이고, 그 위로
+// 승격되는 경로가 없다.
+//
+// 한쪽 기준을 양쪽에 쓰면 둘 중 하나가 깨진다 — AdMob 기준을 AIT에 쓰면 확정된
+// 보상이 영원히 거절되고, 반대로 하면 SSV 없는 보상이 AdMob 경로를 통과한다.
+var settledAssurance = map[string]Assurance{
+	ProviderAdMob:      AssuranceServerVerified,
+	ProviderAppsInToss: AssuranceClientConfirmed,
+}
+
+// SettledClaim은 보상이 그 provider의 기준으로 확정됐는지 답한다.
+//
+// 보상을 값으로 바꾸는 쪽(콘텐츠 해제)이 판정을 스스로 적지 않고 이것을 부르게 해서,
+// provider가 늘어날 때 기준이 두 곳으로 갈라지지 않게 한다.
+func SettledClaim(claim Claim) bool {
+	settled, known := settledAssurance[claim.Provider]
+	if !known {
+		return false
+	}
+	return claim.Assurance == settled &&
+		(claim.State == StateConfirmed || claim.State == StateDelivered)
+}
+
 type Reward struct {
 	Key    string `json:"key" firestore:"key"`
 	Amount int    `json:"amount" firestore:"amount"`
