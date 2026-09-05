@@ -59,10 +59,13 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	if provider.AndroidAdUnitID != wantAndroidUnit {
 		t.Fatalf("Android unit=%q, want %q", provider.AndroidAdUnitID, wantAndroidUnit)
 	}
-	// iOS 빌드는 Kids Category 대상이라 광고 SDK를 링크하지 않는다. AdMob 콘솔에는 iOS 앱과
-	// unit이 따로 있지만 레지스트리에 넣으면 그 경계가 흐려지고 SSV 대조 대상만 늘어난다.
-	if provider.IOSAdUnitID != "" {
-		t.Fatalf("iOS unit이 등록됐다: %q", provider.IOSAdUnitID)
+	// iOS 는 2026-09-05 까지 비어 있었다. Kids Category 대상이라 광고 SDK 를 링크하지 않았고,
+	// 레지스트리에 넣으면 SSV 대조 대상만 늘었기 때문이다. seorilabs/jomul 의 ADR 0017 이 그
+	// 전제를 뒤집어 iOS 를 4+ 일반 카테고리로 옮기고 Android 와 같은 리워드 광고를 붙이기로 했다.
+	// 이 값이 없으면 iOS claim 은 ConfirmAdMob 이 CodeAdUnitMismatch 로 거부한다.
+	const wantIOSUnit = "ca-app-pub-2444587584524186/4203846143"
+	if provider.IOSAdUnitID != wantIOSUnit {
+		t.Fatalf("iOS unit=%q, want %q", provider.IOSAdUnitID, wantIOSUnit)
 	}
 	// 콘솔 값과 한 글자라도 다르면 SSV가 전건 거부되므로 보상 항목·수량은 registry에 적지 않는다.
 	if provider.RewardItem != "" || provider.RewardAmount != 0 {
