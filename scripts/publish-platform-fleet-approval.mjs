@@ -22,6 +22,8 @@ const TRUST_REGISTRY_PATH = resolve(
   '.github/platform-fleet-trusted-release-keys.json',
 );
 const TRUST_REGISTRY_SHA256 = '6df32f25121dc5b72cd366adf3cfdd1979f452c20d96ed925574073529df8a35';
+const RELEASE_LIST_PAGE_SIZE = 100;
+const MAX_RELEASE_LIST_PAGES = 10;
 const GRANT_PURPOSE = 'seorilabs-platform-approval-publish-grant-v1';
 const POLICY_ATTESTATION_PURPOSE = 'seorilabs-platform-release-policy-attestation-v1';
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -480,13 +482,54 @@ async function resolveTagCommit(fetchImpl, token, tag) {
   throw new Error('release tag가 5단계 안에 commit으로 해석되지 않습니다.');
 }
 
-async function getRelease(fetchImpl, token, tag, sourceSha) {
-  const release = (await githubJson(
+// GitHub의 by-tag 조회는 draft release를 반환하지 않는다. 승인 대기 draft를 찾으려면
+// release 목록에서 exact tag_name을 확인해야 하며, 후보가 정확히 하나일 때만 진행한다.
+async function findDraftReleaseByTag(fetchImpl, token, tag) {
+  const matches = [];
+  for (let page = 1; page <= MAX_RELEASE_LIST_PAGES; page += 1) {
+    const { value } = await githubJson(
+      fetchImpl,
+      `${GITHUB_API_BASE}/repos/${RELEASE_REPOSITORY}/releases?per_page=${RELEASE_LIST_PAGE_SIZE}&page=${page}`,
+      token,
+    );
+    if (!Array.isArray(value)) {
+      throw new Error('GitHub Release 목록 응답이 배열이 아닙니다.');
+    }
+    for (const release of value) {
+      if (isRecord(release) && release.tag_name === tag) {
+        matches.push(release);
+      }
+    }
+    if (value.length < RELEASE_LIST_PAGE_SIZE) {
+      break;
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error('exact release tag를 가진 draft Release가 하나가 아닙니다.');
+  }
+  if (matches[0].draft !== true) {
+    throw new Error('by-tag 조회에 없는 Release가 draft가 아닙니다.');
+  }
+  return matches[0];
+}
+
+export async function resolvePlatformFleetRelease(fetchImpl, token, tag, sourceSha) {
+  const response = await githubRequest(
     fetchImpl,
     `${GITHUB_API_BASE}/repos/${RELEASE_REPOSITORY}/releases/tags/${encodeURIComponent(tag)}`,
     token,
-  )).value;
-  return validateReleaseShape(release, { sourceSha, tag });
+  );
+  if (response.ok) {
+    const bytes = await readResponseBounded(response, MAX_JSON_RESPONSE_BYTES, 'GitHub API JSON');
+    return validateReleaseShape(parseJson(bytes, 'GitHub API response'), { sourceSha, tag });
+  }
+  if (response.status !== 404) {
+    throw requestFailure('GitHub API 요청', response);
+  }
+  return validateReleaseShape(
+    await findDraftReleaseByTag(fetchImpl, token, tag),
+    { sourceSha, tag },
+  );
 }
 
 function exactIsoTimestamp(value, label) {
@@ -1043,7 +1086,7 @@ export async function publishPlatformFleetApproval(options) {
 
   const [initialPolicy, initialRelease, initialTagCommit] = await Promise.all([
     verifyImmutablePolicy(fetchImpl, token, verified.policyAttestation),
-    getRelease(fetchImpl, token, tag, sourceSha),
+    resolvePlatformFleetRelease(fetchImpl, token, tag, sourceSha),
     resolveTagCommit(fetchImpl, token, tag),
   ]);
   if (initialTagCommit !== sourceSha) {
@@ -1065,7 +1108,7 @@ export async function publishPlatformFleetApproval(options) {
 
   const [prePublishPolicy, prePublishRelease, prePublishTagCommit] = await Promise.all([
     verifyImmutablePolicy(fetchImpl, token, verified.policyAttestation),
-    getRelease(fetchImpl, token, tag, sourceSha),
+    resolvePlatformFleetRelease(fetchImpl, token, tag, sourceSha),
     resolveTagCommit(fetchImpl, token, tag),
   ]);
   if (
@@ -1088,7 +1131,7 @@ export async function publishPlatformFleetApproval(options) {
 
   const [finalPolicy, finalRelease, finalTagCommit] = await Promise.all([
     verifyImmutablePolicy(fetchImpl, token, verified.policyAttestation),
-    getRelease(fetchImpl, token, tag, sourceSha),
+    resolvePlatformFleetRelease(fetchImpl, token, tag, sourceSha),
     resolveTagCommit(fetchImpl, token, tag),
   ]);
   if (
