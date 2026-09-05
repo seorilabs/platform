@@ -169,12 +169,14 @@ func (s *AccessService) verifiedRewardClaim(
 		return platformads.Claim{}, platformerr.Wrap(err, platformerr.CodeContentClaimInvalid,
 			"광고 보상을 확인할 수 없어요")
 	}
+	// 확정 판정은 provider가 정한다. 여기서 다시 적으면 AdMob 기준(server_verified)이
+	// AppsInToss에도 걸려, SSV가 없어 client_confirmed까지만 가는 AIT 보상이 확정된
+	// 뒤에도 영원히 거절된다 — 실기기에서 이 경로로 403을 받았다.
 	if claim.AppID != app.AppID || claim.PlatformUserID != puid ||
-		(claim.State != platformads.StateConfirmed && claim.State != platformads.StateDelivered) ||
-		claim.Assurance != platformads.AssuranceServerVerified ||
+		!platformads.SettledClaim(claim) ||
 		claim.Reward.Key != app.Content.RewardKey || claim.Reward.Amount <= 0 {
 		return platformads.Claim{}, platformerr.New(platformerr.CodeContentClaimInvalid,
-			"서버 검증된 광고 보상이 아니에요")
+			"확정된 광고 보상이 아니에요")
 	}
 	return claim, nil
 }

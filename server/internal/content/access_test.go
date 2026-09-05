@@ -105,11 +105,12 @@ func accessApp() registry.App {
 	}}
 }
 
-func TestRewardUnlockRequiresServerVerifiedClaim(t *testing.T) {
+func TestRewardUnlockRejectsAdMobClaimWithoutServerVerification(t *testing.T) {
 	unlocks := &fakeUnlocks{}
 	claim := platformads.Claim{
 		ClaimID: "cl_valid", AppID: "ungeul", PlatformUserID: "puid",
-		State: platformads.StateConfirmed, Assurance: platformads.AssuranceClientConfirmed,
+		Provider: platformads.ProviderAdMob,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceClientConfirmed,
 		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
 	}
 	claims := &fakeClaims{claim: claim}
@@ -122,11 +123,12 @@ func TestRewardUnlockRequiresServerVerifiedClaim(t *testing.T) {
 	}
 }
 
-func TestRewardUnlockBindsServerVerifiedClaim(t *testing.T) {
+func TestRewardUnlockBindsSettledAdMobClaim(t *testing.T) {
 	unlocks := &fakeUnlocks{}
 	claim := platformads.Claim{
 		ClaimID: "cl_valid", AppID: "ungeul", PlatformUserID: "puid",
-		State: platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
+		Provider: platformads.ProviderAdMob,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
 		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
 	}
 	claims := &fakeClaims{claim: claim}
@@ -141,12 +143,63 @@ func TestRewardUnlockBindsServerVerifiedClaim(t *testing.T) {
 	}
 }
 
+// AppsInToss에는 SSV가 없다. 서버가 지면의 일일 한도와 cooldown을 원자적으로 걸고 받은
+// client_confirmed가 그 provider의 확정이고, 그 위로 승격되는 경로가 없다. 여기서
+// AdMob 기준을 요구하면 AIT 보상형 광고는 구조적으로 영원히 열리지 않는다.
+func TestRewardUnlockBindsSettledAppsInTossClaim(t *testing.T) {
+	unlocks := &fakeUnlocks{}
+	claim := platformads.Claim{
+		ClaimID: "cl_ait", AppID: "ungeul", PlatformUserID: "puid",
+		Provider: platformads.ProviderAppsInToss,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceClientConfirmed,
+		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
+	}
+	claims := &fakeClaims{claim: claim}
+	access := NewAccessService(unlocks, claims, nil)
+	if err := access.Unlock(t.Context(), accessApp(), "puid", "rk", "seun:2026", UnlockRequest{
+		Kind: "reward_claim", Section: "seun", ClaimID: claim.ClaimID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if unlocks.rewardClaim != claim.ClaimID || !claims.acked {
+		t.Fatalf("bound=%q acked=%v", unlocks.rewardClaim, claims.acked)
+	}
+}
+
+// 반대 방향도 막는다. AIT 기준을 AdMob에 쓰면 SSV를 통과하지 않은 보상이 열게 된다.
+func TestRewardUnlockRejectsUnknownProvider(t *testing.T) {
+	for _, claim := range []platformads.Claim{
+		{
+			ClaimID: "cl_none", AppID: "ungeul", PlatformUserID: "puid",
+			State: platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
+			Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
+		},
+		{
+			ClaimID: "cl_pending", AppID: "ungeul", PlatformUserID: "puid",
+			Provider: platformads.ProviderAppsInToss,
+			State:    platformads.StateAccepted, Assurance: platformads.AssuranceClientConfirmed,
+			Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
+		},
+	} {
+		unlocks := &fakeUnlocks{}
+		claims := &fakeClaims{claim: claim}
+		access := NewAccessService(unlocks, claims, nil)
+		err := access.Unlock(t.Context(), accessApp(), "puid", "rk", "seun:2026", UnlockRequest{
+			Kind: "reward_claim", Section: "seun", ClaimID: claim.ClaimID,
+		})
+		if platformerr.CodeOf(err) != platformerr.CodeContentClaimInvalid || unlocks.rewardClaim != "" {
+			t.Fatalf("%s: code=%q bound=%q", claim.ClaimID, platformerr.CodeOf(err), unlocks.rewardClaim)
+		}
+	}
+}
+
 func TestRewardUnlockDoesNotAcknowledgeBeforeBinding(t *testing.T) {
 	bindErr := platformerr.New(platformerr.CodeContentUnavailable, "write failed")
 	unlocks := &fakeUnlocks{bindErr: bindErr}
 	claim := platformads.Claim{
 		ClaimID: "cl_valid", AppID: "ungeul", PlatformUserID: "puid",
-		State: platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
+		Provider: platformads.ProviderAdMob,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
 		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
 	}
 	claims := &fakeClaims{claim: claim}
@@ -163,7 +216,8 @@ func TestRewardUnlockRetriesAcknowledgeAfterBinding(t *testing.T) {
 	unlocks := &fakeUnlocks{}
 	claim := platformads.Claim{
 		ClaimID: "cl_valid", AppID: "ungeul", PlatformUserID: "puid",
-		State: platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
+		Provider: platformads.ProviderAdMob,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
 		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
 	}
 	claims := &fakeClaims{claim: claim, ackErr: errors.New("ack failed")}
