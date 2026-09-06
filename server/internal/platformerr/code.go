@@ -171,6 +171,11 @@ const (
 	CodeSecretConfigInvalid  Code = "secret_config_invalid"
 	CodeLedgerStateInvalid   Code = "ledger_state_invalid"
 	CodeConfigUnavailable    Code = "config_unavailable"
+
+	// 업데이트 정책 조작에서만 나온다. 요청 형식은 맞지만 관측 사실과
+	// 어긋나 유저를 막을 위험이 있는 요청을 거부한다.
+	CodeUpdatePolicyInvalid  Code = "update_policy_invalid"
+	CodeUpdateVersionUnknown Code = "update_version_unknown"
 )
 
 // 이벤트 수집
@@ -320,6 +325,8 @@ var statusByCode = map[Code]int{
 	CodeSecretConfigInvalid:  http.StatusServiceUnavailable,
 	CodeLedgerStateInvalid:   http.StatusInternalServerError,
 	CodeConfigUnavailable:    http.StatusServiceUnavailable,
+	CodeUpdatePolicyInvalid:  http.StatusUnprocessableEntity,
+	CodeUpdateVersionUnknown: http.StatusUnprocessableEntity,
 
 	// 이벤트 수집
 	CodeEventBatchTooLarge: http.StatusBadRequest,

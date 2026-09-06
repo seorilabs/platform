@@ -28,7 +28,9 @@ const (
 	AuditSessionRefresh  AuditAction = "session.refreshed"
 	AuditUserDeleted     AuditAction = "user.deleted"
 
-	AuditConfigPublished AuditAction = "config.published"
+	AuditConfigPublished    AuditAction = "config.published"
+	AuditConfigMaintenance  AuditAction = "config.maintenance"
+	AuditConfigUpdatePolicy AuditAction = "config.update_policy"
 
 	AuditIAPVerified  AuditAction = "iap.verified"
 	AuditIAPGranted   AuditAction = "iap.granted"
