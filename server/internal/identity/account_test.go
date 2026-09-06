@@ -210,7 +210,7 @@ func TestAccountLinkIssuesLinkedSession(t *testing.T) {
 		t.Fatalf("linked session = %#v, err = %v", linkedSession, err)
 	}
 	refreshed, err := service.Refresh(
-		context.Background(), "lizard-tycoon", result.Session.RefreshToken,
+		context.Background(), "lizard-tycoon", result.Session.RefreshToken, ClientInfo{},
 	)
 	if err != nil || !refreshed.IsLinkedAccount {
 		t.Fatalf("refreshed session = %#v, err = %v", refreshed, err)
@@ -221,7 +221,7 @@ func TestAccountLinkIssuesLinkedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	downgraded, err := service.Refresh(
-		context.Background(), "lizard-tycoon", refreshed.RefreshToken,
+		context.Background(), "lizard-tycoon", refreshed.RefreshToken, ClientInfo{},
 	)
 	if err != nil || downgraded.IsLinkedAccount {
 		t.Fatalf("연결 해제 후 갱신 세션 = %#v, err = %v", downgraded, err)

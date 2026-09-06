@@ -9,6 +9,7 @@ import (
 
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 )
 
 // AppHeader는 어느 앱의 요청인지 고르는 힌트다.
@@ -188,6 +189,17 @@ type sessionResponse struct {
 	IsLinkedAccount bool   `json:"isLinkedAccount"`
 	ExpiresIn       int    `json:"expiresIn"`
 	ServerTimeUnix  int64  `json:"serverTimeUnix"`
+
+	// 설정을 동봉해 부팅 왕복을 1회로 줄인다. 오버레이가 없거나 실패하면
+	// 넷 다 빠진다.
+	//
+	// 포인터인 이유는 값으로 두면 실패 시 {"status":""}가 나가고 클라이언트가
+	// 그걸 유효한 판정으로 오해하기 때문이다. 필드가 아예 없으면 "모른다"가
+	// 정직하게 전달되고 클라이언트는 /v1/config로 떨어진다.
+	Features    map[string]bool           `json:"features,omitempty"`
+	SDK         *remoteconfig.SDKStatus   `json:"sdk,omitempty"`
+	Maintenance *remoteconfig.Maintenance `json:"maintenance,omitempty"`
+	ConfigETag  string                    `json:"configEtag,omitempty"`
 }
 
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
@@ -320,7 +332,7 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	res, err := h.svc.Refresh(r.Context(), appID, req.RefreshToken)
+	res, err := h.svc.Refresh(r.Context(), appID, req.RefreshToken, clientInfo(r))
 	if err != nil {
 		return err
 	}
@@ -330,12 +342,21 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) sessionResponse(res Result) sessionResponse {
-	return sessionResponse{
+	out := sessionResponse{
 		PlatformToken: res.PlatformToken, RefreshToken: res.RefreshToken,
 		PlatformUserID: res.PlatformUserID, SupportCode: res.SupportCode, AppUserID: res.AppUserID,
 		IsAnonymous: res.IsAnonymous, IsLinkedAccount: res.IsLinkedAccount,
 		ExpiresIn: res.ExpiresIn, ServerTimeUnix: h.svc.now().Unix(),
 	}
+	if res.HasConfig {
+		sdk := res.Config.SDK
+		maintenance := res.Config.Maint
+		out.Features = res.Config.Features
+		out.SDK = &sdk
+		out.Maintenance = &maintenance
+		out.ConfigETag = res.ConfigETag
+	}
+	return out
 }
 
 func (h *Handler) deleteMe(w http.ResponseWriter, r *http.Request) error {
