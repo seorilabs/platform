@@ -79,6 +79,17 @@ const DEFAULT_RECOMMENDED_MESSAGE = "새 버전이 나왔어요. 업데이트하
 const DEFAULT_MAINTENANCE_MESSAGE = "지금 점검 중이에요. 잠시 후 다시 시도해 주세요";
 
 /**
+ * 서버 문구를 다듬고, 비면 기본 문구를 쓴다.
+ *
+ * GDScript와 같은 규칙이어야 한다. 한쪽만 공백을 다듬으면 같은 응답에
+ * 앱마다 다른 문구가 뜬다. conformance 벡터가 이 규칙을 고정한다.
+ */
+function orDefault(value: string | undefined, fallback: string): string {
+  const text = (value ?? "").trim();
+  return text === "" ? fallback : text;
+}
+
+/**
  * 서버가 확정한 상태를 게이트 결정으로 옮긴다.
  *
  * 버전을 비교하지 않는다. 서버가 `X-Seori-AppVer`와 `X-Seori-Runtime`을 보고
@@ -95,7 +106,7 @@ export function updateGateState(config: RemoteConfig): UpdateGateState {
   if (maintenance?.active) {
     return {
       kind: "maintenance",
-      message: maintenance.message || DEFAULT_MAINTENANCE_MESSAGE,
+      message: orDefault(maintenance.message, DEFAULT_MAINTENANCE_MESSAGE),
       ...(maintenance.until ? { until: maintenance.until } : {}),
     };
   }
@@ -104,7 +115,7 @@ export function updateGateState(config: RemoteConfig): UpdateGateState {
   if (sdk?.status === "blocked") {
     return {
       kind: "required",
-      message: sdk.message || DEFAULT_REQUIRED_MESSAGE,
+      message: orDefault(sdk.message, DEFAULT_REQUIRED_MESSAGE),
       ...(sdk.updateUrl ? { updateUrl: sdk.updateUrl } : {}),
       ...(sdk.recommendedVersion ? { recommendedVersion: sdk.recommendedVersion } : {}),
     };
@@ -112,7 +123,7 @@ export function updateGateState(config: RemoteConfig): UpdateGateState {
   if (sdk?.status === "deprecated") {
     return {
       kind: "recommended",
-      message: sdk.message || DEFAULT_RECOMMENDED_MESSAGE,
+      message: orDefault(sdk.message, DEFAULT_RECOMMENDED_MESSAGE),
       ...(sdk.updateUrl ? { updateUrl: sdk.updateUrl } : {}),
       ...(sdk.recommendedVersion ? { recommendedVersion: sdk.recommendedVersion } : {}),
     };
@@ -232,6 +243,15 @@ export class Config {
   private etag: string | undefined;
   private inflight: Promise<RemoteConfig> | null = null;
 
+  /**
+   * `/v1/config` 전체 응답을 한 번이라도 받았는지.
+   *
+   * 세션 오버레이에는 `values`가 없는데 ETag는 전체 설정을 가리킨다.
+   * 그 ETag로 조건부 요청을 보내면 서버가 304를 주고, 클라이언트는
+   * `values`를 영영 받지 못한다. 캐시가 완전해진 뒤에만 ETag를 쓴다.
+   */
+  private hasFullConfig = false;
+
   constructor(opts: ConfigOptions) {
     this.transport = opts.transport;
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
@@ -282,7 +302,12 @@ export class Config {
     if (!log) return true;
     // 권장 기준이 올라갔으면 이력을 무시하고 다시 띄운다.
     if (log.version !== (state.recommendedVersion ?? "")) return true;
-    return this.now() - log.promptedAt >= RECOMMEND_PROMPT_INTERVAL_MS;
+
+    const elapsed = this.now() - log.promptedAt;
+    // 기기 시계가 과거로 교정되면 경과가 음수가 된다. 그대로 두면 미래
+    // 시각에서 24시간이 더 지날 때까지 안내가 멈춘다.
+    if (elapsed < 0) return true;
+    return elapsed >= RECOMMEND_PROMPT_INTERVAL_MS;
   }
 
   /** 권장 안내를 띄운 사실을 남긴다. 강제와 점검은 기록하지 않는다. */
@@ -337,11 +362,12 @@ export class Config {
           platform: target.platform,
           locale: target.locale,
         },
-        headers: this.etag ? { "If-None-Match": this.etag } : {},
+        headers: this.hasFullConfig && this.etag ? { "If-None-Match": this.etag } : {},
       });
 
       this.cached = res;
       this.cachedAt = this.now();
+      this.hasFullConfig = true;
       return res;
     } catch (err) {
       // 304는 "캐시가 그대로 유효하다"는 뜻이다. Transport가 응답 헤더를

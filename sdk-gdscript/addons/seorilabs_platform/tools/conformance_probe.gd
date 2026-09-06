@@ -16,7 +16,7 @@ const PlatformClient := preload("res://addons/seorilabs_platform/platform_client
 ## 최소 검사 수.
 ##
 ## 벡터가 늘면 이 값도 올린다. 줄어들면 무언가 조용히 빠진 것이다.
-const MIN_EXPECTED_CHECKS := 72
+const MIN_EXPECTED_CHECKS := 76
 
 var _failures: Array[String] = []
 var _checks := 0

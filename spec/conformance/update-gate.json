@@ -54,7 +54,8 @@
   "gate_rules": [
     "점검이 강제보다 우선한다. 점검은 시간이 정해져 있고 자동으로 해제되며 안내가 더 행동 가능하다.",
     "모르는 status는 ok로 읽는다. 서버가 상태를 추가해도 구버전 SDK가 스스로를 막지 않는다.",
-    "판정은 서버가 한다. 클라이언트는 semver를 비교하지 않는다."
+    "판정은 서버가 한다. 클라이언트는 semver를 비교하지 않는다.",
+    "문구는 앞뒤 공백을 다듬고, 비면 SDK 기본 문구를 쓴다. 한쪽만 다듬으면 같은 응답에 앱마다 다른 문구가 뜬다."
   ],
   "gate_cases": [
     {
@@ -162,6 +163,58 @@
       "gate": {
         "kind": "required",
         "message": "업데이트가 필요해요"
+      }
+    },
+    {
+      "name": "문구 앞뒤 공백을 다듬는다",
+      "config": {
+        "sdk": {
+          "status": "deprecated",
+          "message": "  새 버전이 나왔어요  "
+        }
+      },
+      "gate": {
+        "kind": "recommended",
+        "message": "새 버전이 나왔어요"
+      }
+    },
+    {
+      "name": "공백뿐인 문구는 기본 문구로 대체한다",
+      "config": {
+        "sdk": {
+          "status": "blocked",
+          "message": "   "
+        }
+      },
+      "gate": {
+        "kind": "required",
+        "message": "업데이트가 필요해요. 스토어에서 최신 버전을 받아 주세요"
+      }
+    },
+    {
+      "name": "문구가 없는 권장은 기본 문구를 쓴다",
+      "config": {
+        "sdk": {
+          "status": "deprecated",
+          "recommendedVersion": "1.5.0"
+        }
+      },
+      "gate": {
+        "kind": "recommended",
+        "message": "새 버전이 나왔어요. 업데이트하면 더 편하게 쓸 수 있어요",
+        "recommendedVersion": "1.5.0"
+      }
+    },
+    {
+      "name": "문구 없는 점검도 기본 문구를 쓴다",
+      "config": {
+        "maintenance": {
+          "active": true
+        }
+      },
+      "gate": {
+        "kind": "maintenance",
+        "message": "지금 점검 중이에요. 잠시 후 다시 시도해 주세요"
       }
     }
   ]

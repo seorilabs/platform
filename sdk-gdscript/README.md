@@ -197,11 +197,14 @@ waiter를 `auth_state_changed`로 한 번 끝내고, 늦게 도착한 refresh·�
 로그인하면 서버가 설정을 응답에 얹어 준다. 부팅 왕복이 하나 준다.
 
 ```gdscript
-platform.update_gate_changed.connect(func(state: Dictionary) -> void:
-    if state["kind"] != "ok":
-        platform.show_update_gate()
+platform.update_gate_changed.connect(func(_state: Dictionary) -> void:
+    platform.show_update_gate()
 )
 ```
+
+**상태를 가리지 말고 항상 부른다.** `show_update_gate()`가 `ok`에서 떠
+있던 화면을 내린다. `kind != "ok"`일 때만 부르면, 강제나 점검이 해제돼도
+닫을 수 없는 화면이 재시작 전까지 남는다.
 
 `show_update_gate()`는 SDK 기본 오버레이를 띄운다. 자기 UI로 그리려면
 `update_gate_state()`가 준 Dictionary만 쓰면 된다.

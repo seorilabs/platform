@@ -849,17 +849,19 @@ describe("Config", () => {
     assert.equal(f.count, 1);
   });
 
-  it("세션이 준 configEtag를 다음 조회의 If-None-Match로 보낸다", async () => {
-    const f = fakeFetch([ok(configBody)]);
-    const c = new Config({ transport: newTransport(f.impl), ttlMs: 60_000, now: () => 1_000 });
+  // 세션 오버레이에는 values가 없는데 ETag는 전체 설정을 가리킨다.
+  // 그 ETag로 조건부 요청을 보내면 서버가 304를 주고 values를 영영 못 받는다.
+  it("전체 설정을 받기 전에는 세션 ETag를 조건부 요청에 쓰지 않는다", async () => {
+    const f = fakeFetch([ok(configBody), ok(configBody)]);
+    const c = new Config({ transport: newTransport(f.impl), ttlMs: 0, now: () => 1_000 });
 
     c.seedSession({ sdk: { status: "ok" }, configEtag: 'W/"abc123"' });
-    // 캐시가 채워졌으므로 TTL을 넘겨야 조회가 나간다.
-    const stale = new Config({ transport: newTransport(f.impl), ttlMs: 0, now: () => 1_000 });
-    stale.seedSession({ sdk: { status: "ok" }, configEtag: 'W/"abc123"' });
-    await stale.fetch(target);
+    await c.fetch(target);
+    assert.equal(f.calls[0]!.headers["If-None-Match"], undefined);
 
-    assert.equal(f.calls[0]!.headers["If-None-Match"], 'W/"abc123"');
+    // 전체 응답을 받은 뒤에는 캐시가 완전하므로 써도 된다.
+    await c.fetch(target);
+    assert.equal(f.calls[1]!.headers["If-None-Match"], 'W/"abc123"');
   });
 });
 
@@ -939,6 +941,36 @@ describe("업데이트 게이트", () => {
 
     now += 24 * 60 * 60 * 1000;
     assert.equal(await c.shouldPrompt(recommended), true);
+  });
+
+  // 기기 시계가 과거로 교정되면 경과가 음수가 된다. 그대로 두면 미래
+  // 시각에서 24시간이 더 지날 때까지 안내가 멈춘다.
+  it("시계가 역행하면 이력을 무시하고 다시 띄운다", async () => {
+    let now = 5_000_000_000;
+    const f = fakeFetch([]);
+    const c = new Config({
+      transport: newTransport(f.impl),
+      now: () => now,
+      gateStore: new MemoryGateStore(),
+    });
+
+    const state = { kind: "recommended", message: "m", recommendedVersion: "1.5.0" } as const;
+    await c.markPrompted(state);
+    now -= 60 * 60 * 1000;
+
+    assert.equal(await c.shouldPrompt(state), true);
+  });
+
+  // 한쪽만 공백을 다듬으면 같은 응답에 앱마다 다른 문구가 뜬다.
+  it("문구 앞뒤 공백을 다듬고 비면 기본 문구를 쓴다", () => {
+    const trimmed = updateGateState({
+      ...base,
+      sdk: { status: "deprecated", message: "  새 버전이 나왔어요  " },
+    });
+    assert.equal(trimmed.kind === "recommended" && trimmed.message, "새 버전이 나왔어요");
+
+    const blank = updateGateState({ ...base, sdk: { status: "blocked", message: "   " } });
+    assert.match(blank.kind === "required" ? blank.message : "", /스토어에서 최신 버전/);
   });
 
   // 권장 기준이 올라갔는데 하루를 기다리게 하면 새 안내가 늦는다.

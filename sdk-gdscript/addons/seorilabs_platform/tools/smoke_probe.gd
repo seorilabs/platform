@@ -1232,6 +1232,22 @@ func _check_update_gate() -> void:
 	client.hide_update_gate()
 	_expect(client._gate == null, "게이트가 내려가지 않았다")
 
+	# 강제 화면이 떠 있는 동안 권장으로 바뀌면, 노출 이력과 무관하게
+	# 갱신돼야 한다. 안 그러면 닫을 수 없는 화면에 유저가 갇힌다.
+	client.show_update_gate()
+	client._set_config({
+		"values": {},
+		"features": {},
+		"sdk": {"status": "deprecated", "recommendedVersion": "1.5.0"},
+		"maintenance": {"active": false},
+	})
+	# 같은 버전을 방금 안내했으므로 새로 띄우는 것은 억제된다.
+	client.show_update_gate()
+	_expect(client._gate != null, "떠 있던 게이트가 사라졌다")
+	_expect(client._gate._later_button.visible,
+		"권장으로 바뀌었는데 닫기 수단이 없다")
+	client.hide_update_gate()
+
 	# 정상이면 아무것도 띄우지 않는다.
 	client._set_config(PlatformClient._fallback_config())
 	client.show_update_gate()

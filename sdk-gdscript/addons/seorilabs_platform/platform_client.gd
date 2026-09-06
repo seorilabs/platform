@@ -838,14 +838,16 @@ static func _gate_state_of(config: Dictionary) -> Dictionary:
 ## options 키: labels(Dictionary: update, later), force(bool - 이력 무시)
 func show_update_gate(options: Dictionary = {}) -> void:
 	var state := update_gate_state()
-	var kind := String(state.get("kind", "ok"))
-	if kind == "ok":
+	if String(state.get("kind", "ok")) == "ok":
 		hide_update_gate()
 		return
-	if not bool(options.get("force", false)) and not _should_prompt(state):
-		return
 
+	# 이미 떠 있으면 이력과 무관하게 갱신한다. 노출 이력은 새로 띄울 때만
+	# 본다. 닫을 수 없는 강제·점검 화면이 뜬 뒤 상태가 권장으로 바뀌었는데
+	# 이력 때문에 갱신을 건너뛰면 유저가 옛 화면에 갇힌다.
 	if _gate == null:
+		if not bool(options.get("force", false)) and not _should_prompt(state):
+			return
 		_gate = UpdateGate.new()
 		_gate.update_pressed.connect(_on_gate_update_pressed)
 		_gate.later_pressed.connect(hide_update_gate)
@@ -881,7 +883,12 @@ func _should_prompt(state: Dictionary) -> bool:
 	if String(log.get("version", "")) != String(state.get("recommended_version", "")):
 		return true
 	var prompted_at := int(log.get("promptedAt", 0))
-	return _now_unix_ms() - prompted_at >= RECOMMEND_PROMPT_INTERVAL_MS
+	var elapsed := _now_unix_ms() - prompted_at
+	# 기기 시계가 과거로 교정되면 경과가 음수가 된다. 그대로 두면 미래
+	# 시각에서 24시간이 더 지날 때까지 안내가 멈춘다.
+	if elapsed < 0:
+		return true
+	return elapsed >= RECOMMEND_PROMPT_INTERVAL_MS
 
 
 func _mark_prompted(state: Dictionary) -> void:
