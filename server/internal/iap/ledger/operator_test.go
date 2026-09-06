@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -163,5 +164,33 @@ func TestSafeDocIDHidesOffContractIDs(t *testing.T) {
 	}
 	if !strings.Contains(got, "18") {
 		t.Errorf("길이 단서가 없다: %s", got)
+	}
+}
+
+func TestOrderSummaryPreservesObservedFactsWithoutProviderIdentifiers(t *testing.T) {
+	test := true
+	purchased := time.Date(2026, 8, 16, 1, 0, 0, 0, time.UTC)
+	observed := purchased.Add(24 * time.Hour)
+	for _, platform := range []domain.Platform{domain.PlatformGooglePlay, domain.PlatformAppStore, domain.PlatformAppsInToss, domain.PlatformOperator} {
+		for _, providerID := range []string{"", "provider-private-order"} {
+			doc := orderDoc{Platform: platform, ProviderOrderID: providerID, IsTestPurchase: &test, PurchasedAt: purchased, ObservedAt: observed, State: domain.StateRevoked}
+			summary := summarizeOrder(strings.Repeat("a", 64), doc)
+			if summary.ProviderOrderIDPresent != (platform.IsMarket() && providerID != "") {
+				t.Fatal("wrong financial order presence")
+			}
+			if summary.IsTestPurchase == nil || !*summary.IsTestPurchase || summary.PurchasedAt != purchased || summary.ObservedAt != observed {
+				t.Fatal("purchase facts changed")
+			}
+			encoded, err := json.Marshal(summary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), "provider-private-order") {
+				t.Fatal("raw provider ID leaked")
+			}
+		}
+	}
+	if summarizeOrder("legacy", orderDoc{}).IsTestPurchase != nil {
+		t.Fatal("legacy order was assumed to be real")
 	}
 }

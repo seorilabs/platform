@@ -616,10 +616,12 @@ func TestAllowedServiceAccountPasses(t *testing.T) {
 }
 
 func TestRecentOrders(t *testing.T) {
+	testPurchase := true
 	l := &fakeLedger{orders: []ledger.OrderSummary{
 		{
 			OrderKey: strings.Repeat("a", 64), PlatformUserID: testPUID,
 			EntitlementID: "sp_a", Platform: "google_play", ProductID: "sku_a", State: "active",
+			IsTestPurchase: &testPurchase, ProviderOrderIDPresent: true,
 		},
 	}}
 	h := newHandler(t, l, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
@@ -637,9 +639,12 @@ func TestRecentOrders(t *testing.T) {
 	if order, _ := orders[0].(map[string]any); order["appId"] != "a" {
 		t.Errorf("appId = %v, want identity binding의 a", order["appId"])
 	} else {
+		if order["isTestPurchase"] != true || order["providerOrderIdPresent"] != true {
+			t.Errorf("거래 분류 근거 누락: %v", order)
+		}
 		assertExactJSONKeys(t, order,
 			"orderKey", "appId", "platformUserId", "entitlementId", "platform",
-			"productId", "state", "purchasedAt", "observedAt", "tombstone")
+			"productId", "state", "purchasedAt", "observedAt", "tombstone", "isTestPurchase", "providerOrderIdPresent")
 	}
 }
 

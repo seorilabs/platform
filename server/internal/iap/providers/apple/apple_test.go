@@ -145,11 +145,14 @@ func TestEnvironmentIsolation(t *testing.T) {
 			tx.Environment = tt.txEnv
 			v := newVerifier(t, &fakeSource{tx: tx}, tt.sandbox)
 
-			_, err := v.Verify(context.Background(), appleProof())
+			purchase, err := v.Verify(context.Background(), appleProof())
 
 			if !tt.wantError {
 				if err != nil {
 					t.Fatalf("거부하면 안 되는데 거부했다: %v", err)
+				}
+				if purchase.IsTestPurchase == nil || *purchase.IsTestPurchase != tt.sandbox {
+					t.Fatal("verified purchase environment was not preserved")
 				}
 				return
 			}

@@ -178,11 +178,13 @@ func (v *Verifier) mapTransaction(
 		completion = domain.CompletionNone
 	}
 
+	isTestPurchase := v.environment == appstore.Sandbox
 	return domain.VerifiedPurchase{
 		Platform:          domain.PlatformAppStore,
 		ProductID:         tx.ProductID,
 		CanonicalID:       canonicalID,
 		ProviderOrderID:   tx.TransactionID,
+		IsTestPurchase:    &isTestPurchase,
 		PlatformAccountID: tx.AppAccountToken,
 		PurchasedAt:       millisToTime(tx.PurchaseDate),
 		ObservedAt:        observedAt,

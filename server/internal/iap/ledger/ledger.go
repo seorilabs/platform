@@ -23,6 +23,7 @@ type orderDoc struct {
 	Platform        domain.Platform `firestore:"platform"`
 	ProductID       string          `firestore:"productId"`
 	ProviderOrderID string          `firestore:"providerOrderId"`
+	IsTestPurchase  *bool           `firestore:"isTestPurchase,omitempty"`
 
 	// 마켓 계정 참조는 원문이 아니라 해시로 저장한다. ADR 0005
 	PlatformAccountIDHash string `firestore:"platformAccountIdHash"`
@@ -417,6 +418,7 @@ func (l *Ledger) grant(
 			order.Platform = in.Purchase.Platform
 			order.ProductID = in.Purchase.ProductID
 			order.ProviderOrderID = in.Purchase.ProviderOrderID
+			order.IsTestPurchase = in.Purchase.IsTestPurchase
 			order.PlatformAccountIDHash = domain.HashAccountID(in.Purchase.PlatformAccountID)
 			order.State = domain.StateRevoked
 			order.PurchasedAt = in.Purchase.PurchasedAt
@@ -457,12 +459,14 @@ func (l *Ledger) grant(
 		storedPurchasedAt := in.Purchase.PurchasedAt
 		storedObservedAt := in.Purchase.ObservedAt
 		storedProviderOrderID := in.Purchase.ProviderOrderID
+		storedIsTestPurchase := in.Purchase.IsTestPurchase
 		storedAccountHash := domain.HashAccountID(in.Purchase.PlatformAccountID)
 		if preserveLatestOnTransfer {
 			storedState = order.State
 			storedPurchasedAt = order.PurchasedAt
 			storedObservedAt = order.ObservedAt
 			storedProviderOrderID = order.ProviderOrderID
+			storedIsTestPurchase = order.IsTestPurchase
 			storedAccountHash = order.PlatformAccountIDHash
 		}
 
@@ -481,6 +485,7 @@ func (l *Ledger) grant(
 			Platform:              in.Purchase.Platform,
 			ProductID:             in.Purchase.ProductID,
 			ProviderOrderID:       storedProviderOrderID,
+			IsTestPurchase:        storedIsTestPurchase,
 			PlatformAccountIDHash: storedAccountHash,
 			State:                 storedState,
 			PurchasedAt:           storedPurchasedAt,
@@ -1892,6 +1897,7 @@ func (l *Ledger) RecordPending(ctx context.Context, in GrantInput) error {
 			Platform:              in.Purchase.Platform,
 			ProductID:             in.Purchase.ProductID,
 			ProviderOrderID:       in.Purchase.ProviderOrderID,
+			IsTestPurchase:        in.Purchase.IsTestPurchase,
 			PlatformAccountIDHash: domain.HashAccountID(in.Purchase.PlatformAccountID),
 			State:                 domain.StatePending,
 			PurchasedAt:           in.Purchase.PurchasedAt,

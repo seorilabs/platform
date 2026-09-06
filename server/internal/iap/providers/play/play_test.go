@@ -448,3 +448,49 @@ func TestNewValidation(t *testing.T) {
 		t.Error("nil 클라이언트를 허용했다")
 	}
 }
+
+func TestPurchaseEnvironmentIsProviderObserved(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"실거래", purchasedBody, false},
+		{"테스트 처리", strings.Replace(purchasedBody, `"kind":`, `"testPurchaseContext":{"fopType":"TEST"},"kind":`, 1), true},
+		{"테스트 환불", strings.Replace(strings.Replace(purchasedBody, `"kind":`, `"testPurchaseContext":{"fopType":"TEST"},"kind":`, 1), `"PURCHASED"`, `"CANCELLED"`, 1), true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			v, _ := newFakeServer(t, jsonResponse(http.StatusOK, tt.body))
+			got, err := v.Verify(context.Background(), testProof())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.IsTestPurchase == nil || *got.IsTestPurchase != tt.want {
+				t.Fatalf("test purchase classification missing or wrong")
+			}
+		})
+	}
+}
+
+func TestConsumableNonStandardPurchaseIsNotAssumedPaid(t *testing.T) {
+	for _, tt := range []struct {
+		kind string
+		want *bool
+	}{
+		{"", boolPointer(false)}, {`,"purchaseType":0`, boolPointer(true)},
+		{`,"purchaseType":1`, nil}, {`,"purchaseType":2`, nil},
+	} {
+		body := strings.TrimSuffix(strings.TrimSpace(consumableBody), "}") + tt.kind + "}"
+		v, _ := newFakeServer(t, jsonResponse(http.StatusOK, body))
+		proof := testProof()
+		proof.ProductType = domain.ProductConsumable
+		got, err := v.Verify(context.Background(), proof)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (got.IsTestPurchase == nil) != (tt.want == nil) || (tt.want != nil && *got.IsTestPurchase != *tt.want) {
+			t.Fatalf("wrong purchase type classification for %s", tt.kind)
+		}
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
