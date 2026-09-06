@@ -1,6 +1,6 @@
 {
   "name": "@seorilabs/platform-sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Seorilabs 공통 플랫폼 클라이언트 SDK",
   "type": "module",
   "license": "MIT",
@@ -19,6 +19,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./gate-dom": {
+      "types": "./dist/gate-dom.d.ts",
+      "default": "./dist/gate-dom.js"
     }
   },
   "files": [

@@ -19,15 +19,37 @@ extends Node
 const HttpTransport := preload("core/http_transport.gd")
 const Normalizer := preload("core/param_normalizer.gd")
 const PresenceClient := preload("core/presence_client.gd")
+const AtomicJsonStore := preload("core/atomic_json_store.gd")
+const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.6.8"
+const SDK_VERSION := "0.7.0"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
 
 ## 설정이 갱신되면 발생한다.
 signal config_changed(config: Dictionary)
+
+## 업데이트 게이트 상태가 바뀌면 발생한다.
+##
+## 자기 UI로 그리는 앱은 config_changed 대신 이걸 구독하면 semver를 볼
+## 필요가 없다. 판정은 서버가 이미 끝냈다.
+signal update_gate_changed(state: Dictionary)
+
+## 정책이 이겼는데 서버가 문구를 주지 않았을 때 쓴다.
+const DEFAULT_REQUIRED_MESSAGE := "업데이트가 필요해요. 스토어에서 최신 버전을 받아 주세요"
+const DEFAULT_RECOMMENDED_MESSAGE := "새 버전이 나왔어요. 업데이트하면 더 편하게 쓸 수 있어요"
+const DEFAULT_MAINTENANCE_MESSAGE := "지금 점검 중이에요. 잠시 후 다시 시도해 주세요"
+
+## 권장 안내를 다시 띄우기까지의 간격.
+##
+## 매 실행마다 띄우면 짜증나고, 버전당 1회면 한 번 닫은 유저가 그대로
+## 구버전에 남는다. 하루 1회는 잔존하는 유저에게 반복 노출된다.
+const RECOMMEND_PROMPT_INTERVAL_MS := 24 * 60 * 60 * 1000
+
+## 권장 안내 노출 이력 파일.
+const GATE_PROMPT_PATH := "user://seorilabs_platform_update_gate.json"
 
 ## 만료 몇 ms 전부터 미리 갱신할지.
 ##
@@ -47,6 +69,7 @@ const MAX_GA4_CLIENT_ID_LENGTH := 64
 
 var _transport: HttpTransport
 var _presence: PresenceClient
+var _gate: UpdateGate
 var _session: Dictionary = {}
 var _api_base_url := ""
 var _app_id := ""
@@ -256,10 +279,7 @@ func _request_sign_in(
 					return
 				# 세션 응답에 설정이 얹혀 오면 캐시를 채운다.
 				# 앱 시작 시 왕복이 하나 준다.
-				var result: Dictionary = response["result"]
-				if result.has("config") and typeof(result["config"]) == TYPE_DICTIONARY:
-					_config = result["config"]
-					config_changed.emit(_config)
+				_seed_config_from_session(response["result"])
 			_invoke(callback, response)
 	)
 
@@ -703,8 +723,7 @@ func fetch_config(target: Dictionary, callback: Callable = Callable()) -> void:
 		},
 		func(response: Dictionary) -> void:
 			if response.get("ok", false):
-				_config = response["result"]
-				config_changed.emit(_config)
+				_set_config(response["result"])
 			_invoke(callback, {
 				"ok": true,
 				"result": _config,
@@ -719,16 +738,172 @@ func current_config() -> Dictionary:
 	return _config.duplicate(true)
 
 
+func _set_config(config: Dictionary) -> void:
+	_config = config
+	config_changed.emit(_config)
+	update_gate_changed.emit(update_gate_state())
+
+
+## 세션 응답에 실려 온 설정을 캐시에 넣는다.
+##
+## 통째로 덮지 않고 병합한다. 세션 오버레이에는 values가 없어서, 덮으면
+## 앞서 /v1/config로 받은 값이 사라진다.
+##
+## 네 필드가 하나도 없으면 서버가 설정을 싣지 못한 것이다. 그때는 캐시를
+## 건드리지 않는다.
+func _seed_config_from_session(result: Dictionary) -> void:
+	var has_overlay := (
+		result.has("sdk") or result.has("maintenance") or result.has("features")
+	)
+	if not has_overlay:
+		return
+
+	var merged := _config.duplicate(true)
+	for key in ["features", "sdk", "maintenance"]:
+		if result.has(key) and typeof(result[key]) == TYPE_DICTIONARY:
+			merged[key] = result[key]
+	_set_config(merged)
+
+
 ## 점검 중인지 본다.
+##
+## vendoring된 0.6.x를 쓰는 앱들이 부르고 있어 남긴다.
 func is_under_maintenance() -> bool:
-	var maintenance: Dictionary = _config.get("maintenance", {})
-	return bool(maintenance.get("active", false))
+	return String(update_gate_state().get("kind", "ok")) == "maintenance"
 
 
-## SDK가 차단됐는지 본다. 강제 업데이트 판단에 쓴다.
+## SDK가 차단됐는지 본다.
+##
+## vendoring된 0.6.x를 쓰는 앱들이 부르고 있어 남긴다. 새 코드는
+## update_gate_state()를 쓴다.
 func is_sdk_blocked() -> bool:
 	var sdk: Dictionary = _config.get("sdk", {})
 	return String(sdk.get("status", "ok")) == "blocked"
+
+
+## 지금 앱이 무엇을 보여줘야 하는지.
+##
+## 버전을 비교하지 않는다. 서버가 X-Seori-AppVer와 X-Seori-Runtime을 보고
+## 이미 판정했다. 같은 비교 구현을 TS와 GDScript에 두 벌 두면 언젠가 갈라진다.
+##
+## 반환 키: kind(ok|recommended|required|maintenance), message,
+## update_url, recommended_version, until
+func update_gate_state() -> Dictionary:
+	return _gate_state_of(_config)
+
+
+## 계약이 정본이라 conformance probe가 같은 함수를 직접 부른다.
+static func _gate_state_of(config: Dictionary) -> Dictionary:
+	var maintenance: Dictionary = config.get("maintenance", {})
+	if bool(maintenance.get("active", false)):
+		# 점검이 강제보다 우선한다. 시간이 정해져 있고 자동으로 해제되며
+		# 안내 문구가 더 행동 가능하다.
+		var state := {
+			"kind": "maintenance",
+			"message": _or_default(maintenance.get("message", ""), DEFAULT_MAINTENANCE_MESSAGE),
+		}
+		var until := String(maintenance.get("until", ""))
+		if not until.is_empty():
+			state["until"] = until
+		return state
+
+	var sdk: Dictionary = config.get("sdk", {})
+	var status := String(sdk.get("status", "ok"))
+	# 모르는 status는 ok로 읽는다. 서버가 상태를 추가해도 구버전 SDK가
+	# 스스로를 막지 않는다.
+	if status != "blocked" and status != "deprecated":
+		return {"kind": "ok"}
+
+	var kind := "required" if status == "blocked" else "recommended"
+	var fallback := DEFAULT_REQUIRED_MESSAGE if status == "blocked" else DEFAULT_RECOMMENDED_MESSAGE
+	var out := {
+		"kind": kind,
+		"message": _or_default(sdk.get("message", ""), fallback),
+	}
+	var update_url := String(sdk.get("updateUrl", ""))
+	if not update_url.is_empty():
+		out["update_url"] = update_url
+	var recommended := String(sdk.get("recommendedVersion", ""))
+	if not recommended.is_empty():
+		out["recommended_version"] = recommended
+	return out
+
+
+## 기본 게이트 오버레이를 띄운다. 이미 떠 있으면 상태만 갱신한다.
+##
+## 정상이면 아무것도 띄우지 않고 떠 있던 것을 내린다.
+##
+## 권장 안내는 하루 1회만 뜬다. 강제와 점검은 이력과 무관하게 항상 뜬다.
+##
+## options 키: labels(Dictionary: update, later), force(bool - 이력 무시)
+func show_update_gate(options: Dictionary = {}) -> void:
+	var state := update_gate_state()
+	if String(state.get("kind", "ok")) == "ok":
+		hide_update_gate()
+		return
+
+	# 이미 떠 있으면 이력과 무관하게 갱신한다. 노출 이력은 새로 띄울 때만
+	# 본다. 닫을 수 없는 강제·점검 화면이 뜬 뒤 상태가 권장으로 바뀌었는데
+	# 이력 때문에 갱신을 건너뛰면 유저가 옛 화면에 갇힌다.
+	if _gate == null:
+		if not bool(options.get("force", false)) and not _should_prompt(state):
+			return
+		_gate = UpdateGate.new()
+		_gate.update_pressed.connect(_on_gate_update_pressed)
+		_gate.later_pressed.connect(hide_update_gate)
+		add_child(_gate)
+	_gate.apply_state(state, options)
+	_mark_prompted(state)
+
+
+## 게이트를 내린다. 떠 있지 않으면 아무 일도 하지 않는다.
+func hide_update_gate() -> void:
+	if _gate == null:
+		return
+	_gate.queue_free()
+	_gate = null
+
+
+func _on_gate_update_pressed(url: String) -> void:
+	OS.shell_open(url)
+
+
+## 이 상태를 지금 띄워도 되는지 본다.
+##
+## 강제와 점검은 언제나 true다. 이력은 권장에만 적용된다.
+func _should_prompt(state: Dictionary) -> bool:
+	if String(state.get("kind", "ok")) != "recommended":
+		return true
+
+	var read: Dictionary = AtomicJsonStore.read_dictionary(GATE_PROMPT_PATH)
+	if not bool(read.get("ok", false)) or not bool(read.get("exists", false)):
+		return true
+	var log: Dictionary = read.get("value", {})
+	# 권장 기준이 올라갔으면 이력을 무시하고 다시 띄운다.
+	if String(log.get("version", "")) != String(state.get("recommended_version", "")):
+		return true
+	var prompted_at := int(log.get("promptedAt", 0))
+	var elapsed := _now_unix_ms() - prompted_at
+	# 기기 시계가 과거로 교정되면 경과가 음수가 된다. 그대로 두면 미래
+	# 시각에서 24시간이 더 지날 때까지 안내가 멈춘다.
+	if elapsed < 0:
+		return true
+	return elapsed >= RECOMMEND_PROMPT_INTERVAL_MS
+
+
+func _mark_prompted(state: Dictionary) -> void:
+	if String(state.get("kind", "ok")) != "recommended":
+		return
+	# 저장 실패가 안내를 막으면 안 된다. 다음에 한 번 더 뜰 뿐이다.
+	AtomicJsonStore.write(GATE_PROMPT_PATH, {
+		"version": String(state.get("recommended_version", "")),
+		"promptedAt": _now_unix_ms(),
+	})
+
+
+static func _or_default(value: Variant, fallback: String) -> String:
+	var text := String(value).strip_edges()
+	return fallback if text.is_empty() else text
 
 
 static func _fallback_config() -> Dictionary:

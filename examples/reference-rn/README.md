@@ -210,20 +210,60 @@ function handlePurchaseError(code: string): void {
 
 `err.local`이 `true`면 서버에 닿지 못한 것이다.
 
-## 7. RemoteConfig
+## 7. RemoteConfig와 업데이트 게이트
+
+로그인하면 서버가 설정을 응답에 얹어 준다. 부팅 왕복이 하나 준다.
+따로 조회하고 싶으면 `platform.config.fetch(target)`을 쓴다.
 
 ```ts
-import { Platform } from "react-native";
+import { Platform, Linking } from "react-native";
 import DeviceInfo from "react-native-device-info";
 
-const config = await platform.config.fetch({
-  appVersion: DeviceInfo.getVersion(),
-  platform: Platform.OS === "ios" ? "ios" : "android",
-});
+await platform.signIn(credential);          // 응답의 설정이 캐시에 담긴다
 
-if (config.maintenance.active) return <MaintenanceScreen />;
-if (config.sdk.status === "blocked") return <ForceUpdateScreen />;
+const state = platform.config.gate();
+if (state.kind !== "ok" && await platform.config.shouldPrompt(state)) {
+  await platform.config.markPrompted(state);
+  return <UpdateGate state={state} onUpdate={(url) => Linking.openURL(url)} />;
+}
 ```
+
+**버전을 비교하지 않는다.** 서버가 `X-Seori-AppVer`와 `X-Seori-Runtime`을
+보고 이미 판정했다. `state.kind`만 보면 된다.
+
+| kind | 화면 |
+| --- | --- |
+| `ok` | 아무것도 띄우지 않는다 |
+| `recommended` | 닫을 수 있는 안내. **하루 1회만** 뜬다 |
+| `required` | 닫기 수단을 만들지 않는다 |
+| `maintenance` | 닫을 수 없고 업데이트할 대상도 없다 |
+
+`state.updateUrl`이 없으면 업데이트 버튼을 그리지 않는다. 눌러도 아무 일
+없는 버튼을 만들면 유저가 갇힌 것으로 느낀다.
+
+### 노출 이력 저장소
+
+권장 안내를 하루 1회로 제한하려면 저장소가 필요하다. 넣지 않으면 앱을
+다시 켤 때마다 뜬다.
+
+```ts
+const platform = createPlatform({
+  // ...
+  gateStore: {
+    async load() {
+      const raw = await AsyncStorage.getItem("seori.updateGate");
+      return raw ? JSON.parse(raw) : null;
+    },
+    async save(log) {
+      await AsyncStorage.setItem("seori.updateGate", JSON.stringify(log));
+    },
+  },
+});
+```
+
+> 웹과 AIT WebView는 주입 없이 `localStorage`를 쓴다. 기본 화면도 필요하면
+> `@seorilabs/platform-sdk/gate-dom`의 `mountUpdateGate()`를 쓸 수 있다.
+> **RN에서는 import하지 않는다** — DOM 코드라 번들러가 깨진다.
 
 **실패하면 열린 기본값을 준다.** 설정을 못 읽었다고 앱을 막으면
 서버 장애가 전체 중단으로 번진다. 차단은 서버가 명시할 때만 한다.

@@ -192,6 +192,39 @@ waiter를 `auth_state_changed`로 한 번 끝내고, 늦게 도착한 refresh·�
 재로그인 응답은 세션에 저장하거나 IAP 요청에 재사용하지 않는다. refresh
 실패 응답은 `http_status`, `local`, `valid`를 포함한 원래 envelope를 보존한다.
 
+### 업데이트 게이트
+
+로그인하면 서버가 설정을 응답에 얹어 준다. 부팅 왕복이 하나 준다.
+
+```gdscript
+platform.update_gate_changed.connect(func(_state: Dictionary) -> void:
+    platform.show_update_gate()
+)
+```
+
+**상태를 가리지 말고 항상 부른다.** `show_update_gate()`가 `ok`에서 떠
+있던 화면을 내린다. `kind != "ok"`일 때만 부르면, 강제나 점검이 해제돼도
+닫을 수 없는 화면이 재시작 전까지 남는다.
+
+`show_update_gate()`는 SDK 기본 오버레이를 띄운다. 자기 UI로 그리려면
+`update_gate_state()`가 준 Dictionary만 쓰면 된다.
+
+**버전을 비교하지 않는다.** 서버가 `X-Seori-AppVer`와 `X-Seori-Runtime`을
+보고 이미 판정했다.
+
+| kind | 화면 |
+| --- | --- |
+| `ok` | 아무것도 띄우지 않는다 |
+| `recommended` | 닫을 수 있는 안내. **하루 1회만** 뜬다 |
+| `required` | 닫기 수단을 만들지 않는다 |
+| `maintenance` | 닫을 수 없고 업데이트할 대상도 없다 |
+
+`update_url`이 없으면 업데이트 버튼을 그리지 않는다. 눌러도 아무 일 없는
+버튼을 만들면 유저가 갇힌 것으로 느낀다.
+
+기본 오버레이는 `PROCESS_MODE_ALWAYS`라 게임이 `get_tree().paused = true`를
+걸어도 버튼이 동작한다. 노출 이력은 `user://`에 남는다.
+
 ## 계약
 
 응답 해석·정규화·백오프는 `spec/conformance/*.json`이 정본이고
