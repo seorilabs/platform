@@ -16,6 +16,19 @@ const workflow = (name) => readFile(resolve(root, '.github/workflows', name), 'u
 const ACTION_SHA = '[0-9a-f]{40}';
 
 describe('Platform release workflow 계약', () => {
+  it('GDScript 발행 job은 npm 스코프 인증을 설정하지 않는다', async () => {
+    const source = await workflow('publish-sdk-gdscript.yml');
+    // 이 job 은 npm 에 발행하지 않고 이미 공개된 패키지를 읽기만 한다.
+    // setup-node 에 registry-url/scope 를 주면 NODE_AUTH_TOKEN 을 요구하는
+    // .npmrc 가 생겨 공개 패키지 조회가 401 로 실패한다.
+    assert.doesNotMatch(source, /registry-url:/u);
+    assert.doesNotMatch(source, /scope: "@seorilabs"/u);
+    assert.doesNotMatch(source, /NODE_AUTH_TOKEN/u);
+    // 실제 npm 발행 workflow 는 그대로 인증을 유지해야 한다.
+    const publisher = await workflow('publish-sdk-ts.yml');
+    assert.match(publisher, /registry-url: https:\/\/registry\.npmjs\.org/u);
+  });
+
   it('GDScript asset 발행은 version tag에서만 실행되고 배포 명령을 포함하지 않는다', async () => {
     const source = await workflow('publish-sdk-gdscript.yml');
     assert.match(source, /tags:\s*\n\s+- "v\*\.\*\.\*"/u);
