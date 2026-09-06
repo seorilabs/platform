@@ -425,7 +425,7 @@ func TestStaleGrantDoesNotRevive(t *testing.T) {
 	}
 
 	// 나중에 환불이 도착
-	if err := l.RevokeByCanonicalID(ctx, domain.PlatformGooglePlay, token, late); err != nil {
+	if err := l.RevokeByCanonicalID(ctx, domain.VerifiedPurchase{Platform: domain.PlatformGooglePlay, CanonicalID: token, ObservedAt: late, State: domain.StateRevoked}); err != nil {
 		t.Fatalf("환불 반영 실패: %v", err)
 	}
 
@@ -481,7 +481,7 @@ func TestActiveIsOrOfSources(t *testing.T) {
 	}
 
 	// 하나만 환불한다
-	if err := l.RevokeByCanonicalID(ctx, domain.PlatformGooglePlay, tokenA, now.Add(time.Minute)); err != nil {
+	if err := l.RevokeByCanonicalID(ctx, domain.VerifiedPurchase{Platform: domain.PlatformGooglePlay, CanonicalID: tokenA, ObservedAt: now.Add(time.Minute), State: domain.StateRevoked}); err != nil {
 		t.Fatalf("환불 실패: %v", err)
 	}
 
@@ -494,7 +494,7 @@ func TestActiveIsOrOfSources(t *testing.T) {
 	}
 
 	// 나머지도 환불하면 비활성
-	if err := l.RevokeByCanonicalID(ctx, domain.PlatformGooglePlay, tokenB, now.Add(2*time.Minute)); err != nil {
+	if err := l.RevokeByCanonicalID(ctx, domain.VerifiedPurchase{Platform: domain.PlatformGooglePlay, CanonicalID: tokenB, ObservedAt: now.Add(2 * time.Minute), State: domain.StateRevoked}); err != nil {
 		t.Fatalf("환불 실패: %v", err)
 	}
 	list, err = l.ListActive(ctx, puid)
@@ -552,7 +552,7 @@ func TestRevokeUnknownCreatesTombstone(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	// 우리가 모르는 구매의 환불이 먼저 온다
-	if err := l.RevokeByCanonicalID(ctx, domain.PlatformGooglePlay, token, now); err != nil {
+	if err := l.RevokeByCanonicalID(ctx, domain.VerifiedPurchase{Platform: domain.PlatformGooglePlay, CanonicalID: token, ObservedAt: now, State: domain.StateRevoked}); err != nil {
 		t.Fatalf("tombstone 생성 실패: %v", err)
 	}
 
@@ -1734,5 +1734,40 @@ func TestReconcileOwnerABAExhaustionReturnsRetryableBusy(t *testing.T) {
 	}
 	if len(activeA) != 0 || len(activeB) != 1 || activeB[0] != entitlementID {
 		t.Fatalf("ABA 뒤 단일 owner 위반: A=%v B=%v", activeA, activeB)
+	}
+}
+
+func TestRefundBeforeClientRetainsVerifiedPurchaseEvidence(t *testing.T) {
+	l, cleanup := newTestLedger(t)
+	defer cleanup()
+	ctx := context.Background()
+	testPurchase := true
+	p := domain.VerifiedPurchase{
+		Platform: domain.PlatformGooglePlay, CanonicalID: fmt.Sprintf("refund-first-%d", time.Now().UnixNano()),
+		ProductID: "test-refund-product", ProviderOrderID: "private-provider-order",
+		IsTestPurchase: &testPurchase, State: domain.StateRevoked,
+		PurchasedAt: time.Now().Add(-time.Hour).Truncate(time.Microsecond), ObservedAt: time.Now().Truncate(time.Microsecond),
+	}
+	result, err := l.ReconcileByCanonicalID(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Known {
+		t.Fatal("환불만으로 소유자를 추정했다")
+	}
+	path, err := l.paths.order(domain.OrderKey(p.Platform, p.CanonicalID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := l.store.Get(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order orderDoc
+	if err := snap.DataTo(&order); err != nil {
+		t.Fatal(err)
+	}
+	if !order.Tombstone || order.IsTestPurchase == nil || !*order.IsTestPurchase || order.ProviderOrderID != p.ProviderOrderID || !order.PurchasedAt.Equal(p.PurchasedAt) {
+		t.Fatal("환불 선행 기록의 검증 근거가 보존되지 않았다")
 	}
 }

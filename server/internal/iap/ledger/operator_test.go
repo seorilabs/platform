@@ -194,3 +194,18 @@ func TestOrderSummaryPreservesObservedFactsWithoutProviderIdentifiers(t *testing
 		t.Fatal("legacy order was assumed to be real")
 	}
 }
+
+func TestRefundEvidenceKeepsKnownFactsWhenLaterObservationHasNoDetails(t *testing.T) {
+	testPurchase := true
+	purchasedAt := time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
+	order := orderDoc{Tombstone: true, State: domain.StateRevoked, Platform: domain.PlatformGooglePlay}
+	applyVerifiedPurchaseEvidence(&order, domain.VerifiedPurchase{IsTestPurchase: &testPurchase, ProviderOrderID: "private-order", ProductID: "sku", PurchasedAt: purchasedAt})
+	applyVerifiedPurchaseEvidence(&order, domain.VerifiedPurchase{})
+	summary := summarizeOrder("order-key", order)
+	if summary.IsTestPurchase == nil || !*summary.IsTestPurchase || !summary.ProviderOrderIDPresent || !summary.PurchasedAt.Equal(purchasedAt) {
+		t.Fatal("환불 근거가 미확인 관찰에 의해 삭제됐다")
+	}
+	if !summary.Tombstone || summary.State != string(domain.StateRevoked) {
+		t.Fatal("분류 정보가 환불 상태를 변경했다")
+	}
+}
