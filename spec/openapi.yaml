@@ -2859,6 +2859,14 @@ components:
           additionalProperties:
             type: object
             properties:
+              configured:
+                type: boolean
+                description: |
+                  Firestore에 이 플랫폼의 정책 항목이 실제로 있는지.
+
+                  정책이 없어도 자동 추종 값이나 스토어 주소가 있으면 플랫폼이
+                  응답에 실린다. 둘을 구분하지 않으면 전체 대체 요청이 건드리지
+                  않은 플랫폼의 정책을 지운다.
               blockedVersions:
                 type: array
                 items:
