@@ -70,6 +70,7 @@ func _initialize() -> void:
 	_check_standard_adapters()
 	_check_observation_headers()
 	_check_guards()
+	_check_update_gate()
 
 	if _failures.is_empty():
 		print("[smoke] 전부 통과")
@@ -1173,6 +1174,70 @@ func _check_guards() -> void:
 	var normalized := Normalizer.normalize({"is_new": true, "email": "x@y.z", "level": 3})
 	if normalized != {"is_new": 1, "level": 3}:
 		_fail("정규화 결과가 다르다: %s" % normalized)
+
+	client.queue_free()
+
+
+## 업데이트 게이트 배선을 본다.
+##
+## 세션 오버레이 병합, 게이트 상태, 오버레이 노드 생성·해제를 확인한다.
+## 여기서 SCRIPT ERROR가 나면 CI가 잡는다.
+func _check_update_gate() -> void:
+	var client := PlatformClient.new()
+	root.add_child(client)
+
+	# /v1/config로 받은 값이 먼저 있다고 가정한다.
+	client._set_config({
+		"values": {"max_energy": 10},
+		"features": {"config": true},
+		"sdk": {"status": "ok"},
+		"maintenance": {"active": false},
+	})
+
+	# 세션 오버레이에는 values가 없다. 통째로 덮으면 그게 사라진다.
+	client._seed_config_from_session({
+		"sdk": {"status": "deprecated", "recommendedVersion": "1.5.0"},
+		"configEtag": "W/\"abc\"",
+	})
+	var merged := client.current_config()
+	_expect(merged.get("values", {}).get("max_energy", 0) == 10,
+		"세션 오버레이가 기존 values를 지웠다: %s" % merged)
+
+	var state := client.update_gate_state()
+	_expect(String(state.get("kind", "")) == "recommended",
+		"권장 판정이 아니다: %s" % state)
+	_expect(String(state.get("recommended_version", "")) == "1.5.0",
+		"목표 버전이 없다: %s" % state)
+
+	# 설정이 없는 세션 응답은 캐시를 건드리지 않는다.
+	client._seed_config_from_session({"platformToken": "t"})
+	_expect(String(client.update_gate_state().get("kind", "")) == "recommended",
+		"빈 오버레이가 캐시를 덮었다")
+
+	# 강제는 이력과 무관하게 뜨고, 오버레이 노드가 실제로 만들어져야 한다.
+	client._set_config({
+		"values": {},
+		"features": {},
+		"sdk": {
+			"status": "blocked",
+			"updateUrl": "https://play.google.com/store/apps/details?id=com.a.b",
+		},
+		"maintenance": {"active": false},
+	})
+	_expect(String(client.update_gate_state().get("kind", "")) == "required",
+		"강제 판정이 아니다")
+
+	client.show_update_gate()
+	_expect(client._gate != null, "강제인데 게이트가 뜨지 않았다")
+	client.hide_update_gate()
+	_expect(client._gate == null, "게이트가 내려가지 않았다")
+
+	# 정상이면 아무것도 띄우지 않는다.
+	client._set_config(PlatformClient._fallback_config())
+	client.show_update_gate()
+	_expect(client._gate == null, "정상인데 게이트가 떴다")
+	_expect(not client.is_under_maintenance(), "기본값이 점검으로 잡혔다")
+	_expect(not client.is_sdk_blocked(), "기본값이 차단으로 잡혔다")
 
 	client.queue_free()
 

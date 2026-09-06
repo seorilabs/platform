@@ -12,7 +12,7 @@
  *   platform.events.track({ name: "level_complete", params: { level: 3 } })
  */
 
-import { Config, type ConfigOptions } from "./config.ts";
+import { Config, type ConfigOptions, type GateStore } from "./config.ts";
 import {
   Events,
   type EventContextProvider,
@@ -46,7 +46,12 @@ export { MemorySessionStore, SessionManager } from "./session.ts";
 export { MemoryEventOutbox, Events } from "./events.ts";
 export { Iap } from "./iap.ts";
 export { Ads } from "./ads.ts";
-export { Config } from "./config.ts";
+export {
+  Config,
+  MemoryGateStore,
+  createDefaultGateStore,
+  updateGateState,
+} from "./config.ts";
 export { Content, CONTENT_SCHEMA_VERSION } from "./content.ts";
 export { Identity } from "./identity.ts";
 export { Presence } from "./presence.ts";
@@ -67,7 +72,16 @@ export type {
   CompletionAction,
   AccountReferences,
 } from "./iap.ts";
-export type { RemoteConfig, ConfigTarget, SdkStatus, Maintenance } from "./config.ts";
+export type {
+  RemoteConfig,
+  ConfigTarget,
+  SdkStatus,
+  Maintenance,
+  SessionConfigOverlay,
+  UpdateGateState,
+  GateStore,
+  GatePromptLog,
+} from "./config.ts";
 export type { TransportOptions, RequestOptions, ClientContext } from "./transport.ts";
 export type { ParamValue } from "./normalize.ts";
 export type {
@@ -119,6 +133,14 @@ export interface PlatformOptions extends TransportOptions {
   /** 이벤트 자동 전송 주기. 0이면 수동으로만 보낸다. */
   eventFlushIntervalMs?: number;
   configTtlMs?: ConfigOptions["ttlMs"];
+  /**
+   * 권장 안내 노출 이력 저장소.
+   *
+   * 생략하면 브라우저 저장소를 쓰고, 없으면 메모리로 떨어진다. React
+   * Native는 sessionStore와 같은 방식으로 AsyncStorage 어댑터를 넣는다.
+   * 넣지 않으면 앱을 다시 켤 때마다 권장 안내가 뜬다.
+   */
+  gateStore?: GateStore;
   /** RPI Edge heartbeat. 명시적으로 true인 앱만 시작한다. */
   presenceEnabled?: boolean;
   /** 생략하면 eventContext의 platform과 appVersion을 사용한다. */
@@ -240,7 +262,10 @@ export class Platform {
       transport: this.transport,
       ...(opts.configTtlMs !== undefined ? { ttlMs: opts.configTtlMs } : {}),
       ...(opts.now ? { now: opts.now } : {}),
+      ...(opts.gateStore ? { gateStore: opts.gateStore } : {}),
     });
+    // 세션 응답이 설정을 얹어 주면 부팅 왕복이 하나 준다.
+    this.session.observeConfig((overlay) => this.config.seedSession(overlay));
   }
 
   /** 자격증명으로 세션을 연다. */

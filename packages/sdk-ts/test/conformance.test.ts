@@ -15,6 +15,7 @@ import { describe, it } from "node:test";
 import { normalizeParams, PII_KEYS } from "../src/normalize.ts";
 import { backoffDelayMs, isRetryableStatus, parseRetryAfterMs } from "../src/backoff.ts";
 import { parseEnvelope, LOCAL_RESPONSE_INVALID } from "../src/envelope.ts";
+import { updateGateState } from "../src/config.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const conformanceDir = resolve(here, "../../../spec/conformance");
@@ -218,4 +219,22 @@ describe("응답 envelope", () => {
     });
     assert.ok(got.valid && got.ok);
   });
+});
+
+describe("update-gate.json", () => {
+  interface GateVector {
+    gate_cases: Array<{
+      name: string;
+      config: Record<string, unknown>;
+      gate: Record<string, unknown>;
+    }>;
+  }
+  const vector = loadVector<GateVector>("update-gate.json");
+
+  for (const tc of vector.gate_cases) {
+    it(tc.name, () => {
+      const got = updateGateState(tc.config as never);
+      assert.deepEqual({ ...got }, tc.gate);
+    });
+  }
 });

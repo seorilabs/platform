@@ -9,7 +9,7 @@ import { Transport, PlatformError } from "../src/transport.ts";
 import { SessionManager, MemorySessionStore } from "../src/session.ts";
 import { Events, MemoryEventOutbox } from "../src/events.ts";
 import { Iap } from "../src/iap.ts";
-import { Config } from "../src/config.ts";
+import { Config, MemoryGateStore, updateGateState } from "../src/config.ts";
 import { Ads } from "../src/ads.ts";
 import { Platform, SDK_VERSION } from "../src/index.ts";
 
@@ -815,11 +815,144 @@ describe("Config", () => {
     const f = fakeFetch([ok({})]);
     const c = new Config({ transport: newTransport(f.impl), ttlMs: 60_000, now: () => 1_000 });
 
-    c.seed(configBody as never);
+    c.seedSession({ sdk: { status: "ok" }, maintenance: { active: false } });
     await c.fetch(target);
 
-    // seed가 캐시를 채웠으니 네트워크를 타지 않는다
+    // 세션이 캐시를 채웠으니 네트워크를 타지 않는다
     assert.equal(f.count, 0);
+  });
+
+  // 세션 오버레이에는 values가 없다. 통째로 덮으면 앞서 /v1/config로 받은
+  // 값이 사라진다.
+  it("세션 응답이 기존 values를 지우지 않는다", async () => {
+    const f = fakeFetch([ok(configBody)]);
+    const c = new Config({ transport: newTransport(f.impl), ttlMs: 60_000, now: () => 1_000 });
+
+    await c.fetch(target);
+    c.seedSession({ sdk: { status: "deprecated", recommendedVersion: "1.5.0" } });
+
+    const got = c.current();
+    assert.equal(got.values["max_energy"], 10);
+    assert.equal(got.features["new_shop"], true);
+    assert.equal(got.sdk.status, "deprecated");
+  });
+
+  // 설정을 싣지 못한 세션 응답이 캐시 수명을 갱신하면 진짜 조회가 TTL 동안
+  // 막힌다.
+  it("설정이 없는 세션 응답은 캐시를 건드리지 않는다", async () => {
+    const f = fakeFetch([ok(configBody)]);
+    const c = new Config({ transport: newTransport(f.impl), ttlMs: 60_000, now: () => 1_000 });
+
+    c.seedSession({});
+    await c.fetch(target);
+
+    assert.equal(f.count, 1);
+  });
+
+  it("세션이 준 configEtag를 다음 조회의 If-None-Match로 보낸다", async () => {
+    const f = fakeFetch([ok(configBody)]);
+    const c = new Config({ transport: newTransport(f.impl), ttlMs: 60_000, now: () => 1_000 });
+
+    c.seedSession({ sdk: { status: "ok" }, configEtag: 'W/"abc123"' });
+    // 캐시가 채워졌으므로 TTL을 넘겨야 조회가 나간다.
+    const stale = new Config({ transport: newTransport(f.impl), ttlMs: 0, now: () => 1_000 });
+    stale.seedSession({ sdk: { status: "ok" }, configEtag: 'W/"abc123"' });
+    await stale.fetch(target);
+
+    assert.equal(f.calls[0]!.headers["If-None-Match"], 'W/"abc123"');
+  });
+});
+
+describe("업데이트 게이트", () => {
+  const base = {
+    values: {},
+    features: {},
+    sdk: { status: "ok" as const },
+    maintenance: { active: false },
+  };
+
+  it("정상이면 아무것도 띄우지 않는다", () => {
+    assert.deepEqual(updateGateState(base), { kind: "ok" });
+  });
+
+  it("deprecated는 닫을 수 있는 권장 안내다", () => {
+    const state = updateGateState({
+      ...base,
+      sdk: {
+        status: "deprecated",
+        message: "새 버전이 나왔어요",
+        updateUrl: "https://play.google.com/store/apps/details?id=com.a.b",
+        recommendedVersion: "1.5.0",
+      },
+    });
+    assert.equal(state.kind, "recommended");
+    assert.equal(state.kind === "recommended" && state.recommendedVersion, "1.5.0");
+  });
+
+  it("blocked는 강제다", () => {
+    const state = updateGateState({ ...base, sdk: { status: "blocked" } });
+    assert.equal(state.kind, "required");
+    // 문구가 없으면 서버 상수 대신 SDK 기본 문구를 쓴다.
+    assert.match(state.kind === "required" ? state.message : "", /업데이트/);
+  });
+
+  // 점검은 시간이 정해져 있고 자동으로 해제되며 안내가 더 행동 가능하다.
+  it("점검이 강제보다 우선한다", () => {
+    const state = updateGateState({
+      ...base,
+      sdk: { status: "blocked" },
+      maintenance: { active: true, message: "점검 중", until: "2026-09-06T13:00:00Z" },
+    });
+    assert.equal(state.kind, "maintenance");
+  });
+
+  // 서버가 상태를 추가해도 구버전 SDK가 스스로를 막으면 안 된다.
+  it("모르는 status는 ok로 읽는다", () => {
+    const state = updateGateState({
+      ...base,
+      sdk: { status: "quarantined" as never },
+    });
+    assert.deepEqual(state, { kind: "ok" });
+  });
+
+  it("sdk 키가 아예 없어도 ok다", () => {
+    const state = updateGateState({ values: {}, features: {} } as never);
+    assert.deepEqual(state, { kind: "ok" });
+  });
+
+  it("권장은 하루 1회, 강제는 매번 띄운다", async () => {
+    let now = 1_000_000;
+    const f = fakeFetch([]);
+    const c = new Config({
+      transport: newTransport(f.impl),
+      now: () => now,
+      gateStore: new MemoryGateStore(),
+    });
+
+    const recommended = { kind: "recommended", message: "m", recommendedVersion: "1.5.0" } as const;
+    assert.equal(await c.shouldPrompt(recommended), true);
+    await c.markPrompted(recommended);
+    assert.equal(await c.shouldPrompt(recommended), false);
+
+    // 강제는 이력과 무관하다.
+    assert.equal(await c.shouldPrompt({ kind: "required", message: "m" }), true);
+
+    now += 24 * 60 * 60 * 1000;
+    assert.equal(await c.shouldPrompt(recommended), true);
+  });
+
+  // 권장 기준이 올라갔는데 하루를 기다리게 하면 새 안내가 늦는다.
+  it("권장 기준이 바뀌면 이력을 무시하고 다시 띄운다", async () => {
+    const f = fakeFetch([]);
+    const c = new Config({
+      transport: newTransport(f.impl),
+      now: () => 1_000_000,
+      gateStore: new MemoryGateStore(),
+    });
+
+    await c.markPrompted({ kind: "recommended", message: "m", recommendedVersion: "1.5.0" });
+    const next = { kind: "recommended", message: "m", recommendedVersion: "1.6.0" } as const;
+    assert.equal(await c.shouldPrompt(next), true);
   });
 });
 

@@ -6,16 +6,163 @@
     "모르는 런타임은 빈 문자열이다. 추측해서 android로 넣으면 엉뚱한 런타임이 안드로이드 정책에 걸린다."
   ],
   "runtime_to_platform": [
-    { "runtime": "godot-native-android", "platform": "android" },
-    { "runtime": "godot-native-ios", "platform": "ios" },
-    { "runtime": "godot-web-ait", "platform": "ait" },
-    { "runtime": "rn-android", "platform": "android" },
-    { "runtime": "rn-ios", "platform": "ios" },
-    { "runtime": "ait-rn", "platform": "ait" },
-    { "runtime": "web", "platform": "web" },
-    { "runtime": "  RN-IOS  ", "platform": "ios" },
-    { "runtime": "", "platform": "" },
-    { "runtime": "unknown-thing", "platform": "" },
-    { "runtime": "windows", "platform": "" }
+    {
+      "runtime": "godot-native-android",
+      "platform": "android"
+    },
+    {
+      "runtime": "godot-native-ios",
+      "platform": "ios"
+    },
+    {
+      "runtime": "godot-web-ait",
+      "platform": "ait"
+    },
+    {
+      "runtime": "rn-android",
+      "platform": "android"
+    },
+    {
+      "runtime": "rn-ios",
+      "platform": "ios"
+    },
+    {
+      "runtime": "ait-rn",
+      "platform": "ait"
+    },
+    {
+      "runtime": "web",
+      "platform": "web"
+    },
+    {
+      "runtime": "  RN-IOS  ",
+      "platform": "ios"
+    },
+    {
+      "runtime": "",
+      "platform": ""
+    },
+    {
+      "runtime": "unknown-thing",
+      "platform": ""
+    },
+    {
+      "runtime": "windows",
+      "platform": ""
+    }
+  ],
+  "gate_rules": [
+    "점검이 강제보다 우선한다. 점검은 시간이 정해져 있고 자동으로 해제되며 안내가 더 행동 가능하다.",
+    "모르는 status는 ok로 읽는다. 서버가 상태를 추가해도 구버전 SDK가 스스로를 막지 않는다.",
+    "판정은 서버가 한다. 클라이언트는 semver를 비교하지 않는다."
+  ],
+  "gate_cases": [
+    {
+      "name": "정상",
+      "config": {
+        "sdk": {
+          "status": "ok"
+        },
+        "maintenance": {
+          "active": false
+        }
+      },
+      "gate": {
+        "kind": "ok"
+      }
+    },
+    {
+      "name": "권장",
+      "config": {
+        "sdk": {
+          "status": "deprecated",
+          "message": "새 버전이 나왔어요",
+          "updateUrl": "https://play.google.com/store/apps/details?id=com.seorilabs.happyfarm",
+          "recommendedVersion": "1.5.0"
+        },
+        "maintenance": {
+          "active": false
+        }
+      },
+      "gate": {
+        "kind": "recommended",
+        "message": "새 버전이 나왔어요",
+        "updateUrl": "https://play.google.com/store/apps/details?id=com.seorilabs.happyfarm",
+        "recommendedVersion": "1.5.0"
+      }
+    },
+    {
+      "name": "강제",
+      "config": {
+        "sdk": {
+          "status": "blocked",
+          "message": "업데이트가 필요해요",
+          "updateUrl": "https://apps.apple.com/app/id1234567890",
+          "recommendedVersion": "1.5.0"
+        },
+        "maintenance": {
+          "active": false
+        }
+      },
+      "gate": {
+        "kind": "required",
+        "message": "업데이트가 필요해요",
+        "updateUrl": "https://apps.apple.com/app/id1234567890",
+        "recommendedVersion": "1.5.0"
+      }
+    },
+    {
+      "name": "점검이 강제보다 우선한다",
+      "config": {
+        "sdk": {
+          "status": "blocked",
+          "message": "업데이트가 필요해요"
+        },
+        "maintenance": {
+          "active": true,
+          "message": "지금 점검 중이에요",
+          "until": "2026-09-06T13:00:00Z"
+        }
+      },
+      "gate": {
+        "kind": "maintenance",
+        "message": "지금 점검 중이에요",
+        "until": "2026-09-06T13:00:00Z"
+      }
+    },
+    {
+      "name": "미지 status는 ok로 읽는다",
+      "config": {
+        "sdk": {
+          "status": "quarantined"
+        },
+        "maintenance": {
+          "active": false
+        }
+      },
+      "gate": {
+        "kind": "ok"
+      }
+    },
+    {
+      "name": "sdk 키가 아예 없으면 ok",
+      "config": {},
+      "gate": {
+        "kind": "ok"
+      }
+    },
+    {
+      "name": "스토어 주소 없는 강제",
+      "config": {
+        "sdk": {
+          "status": "blocked",
+          "message": "업데이트가 필요해요"
+        }
+      },
+      "gate": {
+        "kind": "required",
+        "message": "업데이트가 필요해요"
+      }
+    }
   ]
 }
