@@ -19,6 +19,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 )
 
 var (
@@ -130,15 +131,16 @@ func NewHandler(
 func (h *Handler) Register(mux *http.ServeMux) {
 	readRoutes := map[string]httpx.Handler{
 		// 조회 — 등급 A
-		"GET /v1/admin/orders/recent":                   h.recentOrders,
-		"GET /v1/admin/users/{reference}":               h.user,
-		"GET /v1/admin/users/{puid}/entitlements":       h.userEntitlements,
-		"GET /v1/admin/operator-grants":                 h.operatorGrants,
-		"GET /v1/admin/apps/{appId}/iap/catalog":        h.iapCatalog,
-		"GET /v1/admin/apps/{appId}/iap/refund-reviews": h.refundReviews,
-		"GET /v1/admin/iap/sandbox-resets/{requestId}":  h.sandboxResetStatus,
-		"GET /v1/admin/health":                          h.health,
-		"GET /v1/admin/metrics":                         h.metrics,
+		"GET /v1/admin/orders/recent":                     h.recentOrders,
+		"GET /v1/admin/users/{reference}":                 h.user,
+		"GET /v1/admin/users/{puid}/entitlements":         h.userEntitlements,
+		"GET /v1/admin/operator-grants":                   h.operatorGrants,
+		"GET /v1/admin/apps/{appId}/iap/catalog":          h.iapCatalog,
+		"GET /v1/admin/apps/{appId}/iap/refund-reviews":   h.refundReviews,
+		"GET /v1/admin/iap/sandbox-resets/{requestId}":    h.sandboxResetStatus,
+		"GET /v1/admin/health":                            h.health,
+		"GET /v1/admin/metrics":                           h.metrics,
+		"GET /v1/admin/apps/{appId}/config/update-policy": h.updatePolicy,
 	}
 	writeRoutes := map[string]httpx.Handler{
 		// 조작 — 등급 C. reason과 requestId가 필수다
@@ -153,6 +155,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 		// break-glass. 백오피스가 죽어도 점검 모드는 켤 수 있어야 한다
 		"POST /v1/admin/config/maintenance": h.setMaintenance,
+
+		// 업데이트 유도 정책. 권장은 그냥 걸리고 강제는 확인 문구와
+		// 관측 가드를 통과해야 한다. 해제는 언제나 즉시 가능하다
+		"POST /v1/admin/config/update-policy": h.setUpdatePolicy,
 	}
 
 	for pattern, handler := range readRoutes {
@@ -1554,6 +1560,19 @@ func parseLimit(r *http.Request) int {
 // 켤 수 있어야 한다 — 그게 R1의 실질이다.
 type Config interface {
 	SetMaintenance(ctx context.Context, appID string, minutes int, actor string) error
+	// GetUpdatePolicy는 정책과 함께 문서 버전을 준다. SetUpdatePolicy가 그
+	// 값으로 CAS를 하지 않으면 동시 요청이 안전 가드를 우회한다.
+	GetUpdatePolicy(ctx context.Context, appID string) (remoteconfig.UpdatePolicy, int64, error)
+	SetUpdatePolicy(
+		ctx context.Context,
+		appID string,
+		policy remoteconfig.UpdatePolicy,
+		expectedVersion int64,
+		actor string,
+	) error
+	// ObservedVersions는 강제 업데이트 가드의 근거다. 관측 원장이 연결되지
+	// 않았으면 에러여야 한다. 빈 목록을 조용히 주면 가드가 열린 채로 동작한다.
+	ObservedVersions(ctx context.Context, appID string) ([]remoteconfig.ObservedAppVersion, error)
 }
 
 // maintenanceRequest는 점검 모드 요청이다.

@@ -19,6 +19,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 )
 
 const (
@@ -206,6 +207,21 @@ func (f *fakeLedger) Environment() domain.Environment {
 type fakeConfig struct {
 	calls []maintenanceCall
 	err   error
+
+	policy        remoteconfig.UpdatePolicy
+	policyVersion int64
+	policyCalls   []updatePolicyCall
+	policyErr     error
+
+	observed    []remoteconfig.ObservedAppVersion
+	observedErr error
+}
+
+type updatePolicyCall struct {
+	appID           string
+	policy          remoteconfig.UpdatePolicy
+	expectedVersion int64
+	actor           string
 }
 
 type maintenanceCall struct {
@@ -299,6 +315,32 @@ func (f *fakeCatalog) IDs() []string   { return []string{"sp_a", "sp_b"} }
 func (f *fakeConfig) SetMaintenance(_ context.Context, appID string, minutes int, actor string) error {
 	f.calls = append(f.calls, maintenanceCall{appID, minutes, actor})
 	return f.err
+}
+
+func (f *fakeConfig) GetUpdatePolicy(
+	_ context.Context,
+	_ string,
+) (remoteconfig.UpdatePolicy, int64, error) {
+	return f.policy, f.policyVersion, nil
+}
+
+func (f *fakeConfig) SetUpdatePolicy(
+	_ context.Context,
+	appID string,
+	policy remoteconfig.UpdatePolicy,
+	expectedVersion int64,
+	actor string,
+) error {
+	f.policyCalls = append(f.policyCalls,
+		updatePolicyCall{appID, policy, expectedVersion, actor})
+	return f.policyErr
+}
+
+func (f *fakeConfig) ObservedVersions(
+	_ context.Context,
+	_ string,
+) ([]remoteconfig.ObservedAppVersion, error) {
+	return f.observed, f.observedErr
 }
 
 // fakeAuditor는 감사 기록을 모은다.
@@ -449,6 +491,7 @@ func TestAllRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/v1/admin/apps/a/iap/refund-reviews", ""},
 		{http.MethodGet, "/v1/admin/iap/sandbox-resets/reset-1", ""},
 		{http.MethodGet, "/v1/admin/health", ""},
+		{http.MethodGet, "/v1/admin/apps/a/config/update-policy", ""},
 		{http.MethodPost, "/v1/admin/entitlements/grant", `{}`},
 		{http.MethodPost, "/v1/admin/entitlements/revoke", `{}`},
 		{http.MethodPost, "/v1/admin/iap/sandbox-reset", `{}`},
@@ -456,6 +499,7 @@ func TestAllRoutesRequireAuth(t *testing.T) {
 		{http.MethodPost, "/v1/admin/iap/sandbox-resets/reset-1/close-not-started", `{}`},
 		{http.MethodPost, "/v1/admin/apps/a/iap/refund-reviews/" + strings.Repeat("a", 64) + "/decision", `{}`},
 		{http.MethodPost, "/v1/admin/config/maintenance", `{}`},
+		{http.MethodPost, "/v1/admin/config/update-policy", `{}`},
 	}
 
 	for _, rt := range routes {

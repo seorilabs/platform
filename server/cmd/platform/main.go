@@ -242,6 +242,11 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		// 필요한 저장소 포트만 조립하므로 PLATFORM_SESSION_SECRET이 필요 없다.
 		d.adminUsers = identity.NewStoreRepository(st)
 	}
+	if d.adminUsers != nil {
+		// 권장 안내의 자동 추종과 강제 업데이트 가드가 같은 관측 원장을 읽는다.
+		// 연결하지 않으면 자동 추종이 꺼지고 가드는 fail-closed로 거부한다.
+		d.config.WithAppVersions(d.adminUsers)
+	}
 
 	// 이벤트를 다루는 role만 BigQuery에 붙는다.
 	// api는 감사 원장을 남겨야 하므로 함께 연다.
