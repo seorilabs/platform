@@ -336,6 +336,18 @@ func TestUpdatePolicyReadShowsCandidates(t *testing.T) {
 	}
 	platforms, _ := result["platforms"].(map[string]any)
 	android, _ := platforms["android"].(map[string]any)
+	if android["configured"] != true {
+		t.Error("정책이 있는 플랫폼을 configured=false로 표시했다")
+	}
+	// 정책이 없어도 스토어 주소가 있으면 응답에 실린다. 콘솔이 둘을
+	// 구분하지 못하면 건드리지 않은 플랫폼의 정책이 지워진다.
+	ios, _ := platforms["ios"].(map[string]any)
+	if ios == nil {
+		t.Fatal("스토어 주소가 있는 ios가 응답에서 빠졌다")
+	}
+	if ios["configured"] != false {
+		t.Error("정책이 없는 플랫폼을 configured=true로 표시했다")
+	}
 	if android["autoRecommendedVersion"] != "1.5.0" {
 		t.Errorf("자동 추종 = %v, want 1.5.0", android["autoRecommendedVersion"])
 	}

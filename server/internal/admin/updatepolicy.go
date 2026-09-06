@@ -41,6 +41,12 @@ type updatePolicyEntry struct {
 }
 
 type updatePolicyPlatformView struct {
+	// Configured는 Firestore에 이 플랫폼의 정책 항목이 실제로 있는지다.
+	//
+	// 정책이 없어도 자동 추종 값이나 스토어 주소가 있으면 플랫폼이 응답에
+	// 실린다. 콘솔이 둘을 구분하지 못하면, 다른 플랫폼만 고치고 저장할 때
+	// 전체 대체 요청이 이 플랫폼의 정책을 조용히 지운다.
+	Configured        bool                 `json:"configured"`
 	BlockedVersions   []blockedVersionView `json:"blockedVersions"`
 	RecommendOverride string               `json:"recommendOverride,omitempty"`
 	// AutoRecommendedVersion은 override가 없을 때 실제로 적용되는 값이다.
@@ -103,6 +109,7 @@ func (h *Handler) updatePolicy(w http.ResponseWriter, r *http.Request) error {
 			continue
 		}
 		view := updatePolicyPlatformView{
+			Configured:             configured,
 			BlockedVersions:        []blockedVersionView{},
 			RecommendOverride:      entry.RecommendOverride,
 			AutoRecommendedVersion: auto[platform],

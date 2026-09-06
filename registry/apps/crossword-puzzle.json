@@ -5,11 +5,14 @@
   "firebase_custom_token_service_account": "platform-auth@crossword-puzzle-79ae0.iam.gserviceaccount.com",
   "status": "active",
   "features": {
-    "config": false,
+    "config": true,
     "events": false,
     "iap": false,
     "ads": false,
     "firebase_custom_token_bridge": true
+  },
+  "store": {
+    "google_play_url": "https://play.google.com/store/apps/details?id=com.seorilabs.crosswordpuzzle"
   },
   "require_app_check": false,
   "ga4": {

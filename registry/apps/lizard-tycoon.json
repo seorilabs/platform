@@ -10,6 +10,10 @@
     "ads": false,
     "presence": true
   },
+  "store": {
+    "google_play_url": "https://play.google.com/store/apps/details?id=com.seorilabs.lizardtycoon",
+    "app_store_url": "https://apps.apple.com/app/id6786516830"
+  },
   "require_app_check": false,
   "ga4": {
     "event_prefix": ""

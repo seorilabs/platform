@@ -4,11 +4,14 @@
   "firebase_project_id": "happy-farm-tycoon",
   "status": "active",
   "features": {
-    "config": false,
+    "config": true,
     "events": true,
     "iap": true,
     "ads": true,
     "firebase_custom_token_bridge": false
+  },
+  "store": {
+    "google_play_url": "https://play.google.com/store/apps/details?id=com.seorilabs.happyfarm"
   },
   "require_app_check": false,
   "ga4": {
