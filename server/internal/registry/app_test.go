@@ -362,3 +362,133 @@ func rewardedAdsForTest(unit string) AdsConfig {
 		}},
 	}
 }
+
+// 스토어 주소는 강제 업데이트 화면이 유저를 보내는 유일한 목적지다.
+// 오타 하나가 유저를 엉뚱한 앱으로 보낸다.
+func TestValidateStore(t *testing.T) {
+	const playURL = "https://play.google.com/store/apps/details?id=com.seorilabs.happyfarm"
+	const appStoreURL = "https://apps.apple.com/kr/app/happy-farm/id1234567890"
+
+	base := func() App {
+		return App{
+			AppID:             "happy-farm",
+			DisplayName:       "해피 팜",
+			FirebaseProjectID: "happy-farm-tycoon",
+			Status:            StatusActive,
+			Features:          map[string]bool{},
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*App)
+		wantErr bool
+	}{
+		{
+			name:   "둘 다 비어 있으면 통과한다",
+			mutate: func(a *App) {},
+		},
+		{
+			name:   "정상 주소",
+			mutate: func(a *App) { a.Store = StoreConfig{GooglePlayURL: playURL, AppStoreURL: appStoreURL} },
+		},
+		{
+			name: "국가 코드와 앱 이름이 없는 App Store 주소도 받는다",
+			mutate: func(a *App) {
+				a.Store.AppStoreURL = "https://apps.apple.com/app/id1234567890"
+			},
+		},
+		{
+			name:    "http는 거부한다",
+			mutate:  func(a *App) { a.Store.GooglePlayURL = "http://play.google.com/store/apps/details?id=com.a.b" },
+			wantErr: true,
+		},
+		{
+			name:    "추적 파라미터가 붙으면 거부한다",
+			mutate:  func(a *App) { a.Store.GooglePlayURL = playURL + "&hl=ko" },
+			wantErr: true,
+		},
+		{
+			name:    "다른 호스트는 거부한다",
+			mutate:  func(a *App) { a.Store.GooglePlayURL = "https://example.com/store/apps/details?id=com.a.b" },
+			wantErr: true,
+		},
+		{
+			name:    "placeholder는 거부한다",
+			mutate:  func(a *App) { a.Store.AppStoreURL = "확정 필요" },
+			wantErr: true,
+		},
+		{
+			name:    "App Store 숫자 ID가 없으면 거부한다",
+			mutate:  func(a *App) { a.Store.AppStoreURL = "https://apps.apple.com/kr/app/happy-farm" },
+			wantErr: true,
+		},
+		{
+			name: "Play 주소가 IAP 패키지명과 다르면 거부한다",
+			mutate: func(a *App) {
+				a.Features = map[string]bool{"iap": true}
+				a.IAP = IAPConfig{
+					LedgerEnvironment:     LedgerProduction,
+					Markets:               []string{"google_play"},
+					GooglePlayPackageName: "com.seorilabs.other",
+					EntitlementIDs:        []string{"coin_pack"},
+				}
+				a.Store.GooglePlayURL = playURL
+			},
+			wantErr: true,
+		},
+		{
+			name: "Play 주소가 IAP 패키지명과 같으면 통과한다",
+			mutate: func(a *App) {
+				a.Features = map[string]bool{"iap": true}
+				a.IAP = IAPConfig{
+					LedgerEnvironment:     LedgerProduction,
+					Markets:               []string{"google_play"},
+					GooglePlayPackageName: "com.seorilabs.happyfarm",
+					EntitlementIDs:        []string{"coin_pack"},
+				}
+				a.Store.GooglePlayURL = playURL
+			},
+		},
+		{
+			name: "무과금 앱도 스토어 주소를 가질 수 있다",
+			mutate: func(a *App) {
+				a.Store.GooglePlayURL = playURL
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := base()
+			tt.mutate(&app)
+			err := app.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("에러를 기대했는데 통과했다")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("통과를 기대했는데 실패했다: %v", err)
+			}
+		})
+	}
+}
+
+func TestUpdateURL(t *testing.T) {
+	app := App{Store: StoreConfig{
+		GooglePlayURL: "https://play.google.com/store/apps/details?id=com.a.b",
+		AppStoreURL:   "https://apps.apple.com/app/id1234567890",
+	}}
+
+	if got := app.UpdateURL("android"); got != app.Store.GooglePlayURL {
+		t.Errorf("android = %q", got)
+	}
+	if got := app.UpdateURL("ios"); got != app.Store.AppStoreURL {
+		t.Errorf("ios = %q", got)
+	}
+	// 설치본이 없는 플랫폼에는 보낼 곳이 없다.
+	for _, platform := range []string{"ait", "web", "", "windows"} {
+		if got := app.UpdateURL(platform); got != "" {
+			t.Errorf("UpdateURL(%q) = %q, want 빈 문자열", platform, got)
+		}
+	}
+}

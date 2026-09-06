@@ -69,6 +69,8 @@ type App struct {
 	// Content는 private GCS 릴리스와 사용자별 조회 한도의 원장이다.
 	// bucket에는 gs://를 넣지 않고, prefix에는 환경(staging/production)을 넣지 않는다.
 	Content ContentConfig `json:"content,omitempty" firestore:"content,omitempty"`
+	// Store는 마켓 배포 페이지 주소다. 업데이트 안내가 어디를 열지 결정한다.
+	Store StoreConfig `json:"store,omitempty" firestore:"store,omitempty"`
 
 	// PlatformEventAllowlist에 없는 이벤트는 플랫폼으로 보내지 않는다.
 	// 비용과 QPS를 규모와 무관한 상수로 묶는 장치다.
@@ -169,6 +171,19 @@ type ContentConfig struct {
 	SeasonEntitlements map[string]string `json:"season_entitlements,omitempty" firestore:"season_entitlements,omitempty"`
 }
 
+// StoreConfig는 마켓 배포 페이지의 원장이다.
+//
+// 최소 지원 버전 같은 정책은 Firestore configs/{appId}에 있고 여기에는 거의
+// 바뀌지 않는 주소만 둔다. 운영자가 차단 화면에서 URL을 직접 타이핑하지
+// 못하게 하는 경계이기도 하다. 오타 하나가 유저를 엉뚱한 앱으로 보낸다.
+//
+// AppsInToss와 웹은 없다. 미니앱 번들은 토스가 전달하므로 유저가 "설치본을
+// 업데이트"할 대상이 존재하지 않는다.
+type StoreConfig struct {
+	GooglePlayURL string `json:"google_play_url,omitempty" firestore:"google_play_url,omitempty"`
+	AppStoreURL   string `json:"app_store_url,omitempty" firestore:"app_store_url,omitempty"`
+}
+
 var appIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 var entitlementIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 var serviceAccountPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{5,29}@[a-z0-9][a-z0-9-]{5,29}\.iam\.gserviceaccount\.com$`)
@@ -178,6 +193,15 @@ var admobUnitPattern = regexp.MustCompile(`^ca-app-pub-[0-9]{16}/[0-9]{10}$`)
 var gcsBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
 var contentPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9/_-]{0,127}$`)
 var authProviderAudiencePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,256}$`)
+
+// 추적 파라미터를 허용하지 않는다. &hl=ko나 &utm_source=가 붙은 채 굳으면
+// 나중에 아무도 걷어내지 못한다.
+var playStoreURLPattern = regexp.MustCompile(
+	`^https://play\.google\.com/store/apps/details\?id=[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$`)
+
+// 국가 코드와 앱 이름 세그먼트는 선택이다. 정본은 뒤의 숫자 App ID다.
+var appStoreURLPattern = regexp.MustCompile(
+	`^https://apps\.apple\.com/(?:[a-z]{2}/)?app/(?:[^/?#]+/)?id[0-9]{6,12}$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
@@ -260,6 +284,9 @@ func (a App) Validate() error {
 		return err
 	}
 	if err := a.validateCORSOrigins(); err != nil {
+		return err
+	}
+	if err := a.validateStore(); err != nil {
 		return err
 	}
 	// placeholder가 남은 채 배포되면 런타임에 이상하게 동작한다.
@@ -371,6 +398,32 @@ func (a App) validateCORSOrigins() error {
 			return fmt.Errorf("%s: cors_origins가 중복됐다: %q", a.AppID, origin)
 		}
 		seen[origin] = struct{}{}
+	}
+	return nil
+}
+
+// validateStore는 마켓 주소를 검증한다.
+//
+// ads·content와 달리 기능 플래그와 묶지 않는다. 무과금 앱도 스토어에 있고
+// 업데이트 안내가 필요하다. 둘 다 비어 있는 것도 정상이다. 스토어 등록 전
+// 앱이 부팅에 실패하면 안 된다.
+func (a App) validateStore() error {
+	if url := a.Store.GooglePlayURL; url != "" {
+		if !playStoreURLPattern.MatchString(url) || isPlaceholder(url) {
+			return fmt.Errorf("%s: store.google_play_url이 Play 스토어 주소 형식이 아니다: %q", a.AppID, url)
+		}
+		// 같은 파일 안에 이미 있는 사실을 대조하지 않을 이유가 없다.
+		// 패키지명이 어긋난 링크는 유저를 다른 앱으로 보낸다.
+		if pkg := a.IAP.GooglePlayPackageName; pkg != "" {
+			if _, id, _ := strings.Cut(url, "?id="); id != pkg {
+				return fmt.Errorf("%s: store.google_play_url이 iap.google_play_package_name과 다르다", a.AppID)
+			}
+		}
+	}
+	if url := a.Store.AppStoreURL; url != "" {
+		if !appStoreURLPattern.MatchString(url) || isPlaceholder(url) {
+			return fmt.Errorf("%s: store.app_store_url이 App Store 주소 형식이 아니다: %q", a.AppID, url)
+		}
 	}
 	return nil
 }
@@ -535,6 +588,20 @@ func (a App) EntitlementAllowed(entitlementID string) bool {
 		}
 	}
 	return false
+}
+
+// UpdateURL은 플랫폼에 맞는 스토어 주소를 돌려준다.
+//
+// web과 ait은 설치본이 없으므로 빈 문자열이다. 주소가 없으면 클라이언트가
+// 업데이트 버튼을 숨긴다. 눌러도 아무 일 없는 버튼을 만들지 않는다.
+func (a App) UpdateURL(platform string) string {
+	switch platform {
+	case "android":
+		return a.Store.GooglePlayURL
+	case "ios":
+		return a.Store.AppStoreURL
+	}
+	return ""
 }
 
 // MarketEnabled는 앱 레지스트리의 IAP 마켓 allowlist를 확인한다.
