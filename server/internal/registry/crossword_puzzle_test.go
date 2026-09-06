@@ -37,10 +37,14 @@ func TestCrosswordPuzzleRegistryAuthBridgeContract(t *testing.T) {
 	}
 	// 힌트 잔량이 기기 로컬 저장소에 있어 서버가 지킬 재화가 없다. 보상형 광고가
 	// 있지만 ads(SSV)는 켜지 않는다. 힌트를 서버로 옮길 때 함께 검토한다.
-	for _, feature := range []string{"config", "events", "iap", "ads"} {
+	for _, feature := range []string{"events", "iap", "ads"} {
 		if app.FeatureEnabled(feature) {
 			t.Fatalf("%s 기능이 활성화됐다: %#v", feature, app.Features)
 		}
+	}
+	// config는 업데이트 유도 정책의 앱별 롤아웃 스위치다. 스토어 주소와 짝이다.
+	if !app.FeatureEnabled("config") {
+		t.Fatalf("config가 비활성이다: %#v", app.Features)
 	}
 	if len(app.PlatformEventAllowlist) != 0 {
 		t.Fatalf("events가 비활성인데 allowlist가 있다: %#v", app.PlatformEventAllowlist)

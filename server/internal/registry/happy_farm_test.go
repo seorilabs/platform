@@ -28,7 +28,8 @@ func TestHappyFarmRegistryContract(t *testing.T) {
 	if happyFarm.FirebaseProjectID != "happy-farm-tycoon" || happyFarm.RequireAppCheck {
 		t.Fatalf("Firebase/App Check 계약이 다르다: %#v", happyFarm)
 	}
-	if !happyFarm.FeatureEnabled("events") || happyFarm.FeatureEnabled("config") ||
+	// config는 업데이트 유도 정책의 앱별 롤아웃 스위치다. 스토어 주소와 짝이다.
+	if !happyFarm.FeatureEnabled("events") || !happyFarm.FeatureEnabled("config") ||
 		!happyFarm.FeatureEnabled("iap") || !happyFarm.FeatureEnabled("ads") ||
 		happyFarm.FeatureEnabled("firebase_custom_token_bridge") {
 		t.Fatalf("Happy Farm 기능 계약이 다르다: %#v", happyFarm.Features)

@@ -25,10 +25,12 @@ func TestBabycareRegistryEventContract(t *testing.T) {
 		t.Fatal("babycare registry가 없다")
 	}
 
+	// config는 업데이트 유도 정책의 앱별 롤아웃 스위치다. 스토어 주소와
+	// 짝이며, 꺼져 있으면 정책 판정이 통째로 멈춘다.
 	if !babycare.FeatureEnabled("events") ||
 		!babycare.FeatureEnabled("firebase_custom_token_bridge") ||
-		babycare.FeatureEnabled("config") || babycare.FeatureEnabled("iap") {
-		t.Fatalf("events와 인증 브리지 외 기능이 활성화됐다: %#v", babycare.Features)
+		!babycare.FeatureEnabled("config") || babycare.FeatureEnabled("iap") {
+		t.Fatalf("events·인증 브리지·config 외 기능이 활성화됐다: %#v", babycare.Features)
 	}
 	if babycare.GA4.EventPrefix != "bc_" {
 		t.Fatalf("GA4 event prefix = %q, want bc_", babycare.GA4.EventPrefix)
