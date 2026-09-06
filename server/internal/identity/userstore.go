@@ -15,6 +15,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 	"github.com/seorilabs/platform/server/internal/store"
 )
 
@@ -381,6 +382,53 @@ func (r *StoreRepository) ObserveAppVersion(
 	}
 	r.seenVersions.Store(cacheKey, struct{}{})
 	return nil
+}
+
+// ListObservedAppVersions는 이 앱에서 관측된 (런타임, 버전) 조합을 돌려준다.
+//
+// 업데이트 정책의 근거다. 아직 아무도 실행하지 않은 버전을 강제 대상으로
+// 걸면 오타를 잡을 방법이 없고, 유저가 갈 곳이 있는지도 알 수 없다.
+//
+// 정렬을 걸지 않는다. appId 필터와 firstSeenAt 정렬을 함께 걸면 Firestore
+// 복합 인덱스가 필요하고, 인덱스 누락은 배포 후에야 500으로 드러난다.
+// 앱당 조합 수가 수십 단위라 호출자가 메모리에서 정리하는 편이 옳다.
+func (r *StoreRepository) ListObservedAppVersions(
+	ctx context.Context,
+	appID string,
+	limit int,
+) ([]remoteconfig.ObservedAppVersion, error) {
+	col, err := fspath.Parse(appVersionsCollection)
+	if err != nil {
+		return nil, platformerr.Wrap(err, platformerr.CodeInternal, "관측된 버전을 읽지 못했어요")
+	}
+	iter, err := r.store.Query(ctx, col, func(q firestore.Query) firestore.Query {
+		return q.Where("appId", "==", appID).Limit(limit)
+	})
+	if err != nil {
+		return nil, platformerr.Wrap(err, platformerr.CodeInternal, "관측된 버전을 읽지 못했어요")
+	}
+	defer iter.Stop()
+
+	out := make([]remoteconfig.ObservedAppVersion, 0, 32)
+	for {
+		snap, err := iter.Next()
+		if store.IsDone(err) {
+			break
+		}
+		if err != nil {
+			return nil, platformerr.Wrap(err, platformerr.CodeInternal, "관측된 버전을 읽지 못했어요")
+		}
+		var doc appVersionDoc
+		if err := snap.DataTo(&doc); err != nil {
+			return nil, platformerr.Wrap(err, platformerr.CodeInternal, "관측된 버전을 해석하지 못했어요")
+		}
+		out = append(out, remoteconfig.ObservedAppVersion{
+			Version:     doc.AppVersion,
+			Runtime:     doc.Runtime,
+			FirstSeenAt: doc.FirstSeenAt,
+		})
+	}
+	return out, nil
 }
 
 // appVersionEventAttributes는 버전 최초 관측 이벤트에 실을 속성을 만든다.
