@@ -40,8 +40,6 @@ jobs:
         with:
           node-version: "24.16.0"
           check-latest: false
-          registry-url: https://registry.npmjs.org
-          scope: "@seorilabs"
 
       - name: Verify tag is on main
         shell: bash
