@@ -1560,8 +1560,16 @@ func parseLimit(r *http.Request) int {
 // 켤 수 있어야 한다 — 그게 R1의 실질이다.
 type Config interface {
 	SetMaintenance(ctx context.Context, appID string, minutes int, actor string) error
-	GetUpdatePolicy(ctx context.Context, appID string) (remoteconfig.UpdatePolicy, error)
-	SetUpdatePolicy(ctx context.Context, appID string, policy remoteconfig.UpdatePolicy, actor string) error
+	// GetUpdatePolicy는 정책과 함께 문서 버전을 준다. SetUpdatePolicy가 그
+	// 값으로 CAS를 하지 않으면 동시 요청이 안전 가드를 우회한다.
+	GetUpdatePolicy(ctx context.Context, appID string) (remoteconfig.UpdatePolicy, int64, error)
+	SetUpdatePolicy(
+		ctx context.Context,
+		appID string,
+		policy remoteconfig.UpdatePolicy,
+		expectedVersion int64,
+		actor string,
+	) error
 	// ObservedVersions는 강제 업데이트 가드의 근거다. 관측 원장이 연결되지
 	// 않았으면 에러여야 한다. 빈 목록을 조용히 주면 가드가 열린 채로 동작한다.
 	ObservedVersions(ctx context.Context, appID string) ([]remoteconfig.ObservedAppVersion, error)

@@ -211,7 +211,10 @@ func TestUpdatePolicyBlockGuards(t *testing.T) {
 
 func TestUpdatePolicyBlockSucceeds(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	cfg := &fakeConfig{observed: observedAndroid(now, "1.4.0", "1.4.1", "1.5.0")}
+	cfg := &fakeConfig{
+		observed:      observedAndroid(now, "1.4.0", "1.4.1", "1.5.0"),
+		policyVersion: 42,
+	}
 	auditor := &fakeAuditor{}
 	h := newUpdatePolicyHandler(t, cfg, storeApp(), auditor)
 
@@ -230,6 +233,11 @@ func TestUpdatePolicyBlockSucceeds(t *testing.T) {
 	blocked := cfg.policyCalls[0].policy.Platforms["android"].BlockedVersions
 	if len(blocked) != 2 {
 		t.Fatalf("차단 목록 = %+v", blocked)
+	}
+	// 가드를 통과시킨 그 정책이 그대로 현재일 때만 써야 한다. 버전을
+	// 넘기지 않으면 동시 요청이 확인 문구와 관측 가드를 우회한다.
+	if cfg.policyCalls[0].expectedVersion != 42 {
+		t.Errorf("expectedVersion = %d, want 42", cfg.policyCalls[0].expectedVersion)
 	}
 	if len(auditor.records) != 1 || auditor.records[0].outcome != "blocked" {
 		t.Fatalf("감사 기록 = %+v", auditor.records)
@@ -250,8 +258,9 @@ func TestUpdatePolicyUnblockNeedsNoGuard(t *testing.T) {
 		policy: remoteconfig.UpdatePolicy{Platforms: map[string]remoteconfig.PlatformUpdatePolicy{
 			"android": {BlockedVersions: []remoteconfig.BlockedVersion{{Version: "1.4.0"}}},
 		}},
-		// 관측이 비어 있어도 해제는 통과해야 한다.
-		observed: nil,
+		// 관측 원장 조회가 통째로 실패해도 해제는 통과해야 한다.
+		// 긴급 해제가 부가 의존성 하나 때문에 막히면 안 된다.
+		observedErr: errObservationsUnavailable,
 	}
 	h := newUpdatePolicyHandler(t, cfg, storeApp(), &fakeAuditor{})
 

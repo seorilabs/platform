@@ -220,30 +220,75 @@ func (s *Service) invalidate(appID string) {
 	s.mu.Unlock()
 }
 
-// GetUpdatePolicy는 저장된 업데이트 정책을 돌려준다. 콘솔이 현재 값을 보여줄 때 쓴다.
-func (s *Service) GetUpdatePolicy(ctx context.Context, appID string) (UpdatePolicy, error) {
+// GetUpdatePolicy는 저장된 업데이트 정책과 문서 버전을 돌려준다.
+//
+// 버전을 함께 주는 이유는 SetUpdatePolicy가 그 값으로 CAS를 하기 때문이다.
+// 검증한 정책과 저장 시점의 정책이 다르면 가드를 통과하지 않은 값이 쓰인다.
+func (s *Service) GetUpdatePolicy(ctx context.Context, appID string) (UpdatePolicy, int64, error) {
 	doc, err := s.Get(ctx, appID)
 	if err != nil {
-		return UpdatePolicy{}, err
+		return UpdatePolicy{}, 0, err
 	}
-	return doc.Update, nil
+	return doc.Update, doc.Version, nil
 }
 
-// SetUpdatePolicy는 업데이트 정책을 저장한다.
+// SetUpdatePolicy는 검증한 정책이 그대로 현재일 때만 저장한다.
+//
+// expectedVersion은 가드를 통과시킨 GetUpdatePolicy의 문서 버전이다.
+// CAS가 없으면 동시 요청이 가드를 우회한다. A가 차단을 해제하는 동안 B가
+// 그 버전을 아직 담고 있는 낡은 정책을 읽으면, B에게는 "새로 추가된 차단"이
+// 없으므로 확인 문구도 관측 가드도 걸리지 않은 채 그 버전이 다시 막힌다.
 //
 // 이미 걸려 있던 버전의 차단 시각은 보존한다. 같은 값 재저장에 시계를
 // 리셋하면 "언제부터 막혔나"가 사라지고, worker 재시도가 그대로 시각을
 // 덮어써 감사가 거짓말을 하게 된다.
-func (s *Service) SetUpdatePolicy(ctx context.Context, appID string, next UpdatePolicy, actor string) error {
-	doc, err := s.Get(ctx, appID)
+func (s *Service) SetUpdatePolicy(
+	ctx context.Context,
+	appID string,
+	next UpdatePolicy,
+	expectedVersion int64,
+	actor string,
+) error {
+	p, err := configPath(appID)
 	if err != nil {
-		return err
+		return platformerr.Wrap(err, platformerr.CodeInternal, "설정을 저장하지 못했어요")
 	}
-	doc.Update = mergeUpdatePolicy(doc.Update, next, s.now())
-	doc.UpdatedBy = actor
-	if err := s.Put(ctx, appID, doc); err != nil {
-		return err
+
+	err = s.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		doc := Document{AppID: appID}
+		snap, err := tx.Get(p)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+		case err != nil:
+			return err
+		default:
+			if err := snap.DataTo(&doc); err != nil {
+				return platformerr.Wrap(err, platformerr.CodeConfigUnavailable, "설정을 해석하지 못했어요")
+			}
+		}
+		if doc.Version != expectedVersion {
+			return platformerr.New(platformerr.CodeUpdatePolicyConflict,
+				"그 사이 정책이 바뀌었어요. 다시 읽고 시도해 주세요")
+		}
+
+		doc.AppID = appID
+		doc.Update = mergeUpdatePolicy(doc.Update, next, s.now())
+		doc.UpdatedBy = actor
+		doc.Version = s.now().UnixMilli()
+		doc.UpdatedAt = s.now()
+		return tx.Set(p, doc)
+	})
+	if err != nil {
+		// 트랜잭션 안에서 만든 판정 에러는 그대로 올린다. 감싸면 409가
+		// 500이 되어 콘솔이 "다시 읽고 시도"를 안내할 수 없다.
+		var pe *platformerr.Error
+		if errors.As(err, &pe) {
+			return err
+		}
+		return platformerr.Wrap(err, platformerr.CodeInternal, "설정을 저장하지 못했어요")
 	}
+
+	s.invalidate(appID)
 	s.invalidateRecommend(appID)
 	return nil
 }
@@ -384,7 +429,15 @@ func (s *Service) ResolveFor(ctx context.Context, app registry.App, t Target) (R
 	if resolved.SDK.Status != SDKStatusOK && resolved.SDK.UpdateURL == "" {
 		resolved.SDK.UpdateURL = app.UpdateURL(platform)
 	}
-	return resolved, doc.ETag(t, app.RegistrySyncedAt.UTC().Format(time.RFC3339)), nil
+
+	// 자동 추종 값도 소금이다. 소킹이 끝나 권장 기준이 올라가면 응답이
+	// 달라지는데 문서 version은 그대로다. 넣지 않으면 If-None-Match로
+	// 폴링하는 클라이언트가 영영 304를 받아 새 안내를 보지 못한다.
+	etag := doc.ETag(t,
+		app.RegistrySyncedAt.UTC().Format(time.RFC3339),
+		resolved.SDK.RecommendedVersion,
+	)
+	return resolved, etag, nil
 }
 
 // Handler는 원격 설정 HTTP 핸들러다.

@@ -311,3 +311,21 @@ func TestMergeUpdatePolicyKeepsBlockedAt(t *testing.T) {
 		t.Errorf("새로 막은 버전의 시각 = %v, want %v", got[1].BlockedAt, now)
 	}
 }
+
+// 소킹이 끝나 권장 기준이 올라가면 문서 version은 그대로여도 응답이 달라진다.
+// ETag가 같으면 If-None-Match로 폴링하는 클라이언트가 영영 304를 받아
+// 새 안내를 보지 못한다.
+func TestETagChangesWithRecommendedVersion(t *testing.T) {
+	doc := Document{AppID: "happy-farm", Version: 7}
+	target := Target{Platform: PlatformAndroid, AppVersion: "1.4.0"}
+	const registrySalt = "2026-09-06T00:00:00Z"
+
+	before := doc.ETag(target, registrySalt, "1.4.0")
+	after := doc.ETag(target, registrySalt, "1.5.0")
+	if before == after {
+		t.Fatal("권장 기준이 올라갔는데 ETag가 같다")
+	}
+	if again := doc.ETag(target, registrySalt, "1.5.0"); again != after {
+		t.Fatal("같은 입력에 ETag가 달라졌다")
+	}
+}

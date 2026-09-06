@@ -176,6 +176,9 @@ const (
 	// 어긋나 유저를 막을 위험이 있는 요청을 거부한다.
 	CodeUpdatePolicyInvalid  Code = "update_policy_invalid"
 	CodeUpdateVersionUnknown Code = "update_version_unknown"
+	// 검증한 정책과 저장 시점의 정책이 다르면 가드를 통과하지 않은 값이
+	// 쓰일 수 있다. 다시 읽고 다시 시도해야 한다.
+	CodeUpdatePolicyConflict Code = "update_policy_conflict"
 )
 
 // 이벤트 수집
@@ -327,6 +330,7 @@ var statusByCode = map[Code]int{
 	CodeConfigUnavailable:    http.StatusServiceUnavailable,
 	CodeUpdatePolicyInvalid:  http.StatusUnprocessableEntity,
 	CodeUpdateVersionUnknown: http.StatusUnprocessableEntity,
+	CodeUpdatePolicyConflict: http.StatusConflict,
 
 	// 이벤트 수집
 	CodeEventBatchTooLarge: http.StatusBadRequest,

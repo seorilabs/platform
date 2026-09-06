@@ -208,18 +208,20 @@ type fakeConfig struct {
 	calls []maintenanceCall
 	err   error
 
-	policy      remoteconfig.UpdatePolicy
-	policyCalls []updatePolicyCall
-	policyErr   error
+	policy        remoteconfig.UpdatePolicy
+	policyVersion int64
+	policyCalls   []updatePolicyCall
+	policyErr     error
 
 	observed    []remoteconfig.ObservedAppVersion
 	observedErr error
 }
 
 type updatePolicyCall struct {
-	appID  string
-	policy remoteconfig.UpdatePolicy
-	actor  string
+	appID           string
+	policy          remoteconfig.UpdatePolicy
+	expectedVersion int64
+	actor           string
 }
 
 type maintenanceCall struct {
@@ -315,17 +317,22 @@ func (f *fakeConfig) SetMaintenance(_ context.Context, appID string, minutes int
 	return f.err
 }
 
-func (f *fakeConfig) GetUpdatePolicy(_ context.Context, _ string) (remoteconfig.UpdatePolicy, error) {
-	return f.policy, nil
+func (f *fakeConfig) GetUpdatePolicy(
+	_ context.Context,
+	_ string,
+) (remoteconfig.UpdatePolicy, int64, error) {
+	return f.policy, f.policyVersion, nil
 }
 
 func (f *fakeConfig) SetUpdatePolicy(
 	_ context.Context,
 	appID string,
 	policy remoteconfig.UpdatePolicy,
+	expectedVersion int64,
 	actor string,
 ) error {
-	f.policyCalls = append(f.policyCalls, updatePolicyCall{appID, policy, actor})
+	f.policyCalls = append(f.policyCalls,
+		updatePolicyCall{appID, policy, expectedVersion, actor})
 	return f.policyErr
 }
 

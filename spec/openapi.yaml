@@ -1678,6 +1678,10 @@ paths:
 
         관측 가드는 셋이다. 관측되지 않은 버전(오타), 탈출구 없음(더 높은 관측
         버전이 없다), 전원 차단(관측된 안정 버전 전부를 덮는다).
+
+        검증한 정책이 그대로 현재일 때만 저장한다. 그 사이에 정책이 바뀌었으면
+        409다. 동시 요청이 안전 가드를 우회하는 것을 막는 경계이므로, 다시
+        읽고 다시 시도해야 한다.
       operationId: setAdminUpdatePolicy
       security: [{ AdminOidc: [] }]
       parameters:
@@ -1729,6 +1733,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/Unprocessable' }

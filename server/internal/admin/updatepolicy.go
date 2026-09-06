@@ -86,7 +86,7 @@ func (h *Handler) updatePolicy(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	policy, err := h.config.GetUpdatePolicy(r.Context(), appID)
+	policy, _, err := h.config.GetUpdatePolicy(r.Context(), appID)
 	if err != nil {
 		return err
 	}
@@ -180,13 +180,7 @@ func (h *Handler) setUpdatePolicy(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 
-	current, err := h.config.GetUpdatePolicy(r.Context(), req.AppID)
-	if err != nil {
-		return err
-	}
-	// 관측 원장이 연결되지 않았으면 여기서 실패한다. 가드가 미조립 상태에서
-	// 열려 있으면 안 된다.
-	observed, err := h.config.ObservedVersions(r.Context(), req.AppID)
+	current, currentVersion, err := h.config.GetUpdatePolicy(r.Context(), req.AppID)
 	if err != nil {
 		return err
 	}
@@ -196,6 +190,14 @@ func (h *Handler) setUpdatePolicy(w http.ResponseWriter, r *http.Request) error 
 		if got, want := req.Confirmation, blockConfirmation(req.AppID, added); got != want {
 			return platformerr.New(platformerr.CodeRequestInvalid,
 				"확인 문구가 정확하지 않아요: "+want)
+		}
+		// 관측 원장은 새 차단을 검증할 때만 필요하다. 무조건 읽으면
+		// app_versions 조회 하나가 실패했다는 이유로 긴급 해제까지 막힌다.
+		// 원장이 연결되지 않았으면 여기서 실패한다. 가드가 미조립 상태에서
+		// 열려 있으면 안 된다.
+		observed, err := h.config.ObservedVersions(r.Context(), req.AppID)
+		if err != nil {
+			return err
 		}
 		if err := assertBlockable(app, observed, next); err != nil {
 			return err
@@ -212,7 +214,10 @@ func (h *Handler) setUpdatePolicy(w http.ResponseWriter, r *http.Request) error 
 		}
 		return err
 	}
-	if err := h.config.SetUpdatePolicy(r.Context(), req.AppID, next, login); err != nil {
+	// 가드를 통과시킨 그 정책이 그대로 현재일 때만 쓴다.
+	if err := h.config.SetUpdatePolicy(
+		r.Context(), req.AppID, next, currentVersion, login,
+	); err != nil {
 		return err
 	}
 
