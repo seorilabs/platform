@@ -568,16 +568,18 @@ func (h *Handler) environmentMismatches(ctx context.Context) []environmentMismat
 // 내부 ledger struct를 그대로 직렬화하면 providerOrderId 같은 마켓 식별자가
 // 의도치 않게 브라우저까지 전달될 수 있어 응답 경계를 별도로 둔다.
 type adminOrder struct {
-	OrderKey       string    `json:"orderKey"`
-	AppID          string    `json:"appId"`
-	PlatformUserID string    `json:"platformUserId"`
-	EntitlementID  string    `json:"entitlementId"`
-	Platform       string    `json:"platform"`
-	ProductID      string    `json:"productId"`
-	State          string    `json:"state"`
-	PurchasedAt    time.Time `json:"purchasedAt"`
-	ObservedAt     time.Time `json:"observedAt"`
-	Tombstone      bool      `json:"tombstone"`
+	OrderKey               string    `json:"orderKey"`
+	AppID                  string    `json:"appId"`
+	PlatformUserID         string    `json:"platformUserId"`
+	EntitlementID          string    `json:"entitlementId"`
+	Platform               string    `json:"platform"`
+	ProductID              string    `json:"productId"`
+	State                  string    `json:"state"`
+	PurchasedAt            time.Time `json:"purchasedAt"`
+	ObservedAt             time.Time `json:"observedAt"`
+	Tombstone              bool      `json:"tombstone"`
+	IsTestPurchase         *bool     `json:"isTestPurchase"`
+	ProviderOrderIDPresent bool      `json:"providerOrderIdPresent"`
 }
 
 type adminUser struct {
@@ -669,16 +671,18 @@ func (h *Handler) recentOrders(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		result = append(result, adminOrder{
-			OrderKey:       orders[i].OrderKey,
-			AppID:          appID,
-			PlatformUserID: orders[i].PlatformUserID,
-			EntitlementID:  orders[i].EntitlementID,
-			Platform:       orders[i].Platform,
-			ProductID:      orders[i].ProductID,
-			State:          orders[i].State,
-			PurchasedAt:    orders[i].PurchasedAt,
-			ObservedAt:     orders[i].ObservedAt,
-			Tombstone:      orders[i].Tombstone,
+			OrderKey:               orders[i].OrderKey,
+			AppID:                  appID,
+			PlatformUserID:         orders[i].PlatformUserID,
+			EntitlementID:          orders[i].EntitlementID,
+			Platform:               orders[i].Platform,
+			ProductID:              orders[i].ProductID,
+			State:                  orders[i].State,
+			PurchasedAt:            orders[i].PurchasedAt,
+			ObservedAt:             orders[i].ObservedAt,
+			Tombstone:              orders[i].Tombstone,
+			IsTestPurchase:         orders[i].IsTestPurchase,
+			ProviderOrderIDPresent: orders[i].ProviderOrderIDPresent,
 		})
 	}
 

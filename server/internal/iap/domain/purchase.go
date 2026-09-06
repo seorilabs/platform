@@ -157,6 +157,10 @@ type VerifiedPurchase struct {
 	// ProviderOrderID는 마켓 쪽 주문 식별자다. 진단과 완료 처리에 쓴다.
 	ProviderOrderID string
 
+	// IsTestPurchase는 마켓 검증의 관측 사실이다. nil은 미확인이며 실거래로 추정하지 않는다.
+	// 구매 키와 지급 상태는 그대로 두므로 IAP 불변식 1과 2에 영향을 주지 않는다.
+	IsTestPurchase *bool
+
 	// PlatformAccountID는 마켓 계정 참조다.
 	// 저장할 때는 원문이 아니라 sha256만 남긴다. ADR 0005.
 	PlatformAccountID string

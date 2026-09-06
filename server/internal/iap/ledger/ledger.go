@@ -23,6 +23,7 @@ type orderDoc struct {
 	Platform        domain.Platform `firestore:"platform"`
 	ProductID       string          `firestore:"productId"`
 	ProviderOrderID string          `firestore:"providerOrderId"`
+	IsTestPurchase  *bool           `firestore:"isTestPurchase,omitempty"`
 
 	// 마켓 계정 참조는 원문이 아니라 해시로 저장한다. ADR 0005
 	PlatformAccountIDHash string `firestore:"platformAccountIdHash"`
@@ -417,6 +418,7 @@ func (l *Ledger) grant(
 			order.Platform = in.Purchase.Platform
 			order.ProductID = in.Purchase.ProductID
 			order.ProviderOrderID = in.Purchase.ProviderOrderID
+			order.IsTestPurchase = in.Purchase.IsTestPurchase
 			order.PlatformAccountIDHash = domain.HashAccountID(in.Purchase.PlatformAccountID)
 			order.State = domain.StateRevoked
 			order.PurchasedAt = in.Purchase.PurchasedAt
@@ -457,12 +459,14 @@ func (l *Ledger) grant(
 		storedPurchasedAt := in.Purchase.PurchasedAt
 		storedObservedAt := in.Purchase.ObservedAt
 		storedProviderOrderID := in.Purchase.ProviderOrderID
+		storedIsTestPurchase := in.Purchase.IsTestPurchase
 		storedAccountHash := domain.HashAccountID(in.Purchase.PlatformAccountID)
 		if preserveLatestOnTransfer {
 			storedState = order.State
 			storedPurchasedAt = order.PurchasedAt
 			storedObservedAt = order.ObservedAt
 			storedProviderOrderID = order.ProviderOrderID
+			storedIsTestPurchase = order.IsTestPurchase
 			storedAccountHash = order.PlatformAccountIDHash
 		}
 
@@ -481,6 +485,7 @@ func (l *Ledger) grant(
 			Platform:              in.Purchase.Platform,
 			ProductID:             in.Purchase.ProductID,
 			ProviderOrderID:       storedProviderOrderID,
+			IsTestPurchase:        storedIsTestPurchase,
 			PlatformAccountIDHash: storedAccountHash,
 			State:                 storedState,
 			PurchasedAt:           storedPurchasedAt,
@@ -1892,6 +1897,7 @@ func (l *Ledger) RecordPending(ctx context.Context, in GrantInput) error {
 			Platform:              in.Purchase.Platform,
 			ProductID:             in.Purchase.ProductID,
 			ProviderOrderID:       in.Purchase.ProviderOrderID,
+			IsTestPurchase:        in.Purchase.IsTestPurchase,
 			PlatformAccountIDHash: domain.HashAccountID(in.Purchase.PlatformAccountID),
 			State:                 domain.StatePending,
 			PurchasedAt:           in.Purchase.PurchasedAt,
@@ -1909,11 +1915,13 @@ func (l *Ledger) RecordPending(ctx context.Context, in GrantInput) error {
 // 나중에 그 구매가 검증되면 stale 억제가 재지급을 막는다.
 func (l *Ledger) RevokeByCanonicalID(
 	ctx context.Context,
-	platform domain.Platform,
-	canonicalID string,
-	observedAt time.Time,
+	purchase domain.VerifiedPurchase,
 ) error {
-	orderKey := domain.OrderKey(platform, canonicalID)
+	if purchase.CanonicalID == "" || purchase.State != domain.StateRevoked {
+		return platformerr.New(platformerr.CodeLedgerStateInvalid, "검증된 환불 근거가 필요해요")
+	}
+	platform, observedAt := purchase.Platform, purchase.ObservedAt
+	orderKey := domain.OrderKey(purchase.Platform, purchase.CanonicalID)
 
 	return l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
 		now := l.now()
@@ -1931,14 +1939,16 @@ func (l *Ledger) RevokeByCanonicalID(
 		if !exists {
 			// 소유자를 모르는 환불. tombstone으로 남긴다.
 			// 불변식 10. 알림만으로 신규 지급을 하지 않지만 기록은 남긴다.
-			return tx.Set(orderPath, orderDoc{
+			order := orderDoc{
 				Platform:   platform,
 				State:      domain.StateRevoked,
 				ObservedAt: observedAt,
 				Tombstone:  true,
 				CreatedAt:  now,
 				UpdatedAt:  now,
-			})
+			}
+			applyVerifiedPurchaseEvidence(&order, purchase)
+			return tx.Set(orderPath, order)
 		}
 
 		var order orderDoc
@@ -1949,6 +1959,8 @@ func (l *Ledger) RevokeByCanonicalID(
 		if domain.IsStaleUpdate(order.State, domain.StateRevoked, order.ObservedAt, observedAt) {
 			return nil
 		}
+
+		applyVerifiedPurchaseEvidence(&order, purchase)
 
 		// 소유자가 없으면 주문만 갱신한다.
 		if order.PlatformUserID == "" || order.EntitlementID == "" {
@@ -2103,4 +2115,20 @@ func firstNonZero(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// 환불 선행 tombstone도 검증된 거래 근거를 보존한다. 불명 값으로 기존 근거를 지우지 않는다.
+func applyVerifiedPurchaseEvidence(order *orderDoc, purchase domain.VerifiedPurchase) {
+	if purchase.IsTestPurchase != nil {
+		order.IsTestPurchase = purchase.IsTestPurchase
+	}
+	if purchase.ProviderOrderID != "" {
+		order.ProviderOrderID = purchase.ProviderOrderID
+	}
+	if purchase.ProductID != "" {
+		order.ProductID = purchase.ProductID
+	}
+	if !purchase.PurchasedAt.IsZero() {
+		order.PurchasedAt = purchase.PurchasedAt
+	}
 }

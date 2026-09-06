@@ -72,6 +72,7 @@ type productPurchaseResponse struct {
 	OrderID                     string `json:"orderId"`
 	ObfuscatedExternalAccountID string `json:"obfuscatedExternalAccountId"`
 	Quantity                    int64  `json:"quantity"`
+	PurchaseType                *int   `json:"purchaseType"`
 }
 
 // Verifier는 Play 구매 검증기다.
@@ -185,11 +186,13 @@ func (v *Verifier) verifyNonConsumable(ctx context.Context, proof domain.Proof) 
 		completion = domain.CompletionNone
 	}
 
+	isTestPurchase := resp.TestPurchaseContext != nil
 	return domain.VerifiedPurchase{
 		Platform:          domain.PlatformGooglePlay,
 		ProductID:         item.ProductID,
 		CanonicalID:       proof.Token, // 불변식 1. Play는 purchaseToken이다
 		ProviderOrderID:   resp.OrderID,
+		IsTestPurchase:    &isTestPurchase,
 		PlatformAccountID: resp.ObfuscatedExternalAccountID,
 		PurchasedAt:       purchasedAt,
 		ObservedAt:        observedAt,
@@ -229,11 +232,18 @@ func (v *Verifier) verifyConsumable(ctx context.Context, proof domain.Proof) (do
 		completion = domain.CompletionGoogleConsume
 	}
 
+	// purchaseType은 표준 결제 이외에만 온다. 프로모션·광고 보상은 유상 거래로 추정하지 않는다.
+	var isTestPurchase *bool
+	if resp.PurchaseType == nil || *resp.PurchaseType == 0 {
+		value := resp.PurchaseType != nil
+		isTestPurchase = &value
+	}
 	return domain.VerifiedPurchase{
 		Platform:          domain.PlatformGooglePlay,
 		ProductID:         proof.ProductID,
 		CanonicalID:       proof.Token,
 		ProviderOrderID:   resp.OrderID,
+		IsTestPurchase:    isTestPurchase,
 		PlatformAccountID: resp.ObfuscatedExternalAccountID,
 		PurchasedAt:       parseMillis(resp.PurchaseTimeMillis),
 		ObservedAt:        v.now().UTC(),
