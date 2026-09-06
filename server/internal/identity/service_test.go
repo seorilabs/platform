@@ -698,7 +698,7 @@ func TestRefreshRotatesToken(t *testing.T) {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
 
-	second, err := svc.Refresh(ctx, "lizard-tycoon", first.RefreshToken)
+	second, err := svc.Refresh(ctx, "lizard-tycoon", first.RefreshToken, ClientInfo{})
 	if err != nil {
 		t.Fatalf("갱신 실패: %v", err)
 	}
@@ -711,7 +711,7 @@ func TestRefreshRotatesToken(t *testing.T) {
 	}
 
 	// 옛 토큰은 더 이상 쓸 수 없다
-	if _, err := svc.Refresh(ctx, "lizard-tycoon", first.RefreshToken); err == nil {
+	if _, err := svc.Refresh(ctx, "lizard-tycoon", first.RefreshToken, ClientInfo{}); err == nil {
 		t.Error("폐기된 갱신 토큰이 다시 통과했다")
 	}
 }

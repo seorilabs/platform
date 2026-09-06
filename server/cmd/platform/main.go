@@ -180,6 +180,9 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		)
 		// 버전 최초 관측은 세션 원장과 같은 Firestore·outbox 자원을 쓴다.
 		svc.WithAppVersionObserver(users)
+		// 세션 응답에 설정을 동봉해 부팅 왕복을 1회로 줄인다. Godot의
+		// HTTPRequest는 동시 1요청만 처리하므로 이게 실제로 값을 한다.
+		svc.WithConfigOverlay(d.config)
 		if cfg.Role == config.RoleAPI {
 			customTokens, err := identity.NewIAMCustomTokenIssuer(ctx)
 			if err != nil {

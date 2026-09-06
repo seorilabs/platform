@@ -11,6 +11,7 @@ import (
 
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 )
 
 // CredentialKind는 클라이언트가 제시하는 자격증명 종류다.
@@ -149,6 +150,12 @@ type Result struct {
 	IsLinkedAccount bool
 	ExpiresIn       int
 	ExpiresAt       time.Time
+
+	// Config는 세션 응답에 동봉할 원격 설정이다.
+	// 오버레이가 없거나 실패하면 HasConfig가 false이고 응답에서 빠진다.
+	Config     remoteconfig.Resolved
+	ConfigETag string
+	HasConfig  bool
 }
 
 // FirebaseCustomTokenResult는 custom token bridge 응답이다.
@@ -172,6 +179,7 @@ type Service struct {
 	accounts         AccountRepository
 	accountProviders map[string]AccountProvider
 	appVersions      AppVersionObserver
+	configOverlay    ConfigOverlay
 	refreshTTL       time.Duration
 	now              func() time.Time
 }
@@ -247,6 +255,59 @@ func (s *Service) observeAppVersion(ctx context.Context, appID string, client Cl
 		slog.WarnContext(ctx, "앱 버전 최초 관측 실패. 세션은 계속한다",
 			"app_id", appID, "app_version", client.AppVersion, "err", err)
 	}
+}
+
+// ConfigOverlay는 세션 응답에 얹을 원격 설정을 계산한다.
+//
+// 부팅 왕복을 1회로 줄이는 게 목적이다. Godot의 HTTPRequest는 동시 1요청만
+// 처리하므로 이게 실제로 값을 한다.
+//
+// 소비자인 여기서 인터페이스를 정의한다. remoteconfig.Service가 만족한다.
+type ConfigOverlay interface {
+	ResolveFor(ctx context.Context, app registry.App, t remoteconfig.Target) (
+		remoteconfig.Resolved, string, error)
+}
+
+// WithConfigOverlay는 세션 응답의 설정 동봉을 연결한다.
+//
+// 연결하지 않으면 동봉만 빠지고 세션 발급은 그대로 동작한다.
+func (s *Service) WithConfigOverlay(overlay ConfigOverlay) *Service {
+	s.configOverlay = overlay
+	return s
+}
+
+// attachConfig는 세션 결과에 설정을 얹는다.
+//
+// 실패해도 요청을 막지 않는다. observeAppVersion과 같은 판단이다 -- 이건
+// 편의지 인증이 아니다. Firestore가 한 번 흔들렸다고 로그인이 막히면 얻는
+// 것보다 잃는 게 크다. 대신 조용히 넘기지 않고 로그를 남긴다.
+//
+// 실패하면 필드를 통째로 비운다. 빈 값을 채워 넣으면 클라이언트가 그걸
+// 유효한 판정으로 오해한다. 필드가 없으면 "모른다"가 정직하게 전달되고
+// 클라이언트는 /v1/config로 떨어진다.
+func (s *Service) attachConfig(
+	ctx context.Context,
+	app registry.App,
+	client ClientInfo,
+	res Result,
+) Result {
+	if s.configOverlay == nil {
+		return res
+	}
+	target := remoteconfig.Target{
+		Platform:   remoteconfig.PlatformFromRuntime(client.Runtime),
+		AppVersion: client.AppVersion,
+	}
+	resolved, etag, err := s.configOverlay.ResolveFor(ctx, app, target)
+	if err != nil {
+		slog.WarnContext(ctx, "세션 설정 동봉 실패. 세션은 계속한다",
+			"app_id", app.AppID, "err", err)
+		return res
+	}
+	res.Config = resolved
+	res.ConfigETag = etag
+	res.HasConfig = true
+	return res
 }
 
 // WithAppCheckVerifier는 공개 bootstrap 경로의 앱 증명을 연결한다.
@@ -454,13 +515,17 @@ func (s *Service) CreateSession(
 		linked = linked || storedLinked
 	}
 
-	return s.issue(ctx, Session{
+	res, err := s.issue(ctx, Session{
 		PlatformUserID:  puid,
 		AppID:           app.AppID,
 		AppUserID:       identity.UID,
 		IsAnonymous:     identity.Anonymous,
 		IsLinkedAccount: linked,
 	})
+	if err != nil {
+		return Result{}, err
+	}
+	return s.attachConfig(ctx, app, client, res), nil
 }
 
 // resolveIdentity는 자격증명에서 계정을 만들 때 남길 사실을 얻는다.
@@ -563,7 +628,11 @@ func isSHA256(value string) bool {
 //
 // 쓰인 갱신 토큰은 폐기하고 새로 발급한다. 회전이다.
 // 유출된 토큰이 무기한 쓰이는 걸 막는다.
-func (s *Service) Refresh(ctx context.Context, appID, refreshToken string) (Result, error) {
+func (s *Service) Refresh(
+	ctx context.Context,
+	appID, refreshToken string,
+	client ClientInfo,
+) (Result, error) {
 	app, err := s.registry.GetUsable(ctx, appID)
 	if err != nil {
 		return Result{}, err
@@ -593,7 +662,13 @@ func (s *Service) Refresh(ctx context.Context, appID, refreshToken string) (Resu
 	// 옛 토큰이 남는 것보다 사용자가 로그아웃되는 게 더 나쁘다.
 	_ = s.users.DeleteRefresh(ctx, refreshToken)
 
-	return s.issue(ctx, sess)
+	res, err := s.issue(ctx, sess)
+	if err != nil {
+		return Result{}, err
+	}
+	// 갱신에도 설정을 얹는다. 앱이 오래 떠 있으면 부팅 응답의 설정이 낡는데,
+	// 갱신은 만료 전에 돌아오므로 새 값을 받을 유일한 정기 경로다.
+	return s.attachConfig(ctx, app, client, res), nil
 }
 
 func (s *Service) issue(ctx context.Context, sess Session) (Result, error) {
