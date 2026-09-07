@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -47,8 +48,18 @@ type iapParts struct {
 	// appVerifiers는 webhook과 worker까지 앱 범위를 유지한다. verify
 	// 요청에서만 앱을 나누고 여기서 전역 검증기로 돌아가면 환불과 완료
 	// 처리가 lizard 설정으로 Happy Farm 주문을 호출하게 된다.
-	appVerifiers map[string]map[domain.Platform]verify.Verifier
-	apps         map[string]registry.App
+	appVerifiers           map[string]map[domain.Platform]verify.Verifier
+	apps                   map[string]registry.App
+	additionalEnvironments map[domain.Scope]iapEnvironment
+}
+
+// iapEnvironment는 기본 결제 서비스와 독립적인 추가 환경이다.
+// 검증 유스케이스는 재사용하고, 환경이 고정된 의존성만 별도로 조립한다.
+type iapEnvironment struct {
+	service   *verify.Service
+	ledger    *ledger.Ledger
+	verifiers map[domain.Platform]verify.Verifier
+	app       registry.App
 }
 
 // newIAPService는 결제 유스케이스를 조립한다.
@@ -178,22 +189,74 @@ func newIAPService(
 		return nil, err
 	}
 
+	additional := make(map[domain.Scope]iapEnvironment)
+	for _, app := range apps {
+		if !app.IAP.AppleSandboxEnabled || !ic.Apple.Enabled() {
+			continue
+		}
+		part, err := newAppleSandboxEnvironment(ctx, cfg, st, app, cat, keyring, reg, col, opEvents)
+		if err != nil {
+			return nil, err
+		}
+		additional[domain.Scope{AppID: app.AppID, Environment: domain.EnvSandbox}] = part
+	}
+
 	slog.Info("결제 준비 완료",
 		"environment", ic.Environment,
 		"markets", enabled,
 		"entitlements", len(cat.IDs()),
+		"additional_environments", len(additional),
 	)
 	return &iapParts{
-		service:      svc,
-		ledger:       led,
-		catalog:      cat,
-		verifiers:    byPlatform,
-		enabled:      enabled,
-		refundKeys:   refundKeys,
-		appLedgers:   appLedgerValues,
-		appVerifiers: appVerifierMaps,
-		apps:         appsByID,
+		service:                svc,
+		ledger:                 led,
+		catalog:                cat,
+		verifiers:              byPlatform,
+		enabled:                enabled,
+		refundKeys:             refundKeys,
+		appLedgers:             appLedgerValues,
+		appVerifiers:           appVerifierMaps,
+		apps:                   appsByID,
+		additionalEnvironments: additional,
 	}, nil
+}
+
+func newAppleSandboxEnvironment(
+	ctx context.Context, cfg config.Config, st *store.Client, app registry.App,
+	cat *catalog.Catalog, keyring *binding.Keyring, reg *registry.Registry,
+	col *events.Collector, opEvents *operational.Repository,
+) (iapEnvironment, error) {
+	if !app.IAP.AppleSandboxEnabled || !app.IAPEnvironmentAllowed(registry.LedgerSandbox) {
+		return iapEnvironment{}, errors.New("추가 Apple sandbox가 허용되지 않은 앱이다")
+	}
+	// 복사본은 Apple 검증기 조립에만 쓴다. 기본 registry와 서비스의
+	// production 설정을 변경하지 않는다. 불변식 9, ADR 0027.
+	sandboxApp := app
+	sandboxApp.IAP.LedgerEnvironment = registry.LedgerSandbox
+	sandboxApp.IAP.Markets = []string{string(domain.PlatformAppStore)}
+	list, err := newVerifiersForApp(ctx, cfg.IAP, sandboxApp, nil)
+	if err != nil {
+		return iapEnvironment{}, err
+	}
+	if len(list) != 1 || list[0].Platform() != domain.PlatformAppStore {
+		return iapEnvironment{}, errors.New("추가 sandbox에는 Apple 검증기 하나가 필요하다")
+	}
+	if err := validateAppCatalog(cat, app, []domain.Platform{domain.PlatformAppStore}); err != nil {
+		return iapEnvironment{}, err
+	}
+	l := ledgerForRegistryApp(st, app, domain.EnvSandbox).WithOperationalEvents(opEvents)
+	svc, err := verify.New(verify.Config{
+		Verifiers: list, Ledger: l, Catalog: cat, Keyring: keyring, Outbox: l,
+		AppVerifiers: map[string][]verify.Verifier{app.AppID: list},
+		AppLedgers:   map[string]verify.Ledger{app.AppID: l},
+		AppOutboxes:  map[string]verify.OutboxWriter{app.AppID: l},
+		Apps:         reg, Auditor: auditAdapter{col: col},
+	})
+	if err != nil {
+		return iapEnvironment{}, err
+	}
+	return iapEnvironment{service: svc, ledger: l, app: app,
+		verifiers: map[domain.Platform]verify.Verifier{domain.PlatformAppStore: list[0]}}, nil
 }
 
 // validateAppCatalog는 실제 조립된 verifier의 SKU만 부팅 조건으로 삼는다.

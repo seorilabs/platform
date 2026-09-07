@@ -89,6 +89,17 @@ platform.verify_purchase(
 )
 ```
 
+### Apple 테스트 환경
+
+`iap_environment`에 `"production"`, `"sandbox"` 또는 그 문자열을 반환하는
+Callable을 설정할 수 있다. 구매 검증·권한 조회·계정 참조 요청에만
+`X-Seori-IAP-Environment` 헤더를 보내며 요청 시작 시 선택한 환경을 인증
+재전송까지 유지한다. 생략하면 기존 서버 기본 환경을 사용한다.
+
+iOS 앱은 StoreKit에서 확인한 실제 환경을 제공해야 한다. 명시적으로 설정한
+환경이 비었거나 잘못됐으면 네트워크 요청을 보내지 않는다. 클라이언트 설정은
+지급 증거가 아니며 서버의 앱별 환경 허용과 Apple 거래 검증이 필요하다.
+
 ### Firebase 인증과 AdMob SSV
 
 게임은 Custom Token 교환과 reward claim 상태 전이를 다시 구현하지 않는다.

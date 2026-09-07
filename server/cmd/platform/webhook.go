@@ -21,6 +21,21 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/worker"
 )
 
+func newSandboxAppleWebhook(ic config.IAPConfig, part iapEnvironment, appID string, audit webhook.Auditor) (*webhook.AppleHandler, error) {
+	client, err := apple.NewClient(apple.Config{
+		KeyContent: ic.Apple.KeyContent, KeyID: ic.Apple.KeyID, Issuer: ic.Apple.Issuer,
+		BundleID: part.app.IAP.AppStoreBundleID, Sandbox: true, RequireOCSP: false,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return webhook.NewAppleHandler(webhook.AppleConfig{
+		Parser: client, Verifier: part.verifiers[domain.PlatformAppStore],
+		Events: part.ledger, Reconciler: part.ledger, Auditor: audit,
+		BundleID: part.app.IAP.AppStoreBundleID, AppID: appID, Environment: domain.EnvSandbox,
+	})
+}
+
 // registerWebhooks는 마켓 알림 라우트를 연다.
 //
 // 자격증명이 없는 마켓의 엔드포인트는 열지 않는다.
@@ -44,13 +59,29 @@ func registerWebhooks(mux *http.ServeMux, cfg config.Config, d *deps) error {
 			return err
 		}
 
+		additional := make(map[domain.Environment]*webhook.AppleHandler)
+		for _, part := range d.iap.additionalEnvironments {
+			if part.app.IAP.AppStoreBundleID != ic.Apple.BundleID {
+				continue
+			}
+			if additional[domain.EnvSandbox] != nil {
+				return errors.New("기존 Apple 알림 번들이 여러 앱과 겹친다")
+			}
+			handler, err := newSandboxAppleWebhook(ic, part, "", audit)
+			if err != nil {
+				return err
+			}
+			additional[domain.EnvSandbox] = handler
+		}
 		h, err := webhook.NewAppleHandler(webhook.AppleConfig{
-			Parser:     client,
-			Verifier:   d.iap.verifiers[domain.PlatformAppStore],
-			Events:     d.iap.ledger,
-			Reconciler: d.iap.ledger,
-			Auditor:    audit,
-			BundleID:   ic.Apple.BundleID,
+			Parser:       client,
+			Verifier:     d.iap.verifiers[domain.PlatformAppStore],
+			Events:       d.iap.ledger,
+			Reconciler:   d.iap.ledger,
+			Auditor:      audit,
+			BundleID:     ic.Apple.BundleID,
+			Environment:  d.iap.ledger.Environment(),
+			Environments: additional,
 		})
 		if err != nil {
 			return err
@@ -116,9 +147,18 @@ func registerWebhooks(mux *http.ServeMux, cfg config.Config, d *deps) error {
 			if err != nil {
 				return err
 			}
+			additional := make(map[domain.Environment]*webhook.AppleHandler)
+			if part, ok := d.iap.additionalEnvironments[domain.Scope{AppID: appID, Environment: domain.EnvSandbox}]; ok {
+				handler, err := newSandboxAppleWebhook(ic, part, appID, audit)
+				if err != nil {
+					return err
+				}
+				additional[domain.EnvSandbox] = handler
+			}
 			h, err := webhook.NewAppleHandler(webhook.AppleConfig{
 				Parser: client, Verifier: verifier, Events: appLedger, Reconciler: appLedger,
 				Auditor: audit, BundleID: app.IAP.AppStoreBundleID, AppID: appID,
+				Environment: appLedger.Environment(), Environments: additional,
 			})
 			if err != nil {
 				return err
@@ -235,6 +275,32 @@ func runWorker(ctx context.Context, cfg config.Config) error {
 		total.RefundFailed += stats.RefundFailed
 		total.RefundExpired += stats.RefundExpired
 	}
+	// 추가 환경도 같은 worker 구현을 쓰되 해당 환경의 원장과 검증기만
+	// 전달한다. production 실패를 sandbox로 넘기는 재시도가 아니다.
+	scopes := additionalIAPScopes(deps.iap.additionalEnvironments)
+	for _, scope := range scopes {
+		part := deps.iap.additionalEnvironments[scope]
+		w, err := newWorkerFor(scope.AppID, part.ledger, part.verifiers, deps.iap.refundKeys, cfg, auditAdapter{col: deps.events})
+		if err != nil {
+			return err
+		}
+		stats, err := w.RunOnce(ctx)
+		if err != nil {
+			return err
+		}
+		total.Claimed += stats.Claimed
+		total.Completed += stats.Completed
+		total.Failed += stats.Failed
+		total.RefundClaimed += stats.RefundClaimed
+		total.RefundResponded += stats.RefundResponded
+		total.RefundFailed += stats.RefundFailed
+		total.RefundExpired += stats.RefundExpired
+		if n, err := part.ledger.CountDeadLetters(ctx); err != nil {
+			slog.WarnContext(ctx, "추가 환경 dead-letter 집계 실패", "app_id", scope.AppID, "environment", scope.Environment, "err", err)
+		} else if n > 0 {
+			slog.ErrorContext(ctx, "추가 환경 완료 처리를 포기한 주문이 있다", "app_id", scope.AppID, "environment", scope.Environment, "count", n)
+		}
+	}
 	stats := total
 	slog.Info("완료 재시도 종료",
 		"claimed", stats.Claimed,
@@ -263,6 +329,20 @@ func runWorker(ctx context.Context, cfg config.Config) error {
 	}
 
 	return nil
+}
+
+func additionalIAPScopes(parts map[domain.Scope]iapEnvironment) []domain.Scope {
+	scopes := make([]domain.Scope, 0, len(parts))
+	for scope := range parts {
+		scopes = append(scopes, scope)
+	}
+	sort.Slice(scopes, func(i, j int) bool {
+		if scopes[i].AppID != scopes[j].AppID {
+			return scopes[i].AppID < scopes[j].AppID
+		}
+		return scopes[i].Environment < scopes[j].Environment
+	})
+	return scopes
 }
 
 // splitList는 쉼표로 나눈 목록을 읽는다.

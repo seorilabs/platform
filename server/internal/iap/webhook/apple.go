@@ -49,22 +49,26 @@ type AppleParser interface {
 
 // AppleHandler는 App Store 알림 핸들러다.
 type AppleHandler struct {
-	parser   AppleParser
-	verifier Verifier
-	bundleID string
-	appID    string
-	proc     *processor
+	parser       AppleParser
+	verifier     Verifier
+	bundleID     string
+	appID        string
+	proc         *processor
+	environment  domain.Environment
+	environments map[domain.Environment]*AppleHandler
 }
 
 // AppleConfig는 핸들러 조립 설정이다.
 type AppleConfig struct {
-	Parser     AppleParser
-	Verifier   Verifier
-	Events     Events
-	Reconciler Reconciler
-	Auditor    Auditor
-	BundleID   string
-	AppID      string
+	Parser       AppleParser
+	Verifier     Verifier
+	Events       Events
+	Reconciler   Reconciler
+	Auditor      Auditor
+	BundleID     string
+	AppID        string
+	Environment  domain.Environment
+	Environments map[domain.Environment]*AppleHandler
 }
 
 func NewAppleHandler(cfg AppleConfig) (*AppleHandler, error) {
@@ -76,12 +80,22 @@ func NewAppleHandler(cfg AppleConfig) (*AppleHandler, error) {
 		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid,
 			"App Store 번들 ID가 필요해요")
 	}
+	if !cfg.Environment.Valid() {
+		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "App Store 알림 환경이 필요해요")
+	}
+	for env, handler := range cfg.Environments {
+		if handler == nil || env == cfg.Environment || !env.Valid() || handler.environment != env || handler.bundleID != cfg.BundleID || handler.appID != cfg.AppID {
+			return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "추가 App Store 알림 환경이 올바르지 않아요")
+		}
+	}
 
 	return &AppleHandler{
-		parser:   cfg.Parser,
-		verifier: cfg.Verifier,
-		bundleID: cfg.BundleID,
-		appID:    cfg.AppID,
+		parser:       cfg.Parser,
+		verifier:     cfg.Verifier,
+		bundleID:     cfg.BundleID,
+		appID:        cfg.AppID,
+		environment:  cfg.Environment,
+		environments: cfg.Environments,
 		proc: &processor{
 			events:     cfg.Events,
 			reconciler: cfg.Reconciler,
@@ -124,13 +138,40 @@ func (h *AppleHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	n, err := h.parse(env.SignedPayload)
+	selected := h
+	if len(h.environments) != 0 {
+		// Apple 서명을 먼저 검증한다. 서명된 환경으로 미리 조립한
+		// handler 하나를 고르며 실패 뒤 다른 환경으로 재시도하지 않는다.
+		payload, err := h.parser.ParseNotification(env.SignedPayload)
+		if err != nil {
+			writeWebhookError(w, platformerr.Wrap(err, platformerr.CodeProviderResponseInvalid,
+				"App Store 알림 서명을 확인하지 못했어요"))
+			return
+		}
+		if payload == nil {
+			writeWebhookError(w, platformerr.New(platformerr.CodeProviderResponseInvalid, "App Store 알림이 비어 있어요"))
+			return
+		}
+		requested, err := appleEnvironment(payload.Data.Environment)
+		if err != nil {
+			writeWebhookError(w, err)
+			return
+		}
+		if requested != h.environment {
+			selected = h.environments[requested]
+			if selected == nil {
+				writeWebhookError(w, platformerr.New(platformerr.CodeEnvironmentMismatch, "App Store 알림 환경이 허용되지 않았어요"))
+				return
+			}
+		}
+	}
+	n, err := selected.parse(env.SignedPayload)
 	if err != nil {
 		writeWebhookError(w, err)
 		return
 	}
 
-	if err := h.proc.process(r.Context(), "app_store", n, h.verifier); err != nil {
+	if err := selected.proc.process(r.Context(), "app_store", n, selected.verifier); err != nil {
 		writeWebhookError(w, err)
 		return
 	}
@@ -145,6 +186,16 @@ func (h *AppleHandler) parse(signedPayload string) (notification, error) {
 		// 서명이 맞지 않는다. 위조이거나 Apple 인증서가 바뀐 것이다.
 		return notification{}, platformerr.Wrap(err, platformerr.CodeProviderResponseInvalid,
 			"App Store 알림 서명을 확인하지 못했어요")
+	}
+	if payload == nil {
+		return notification{}, platformerr.New(platformerr.CodeProviderResponseInvalid, "App Store 알림이 비어 있어요")
+	}
+	env, err := appleEnvironment(payload.Data.Environment)
+	if err != nil {
+		return notification{}, err
+	}
+	if env != h.environment {
+		return notification{}, platformerr.New(platformerr.CodeEnvironmentMismatch, "App Store 알림과 원장 환경이 달라요")
 	}
 	if payload.NotificationUUID == "" {
 		return notification{}, platformerr.New(platformerr.CodeProviderResponseInvalid,
@@ -181,9 +232,19 @@ func (h *AppleHandler) parse(signedPayload string) (notification, error) {
 		return notification{}, platformerr.Wrap(err, platformerr.CodeProviderResponseInvalid,
 			"App Store 알림 거래 서명을 확인하지 못했어요")
 	}
+	if tx == nil {
+		return notification{}, platformerr.New(platformerr.CodeProviderResponseInvalid, "App Store 거래가 비어 있어요")
+	}
 	if tx.TransactionID == "" || tx.ProductID == "" {
 		return notification{}, platformerr.New(platformerr.CodeProviderResponseInvalid,
 			"App Store 알림 거래 정보가 올바르지 않아요")
+	}
+	transactionEnvironment, err := appleEnvironment(string(tx.Environment))
+	if err != nil {
+		return notification{}, err
+	}
+	if transactionEnvironment != h.environment {
+		return notification{}, platformerr.New(platformerr.CodeEnvironmentMismatch, "App Store 거래와 알림 환경이 달라요")
 	}
 
 	// 재검증은 transactionId로 한다.
@@ -194,6 +255,17 @@ func (h *AppleHandler) parse(signedPayload string) (notification, error) {
 		Token:     tx.TransactionID,
 	}
 	return n, nil
+}
+
+func appleEnvironment(value string) (domain.Environment, error) {
+	switch value {
+	case "Production":
+		return domain.EnvProduction, nil
+	case "Sandbox":
+		return domain.EnvSandbox, nil
+	default:
+		return "", platformerr.New(platformerr.CodeEnvironmentMismatch, "App Store 알림 환경이 올바르지 않아요")
+	}
 }
 
 // appleSignedDate는 알림 생성 시각이다.

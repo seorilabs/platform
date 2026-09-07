@@ -332,6 +332,16 @@ const (
 	EnvSandbox    Environment = "sandbox"
 )
 
+// Scope는 검증·원장·완료 worker가 공유하는 앱과 환경의 경계다.
+type Scope struct {
+	AppID       string
+	Environment Environment
+}
+
+func (e Environment) Valid() bool {
+	return e == EnvProduction || e == EnvSandbox
+}
+
 // PathPrefix는 이 환경의 Firestore 경로 접두사다.
 //
 // production은 접두사가 없고 sandbox만 붙는다.

@@ -28,6 +28,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/iap"
+	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/identity"
 	"github.com/seorilabs/platform/server/internal/identity/providers/oidc"
 	"github.com/seorilabs/platform/server/internal/operational"
@@ -408,7 +409,12 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		// AIT 앱은 appLogin authorization code를 이 role의 mTLS
 		// 자격증명으로 교환한 뒤 같은 호스트에서 구매를 검증한다.
 		d.identity.RegisterSession(mux)
-		iap.NewHandler(d.iap.service, d.identity).WithApps(d.registry).Register(mux)
+		environmentServices := make(map[domain.Scope]iap.Service, len(d.iap.additionalEnvironments))
+		for scope, part := range d.iap.additionalEnvironments {
+			environmentServices[scope] = part.service
+		}
+		iap.NewHandler(d.iap.service, d.identity).WithApps(d.registry).
+			WithEnvironmentServices(environmentServices).Register(mux)
 
 		// 웹훅은 마켓별로 자격증명이 있을 때만 연다.
 		// 없는 마켓의 엔드포인트를 열면 인증도 못 하고 알림만 쌓인다.
