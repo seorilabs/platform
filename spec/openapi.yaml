@@ -2180,6 +2180,13 @@ components:
       properties:
         id: { type: string, pattern: '^[a-z0-9가-힣][a-z0-9가-힣._-]{0,127}$' }
         text: { type: string, minLength: 1, maxLength: 16384 }
+        more:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          description: |
+            같은 좌표의 두 번째 본문. `text`가 짧은 압축본일 때 앱이 `찬찬히 읽기`
+            접힘과 사전 본문으로 쓰는 원문이다. 릴리스에 없으면 생략한다.
         access: { $ref: '#/components/schemas/ContentAccess' }
 
     GanjiFact:

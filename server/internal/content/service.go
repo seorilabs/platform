@@ -256,7 +256,7 @@ func (s *Service) Term(ctx context.Context, appID, puid, termID string) (TermRes
 	}
 	return TermResult{
 		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
-		Article: Article{ID: item.ID, Text: item.Text, Access: item.Access},
+		Article: Article{ID: item.ID, Text: item.Text, More: item.More, Access: item.Access},
 	}, nil
 }
 
@@ -282,7 +282,7 @@ func collectArticles(release Release, ids []string, want Access, into map[string
 	}
 	for _, id := range ids {
 		item := release.Items[id]
-		into[id] = Article{ID: item.ID, Text: item.Text, Access: item.Access}
+		into[id] = Article{ID: item.ID, Text: item.Text, More: item.More, Access: item.Access}
 	}
 	return nil
 }
@@ -293,7 +293,7 @@ func collectOptionalArticles(release Release, ids []string, want Access, into ma
 	}
 	for _, id := range ids {
 		if item, ok := release.Items[id]; ok {
-			into[id] = Article{ID: item.ID, Text: item.Text, Access: item.Access}
+			into[id] = Article{ID: item.ID, Text: item.Text, More: item.More, Access: item.Access}
 		}
 	}
 	return nil
