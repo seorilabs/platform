@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -88,5 +89,38 @@ func TestEventContractRejectsPIIAndRawIdentifiers(t *testing.T) {
 	unsafeID.EventID = "identity_pu_sensitive"
 	if err := validateEvent(unsafeID); err == nil {
 		t.Fatal("원본 식별자가 드러나는 event ID를 허용했다")
+	}
+}
+
+func TestIdentityEventContractAcceptsClientBuild(t *testing.T) {
+	// 신규 가입과 outbox 검증은 같은 트랜잭션이다. SDK가 보내는 빌드 정보가
+	// 이 계약에서 빠지면 정상 자격증명도 500으로 끝나고 사용자가 생성되지 않는다.
+	for _, runtime := range []string{"godot-native-android", "godot-native-ios", "ait-web", "web"} {
+		t.Run(runtime, func(t *testing.T) {
+			event := Event{
+				EventID:    StableEventID("identity", "lizard-tycoon", "test-user"),
+				OccurredAt: time.Date(2026, 9, 7, 3, 47, 0, 0, time.UTC),
+				Type:       "identity.created", AppID: "lizard-tycoon", Outcome: "created",
+				Attributes: map[string]any{
+					"authType": "firebase", "signInProvider": "anonymous", "anonymous": true,
+					"appVersion": "1.4.1", "runtime": runtime,
+				},
+			}
+			if err := validateEvent(event); err != nil {
+				t.Fatalf("정상 신규 계정의 빌드 정보를 거부했다: %v", err)
+			}
+			for _, key := range []string{"appVersion", "runtime"} {
+				original := event.Attributes[key]
+				event.Attributes[key] = strings.Repeat("x", 121)
+				if err := validateEvent(event); err == nil {
+					t.Fatalf("%s의 문자열 상한을 넘겼다", key)
+				}
+				event.Attributes[key] = original
+			}
+			event.Attributes["platformUserId"] = "test-user"
+			if err := validateEvent(event); err == nil {
+				t.Fatal("빌드 정보와 함께 원본 식별자까지 허용했다")
+			}
+		})
 	}
 }

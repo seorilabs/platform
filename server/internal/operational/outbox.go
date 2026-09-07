@@ -50,7 +50,9 @@ var (
 	eventContracts = map[string]eventContract{
 		"identity.created": {
 			prefix: "identity_", outcome: "created",
-			attributes: setOf("authType", "signInProvider", "anonymous", "referrer"),
+			// 가입 코드와 Backoffice가 이미 사용하는 빌드 정보다. 여기서
+			// 거부하면 이벤트와 같은 트랜잭션에 있는 신규 가입도 취소된다.
+			attributes: setOf("authType", "signInProvider", "anonymous", "referrer", "appVersion", "runtime"),
 		},
 		"app.version.first_seen": {
 			prefix: "app_version_", outcome: "observed",
