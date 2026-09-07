@@ -729,11 +729,15 @@ paths:
         Apple은 `CONSUMABLE` 또는 `NON_CONSUMABLE` 거래가 카탈로그 유형과 일치해야 한다.
         구독 상품은 422로 거부한다.
         **production과 sandbox 사이의 자동 fallback은 없다.**
+        선택 헤더로 요청한 환경의 검증기·원장·완료 대기열만 사용한다.
+        헤더가 없으면 앱 레지스트리의 기존 기본 환경을 유지한다.
+        추가 sandbox 환경은 명시적으로 허용한 앱의 App Store 거래만 받는다.
 
         응답의 `granted`와 `alreadyGranted`는 항상 배타적이다. 둘 다
         false인 조합은 존재하지 않는다 — 불변식 2다.
       operationId: verifyIapPurchase
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/SeoriApp'
         - $ref: '#/components/parameters/AppCheck'
       requestBody:
@@ -777,6 +781,7 @@ paths:
         마켓 SDK가 없어도 이 엔드포인트만으로 환불 projection을 반영할 수 있다.
       operationId: listEntitlements
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/SeoriApp'
       responses:
         '200':
@@ -800,6 +805,9 @@ paths:
                             type: array
                             items: { $ref: '#/components/schemas/EntitlementId' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /iap/account-references:
     post:
@@ -811,6 +819,7 @@ paths:
         HMAC keyring으로 생성한다. 첫 항목이 현재 키이고 나머지는 회전 검증용이다.
       operationId: getAccountReferences
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/SeoriApp'
       responses:
         '200':
@@ -832,16 +841,22 @@ paths:
                             type: string
                             format: uuid
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
 
   # 실제 라우트는 /v1/iap/webhooks/apple 이다. App Store Connect의 알림
   # URL에 이 값을 그대로 등록한다. 경로가 틀리면 404가 나고 환불·취소
   # 알림이 유실된다 — 마켓은 우리 원장을 대신 지켜주지 않는다.
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /iap/webhooks/apple:
     post:
       tags: [webhook]
       summary: App Store Server Notification v2 수신
       description: |
         **인증이 곧 JWS 서명 검증이다.** 별도 토큰이 없다.
+
+        검증된 알림의 environment와 거래의 environment가 일치해야 한다.
+        서버가 명시적으로 허용한 환경의 원장·검증기만 사용하며 자동 fallback은 없다.
 
         처리 대상은 ONE_TIME_CHARGE, REFUND, REFUND_DECLINED, REFUND_REVERSED, REVOKE.
         그 외는 무시한다.
@@ -932,6 +947,8 @@ paths:
         신규 앱용 고정 appId 경로다. composition root가 registry의 appId와
         bundle ID, verifier, 앱 범위 원장을 결합하며 payload의 bundle ID도 다시 검증한다.
         기존 `/iap/webhooks/apple` 계약은 lizard-tycoon 호환을 위해 유지한다.
+        검증된 알림과 거래의 environment가 일치해야 하며, 해당 앱이 허용한
+        환경의 원장·검증기만 사용한다. 다른 환경으로 재시도하지 않는다.
       operationId: receiveAppStoreNotificationForApp
       security: []
       parameters:
@@ -1017,6 +1034,8 @@ paths:
       summary: 플랫폼 운영 상태 조회
       operationId: getAdminHealth
       security: [{ AdminOidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
       responses:
         '200':
           description: 조회 성공
@@ -1031,6 +1050,7 @@ paths:
                       result:
                         $ref: '#/components/schemas/AdminHealth'
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -1080,6 +1100,7 @@ paths:
       operationId: listAdminRecentOrders
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminLimit'
       responses:
         '200':
@@ -1104,6 +1125,7 @@ paths:
                             minimum: 0
                             description: 계약 위반으로 제외된 주문 수
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -1155,6 +1177,7 @@ paths:
       operationId: listAdminUserEntitlements
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: puid
           in: path
           required: true
@@ -1179,6 +1202,7 @@ paths:
                             type: array
                             items: { $ref: '#/components/schemas/AdminEntitlement' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -1198,6 +1222,7 @@ paths:
       operationId: listAdminOperatorGrants
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminLimit'
       responses:
         '200':
@@ -1230,6 +1255,7 @@ paths:
                             minimum: 0
                             description: 계약 위반으로 제외된 회수 기록 수
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -1242,6 +1268,7 @@ paths:
       operationId: getAdminAppIapCatalog
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: appId
           in: path
           required: true
@@ -1284,6 +1311,7 @@ paths:
       operationId: listAdminGooglePlayRefundReviews
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: appId
           in: path
           required: true
@@ -1335,6 +1363,7 @@ paths:
       operationId: decideAdminGooglePlayRefundReview
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: appId
           in: path
           required: true
@@ -1383,6 +1412,7 @@ paths:
       operationId: grantAdminEntitlement
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1413,6 +1443,7 @@ paths:
       operationId: revokeAdminEntitlement
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1450,6 +1481,7 @@ paths:
       operationId: resetAdminAppStoreSandbox
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1480,6 +1512,7 @@ paths:
       operationId: getAdminAppStoreSandboxReset
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: requestId
           in: path
           required: true
@@ -1517,6 +1550,7 @@ paths:
       operationId: resumeAdminAppStoreSandboxReset
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: requestId
           in: path
           required: true
@@ -1551,6 +1585,7 @@ paths:
       operationId: closeAdminAppStoreSandboxResetNotStarted
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: requestId
           in: path
           required: true
@@ -2062,6 +2097,17 @@ components:
         GET은 read 또는 write allowlist, mutation은 write allowlist만 허용한다.
 
   parameters:
+    IapEnvironment:
+      name: X-Seori-IAP-Environment
+      in: header
+      required: false
+      description: |
+        IAP 검증·조회·복원과 Admin IAP 작업의 환경 선택이다. 지급 증거가 아니다.
+        생략하면 앱 레지스트리 또는 Admin 서버의 기존 기본 환경을 사용한다.
+        잘못된 값·빈 값·중복 헤더와 앱에 허용되지 않은 환경은 거부한다.
+        추가 sandbox 환경은 App Store 거래만 받으며 다른 환경으로 재시도하지 않는다.
+        Admin 변경 요청의 expectedEnvironment는 선택한 환경과 같아야 한다.
+      schema: { $ref: '#/components/schemas/LedgerEnvironment' }
     SeoriApp:
       name: X-Seori-App
       in: header
