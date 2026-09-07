@@ -297,3 +297,26 @@ func TestSeasonPassIsCheckedByYear(t *testing.T) {
 		t.Fatalf("authorized=%v err=%v", got, err)
 	}
 }
+
+// 궁합은 연도가 없어 year 0 으로 들어온다. 시즌 entitlement는 한 해의 흐름을 여는 구매라
+// 궁합까지 열어 주면 안 된다 — 0 을 "0000" 으로 조회하는 일도 없어야 한다.
+func TestAuthorizedSkipsSeasonEntitlementForYearZero(t *testing.T) {
+	app := testContentApp()
+	app.Content.SeasonEntitlements = map[string]string{"0000": "season", "2026": "season"}
+	access := NewAccessService(&fakeUnlocks{}, nil, &fakeEntitlements{active: true})
+
+	got, err := access.Authorized(t.Context(), app, "puid", "pk_pair", "gunghap", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got {
+		t.Fatal("연도 없는 궁합이 시즌 entitlement로 열렸다")
+	}
+	got, err = access.Authorized(t.Context(), app, "puid", "rk_reading", "flow:2026", 2026)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Fatal("시즌 entitlement가 있는 해의 흐름이 열리지 않았다")
+	}
+}

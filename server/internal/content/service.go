@@ -144,6 +144,89 @@ func (s *Service) Resolve(
 	}, nil
 }
 
+// ResolvePairing은 두 명식의 궁합 해설을 고른다. Resolve와 같은 골격이되 셋이 다르다 —
+// 무료 본문이 없고, 열람 단위가 연도가 아니라 명식 쌍(deepKey "gunghap")이며, 레지스트리
+// content.pairing_enabled가 꺼진 앱은 좌표를 만들기 전에 거절한다.
+func (s *Service) ResolvePairing(
+	ctx context.Context,
+	appID, puid string,
+	req ResolvePairingRequest,
+) (ResolvePairingResult, error) {
+	selection, err := SelectPairing(req)
+	if err != nil {
+		return ResolvePairingResult{}, err
+	}
+	app, release, err := s.release(ctx, appID)
+	if err != nil {
+		return ResolvePairingResult{}, err
+	}
+	// 킬 스위치. 앱은 이 403을 구서버의 404와 같은 뜻(궁합 미제공)으로 다룬다.
+	if !app.Content.PairingEnabled {
+		return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentNotEnabled,
+			"이 앱은 궁합 콘텐츠를 제공하지 않아요")
+	}
+	if release.SchemaVersion != req.SchemaVersion {
+		return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentSchemaMismatch,
+			"앱과 콘텐츠 스키마 버전이 일치하지 않아요")
+	}
+	if err := validateItems(release, selection.DeepIDs, AccessDeep); err != nil {
+		return ResolvePairingResult{}, err
+	}
+	// 궁합도 신규 명식 일일 한도(reading_daily_limit)를 함께 쓴다. pairKey가 대칭이라
+	// 같은 두 사람을 어느 순서로 고르든 한 번만 센다.
+	if err := s.usage.AllowReading(ctx, app, puid, selection.PairKey); err != nil {
+		return ResolvePairingResult{}, err
+	}
+
+	if req.Unlock != nil {
+		if s.access == nil {
+			return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentLocked,
+				"심화 권한 확인이 준비되지 않았어요")
+		}
+		alreadyAuthorized, err := s.access.Authorized(
+			ctx, app, puid, selection.PairKey, pairingDeepKey, 0,
+		)
+		if err != nil {
+			return ResolvePairingResult{}, platformerr.Wrap(err, platformerr.CodeContentUnavailable,
+				"심화 권한을 확인하지 못했어요")
+		}
+		if !alreadyAuthorized {
+			err = s.access.Unlock(ctx, app, puid, selection.PairKey, pairingDeepKey, *req.Unlock)
+		}
+		if err != nil {
+			return ResolvePairingResult{}, err
+		}
+	}
+
+	allowed := false
+	if s.access != nil {
+		allowed, err = s.access.Authorized(ctx, app, puid, selection.PairKey, pairingDeepKey, 0)
+		if err != nil {
+			return ResolvePairingResult{}, platformerr.Wrap(err, platformerr.CodeContentUnavailable,
+				"심화 권한을 확인하지 못했어요")
+		}
+	}
+	articles := make(map[string]Article)
+	// 빈 배열이 JSON에서 null이 되지 않게 미리 만든다. 스펙에서 locked는 required 배열이다.
+	locked := make([]LockedPairing, 0, 1)
+	if allowed {
+		if err := collectArticles(release, selection.DeepIDs, AccessDeep, articles); err != nil {
+			return ResolvePairingResult{}, err
+		}
+	} else {
+		locked = append(locked, LockedPairing{DeepKey: pairingDeepKey, Section: pairingSection})
+	}
+	articleList := make([]Article, 0, len(articles))
+	for _, article := range articles {
+		articleList = append(articleList, article)
+	}
+	sort.Slice(articleList, func(i, j int) bool { return articleList[i].ID < articleList[j].ID })
+	return ResolvePairingResult{
+		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
+		PairKey: selection.PairKey, Articles: articleList, Locked: locked,
+	}, nil
+}
+
 // DeepAccess는 남은 열람권과 이미 연 심화 항목을 함께 준다.
 //
 // 둘을 한 번에 주는 것은 화면이 한 곳에서 "몇 장 남았고 무엇을 열었는지"를
