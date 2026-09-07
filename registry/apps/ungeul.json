@@ -63,7 +63,8 @@
     "term_daily_limit": 100,
     "reward_key": "deep_flow",
     "ticket_entitlement_id": "deep_reading_ticket",
-    "ticket_units_per_purchase": 5
+    "ticket_units_per_purchase": 5,
+    "pairing_enabled": true
   },
   "iap": {
     "ledger_environment": "production",
