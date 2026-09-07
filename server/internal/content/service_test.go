@@ -276,6 +276,13 @@ func (a *pairingServiceAccess) DeepAccess(
 	return DeepAccess{}, nil
 }
 
+// failingReleases는 릴리스 로드가 항상 실패하는 접합면이다(GCS 장애 흉내).
+type failingReleases struct{}
+
+func (failingReleases) Load(context.Context, registry.App) (Release, error) {
+	return Release{}, platformerr.New(platformerr.CodeContentUnavailable, "릴리스를 읽지 못했어요")
+}
+
 func pairingApp() registry.App {
 	app := testContentApp()
 	app.Content.PairingEnabled = true
@@ -381,6 +388,26 @@ func TestResolvePairingRejectsAppWithoutPairingFlag(t *testing.T) {
 	req := validPairingRequest()
 	_, err := newPairingService(t, testContentApp(), req, serviceUsage{}, &serviceAccess{authorized: true}).
 		ResolvePairing(t.Context(), "ungeul", "puid", req)
+	if platformerr.CodeOf(err) != platformerr.CodeContentNotEnabled {
+		t.Fatalf("code=%q err=%v", platformerr.CodeOf(err), err)
+	}
+}
+
+// 꺼진 앱은 본문이 어긋나도, 릴리스를 못 읽어도 403 이어야 한다. 앱이 403 을 "궁합 미제공"
+// 으로 읽어 카드를 숨기므로 다른 코드가 새면 카드가 켜졌다 꺼졌다 한다.
+func TestResolvePairingFlagIsCheckedBeforeSelectorAndRelease(t *testing.T) {
+	forged := validPairingRequest()
+	forged.Pair.Ilgan.Hap = true
+	if _, err := SelectPairing(forged); platformerr.CodeOf(err) != platformerr.CodeContentSelectorInvalid {
+		t.Fatalf("전제: 위조 요청이 selector 에서 걸려야 한다: %v", err)
+	}
+	service, err := NewService(
+		fakeApps{testContentApp()}, failingReleases{}, serviceUsage{}, &serviceAccess{authorized: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.ResolvePairing(t.Context(), "ungeul", "puid", forged)
 	if platformerr.CodeOf(err) != platformerr.CodeContentNotEnabled {
 		t.Fatalf("code=%q err=%v", platformerr.CodeOf(err), err)
 	}

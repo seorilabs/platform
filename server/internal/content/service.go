@@ -152,18 +152,24 @@ func (s *Service) ResolvePairing(
 	appID, puid string,
 	req ResolvePairingRequest,
 ) (ResolvePairingResult, error) {
+	// 킬 스위치를 selector·릴리스 로드보다 먼저 본다. 앱은 이 403을 구서버의 404와 같은 뜻
+	// (궁합 미제공)으로 다루므로, 꺼진 앱은 본문이 어긋나도(400) 릴리스가 안 읽혀도(503)
+	// 항상 403이어야 카드 숨김이 흔들리지 않는다.
+	app, err := s.contentApp(ctx, appID)
+	if err != nil {
+		return ResolvePairingResult{}, err
+	}
+	if !app.Content.PairingEnabled {
+		return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentNotEnabled,
+			"이 앱은 궁합 콘텐츠를 제공하지 않아요")
+	}
 	selection, err := SelectPairing(req)
 	if err != nil {
 		return ResolvePairingResult{}, err
 	}
-	app, release, err := s.release(ctx, appID)
+	release, err := s.releases.Load(ctx, app)
 	if err != nil {
 		return ResolvePairingResult{}, err
-	}
-	// 킬 스위치. 앱은 이 403을 구서버의 404와 같은 뜻(궁합 미제공)으로 다룬다.
-	if !app.Content.PairingEnabled {
-		return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentNotEnabled,
-			"이 앱은 궁합 콘텐츠를 제공하지 않아요")
 	}
 	if release.SchemaVersion != req.SchemaVersion {
 		return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentSchemaMismatch,
@@ -344,19 +350,29 @@ func (s *Service) Term(ctx context.Context, appID, puid, termID string) (TermRes
 }
 
 func (s *Service) release(ctx context.Context, appID string) (registry.App, Release, error) {
-	app, err := s.apps.GetUsable(ctx, appID)
+	app, err := s.contentApp(ctx, appID)
 	if err != nil {
 		return registry.App{}, Release{}, err
-	}
-	if !app.FeatureEnabled("content") {
-		return registry.App{}, Release{}, platformerr.New(platformerr.CodeContentNotEnabled,
-			"이 앱은 콘텐츠 API를 사용하지 않아요")
 	}
 	release, err := s.releases.Load(ctx, app)
 	if err != nil {
 		return registry.App{}, Release{}, err
 	}
 	return app, release, nil
+}
+
+// contentApp은 콘텐츠 기능이 켜진 사용 가능한 앱만 돌려준다. 릴리스를 읽기 전에 앱 단위
+// 거절(feature·킬 스위치)을 끝내야 GCS 장애가 403을 503으로 바꾸지 않는다.
+func (s *Service) contentApp(ctx context.Context, appID string) (registry.App, error) {
+	app, err := s.apps.GetUsable(ctx, appID)
+	if err != nil {
+		return registry.App{}, err
+	}
+	if !app.FeatureEnabled("content") {
+		return registry.App{}, platformerr.New(platformerr.CodeContentNotEnabled,
+			"이 앱은 콘텐츠 API를 사용하지 않아요")
+	}
+	return app, nil
 }
 
 func collectArticles(release Release, ids []string, want Access, into map[string]Article) error {
