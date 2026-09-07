@@ -36,6 +36,7 @@ func NewHandler(service *Service, sessions Sessions, appChecks AppChecks) (*Hand
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/content/version", httpx.Wrap(h.version))
 	mux.HandleFunc("POST /v1/content/readings:resolve", httpx.Wrap(h.resolve))
+	mux.HandleFunc("POST /v1/content/pairings:resolve", httpx.Wrap(h.resolvePairing))
 	mux.HandleFunc("GET /v1/content/terms/{termId}", httpx.Wrap(h.term))
 	mux.HandleFunc("GET /v1/content/deep-access", httpx.Wrap(h.deepAccess))
 }
@@ -81,6 +82,25 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	result, err := h.service.Resolve(
+		r.Context(), sess.AppID, sess.PlatformUserID, req,
+	)
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusOK, result)
+	return nil
+}
+
+func (h *Handler) resolvePairing(w http.ResponseWriter, r *http.Request) error {
+	sess, err := h.authenticated(r)
+	if err != nil {
+		return err
+	}
+	var req ResolvePairingRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	result, err := h.service.ResolvePairing(
 		r.Context(), sess.AppID, sess.PlatformUserID, req,
 	)
 	if err != nil {
