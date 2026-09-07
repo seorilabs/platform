@@ -17,6 +17,7 @@ const RewardedClaimAdapter := preload("res://addons/seorilabs_platform/adapters/
 var _failures: Array[String] = []
 var _probe_locale := "ko-KR"
 var _probe_unix_ms := 0
+var _probe_iap_environment := "sandbox"
 
 
 class CaptureTransport:
@@ -58,6 +59,7 @@ func _initialize() -> void:
 	_check_canonical_event()
 	_check_session_epoch_and_margin()
 	_check_iap_session_expired_retry()
+	_check_iap_environment()
 	_check_iap_refresh_single_flight()
 	_check_iap_strict_refresh_failure()
 	_check_proactive_refresh_sign_in_fallback()
@@ -383,6 +385,60 @@ func _check_session_epoch_and_margin() -> void:
 
 
 ## 첫 401 session_expired만 refresh 후 한 번 replay하는지 검증한다.
+func _probe_iap_environment_value() -> String:
+	return _probe_iap_environment
+
+
+func _check_iap_environment() -> void:
+	for value in [null, "production", "sandbox", "", "staging", 1]:
+		var transport := ScriptedTransport.new()
+		var client := PlatformClient.new()
+		client.add_child(transport)
+		client._transport = transport
+		var options := {"base_url": "https://api.platform.invalid", "app_id": "probe"}
+		if value != null:
+			options["iap_environment"] = value
+		client.configure(options)
+		root.add_child(client)
+		client._store_session(_session_result("test-session", "test-refresh", 3600))
+		var results: Array[Dictionary] = []
+		var callback := func(response: Dictionary) -> void: results.append(response)
+		client.list_entitlements(callback)
+		client.account_references(callback)
+		client.verify_purchase({"platform": "app_store", "product_id": "test.sku", "token": "test-proof"}, callback)
+		if value != null and not ["production", "sandbox"].has(value):
+			_expect(transport.requests.is_empty(), "잘못된 환경으로 요청을 보냈다")
+			_expect(results.size() == 3, "잘못된 환경의 callback이 누락됐다")
+		else:
+			_expect(transport.requests.size() == 3, "IAP 환경 요청이 누락됐다")
+			for request in transport.requests:
+				_expect(request.get("iap_environment") == value, "IAP 요청 환경이 다르다")
+				var headers := transport._build_headers(request)
+				if value != null:
+					_expect(headers.has("X-Seori-IAP-Environment: " + String(value)), "환경 헤더가 누락됐다")
+				else:
+					_expect(not "X-Seori-IAP-Environment" in "\n".join(headers), "기존 요청에 환경 헤더가 추가됐다")
+		client.free()
+
+	var transport := ScriptedTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	_probe_iap_environment = "sandbox"
+	client.configure({"base_url": "https://api.platform.invalid", "app_id": "probe", "iap_environment": Callable(self, "_probe_iap_environment_value")})
+	root.add_child(client)
+	client._store_session(_session_result("test-session", "test-refresh", 3600))
+	client.list_entitlements(func(_response: Dictionary) -> void: pass)
+	transport.respond(0, _failure_response(401, "session_expired"))
+	_probe_iap_environment = "production"
+	transport.respond(1, _session_response("test-new-session", "test-new-refresh", 3600))
+	_expect(transport.requests.size() == 3, "환경 고정 재전송이 누락됐다")
+	if transport.requests.size() == 3:
+		_expect(transport.requests[2].get("iap_environment") == "sandbox", "인증 재전송 도중 환경이 바뀌었다")
+		_expect(not transport.requests[1].has("iap_environment"), "인증 요청에 IAP 환경이 붙었다")
+	client.free()
+
+
 func _check_iap_session_expired_retry() -> void:
 	_probe_unix_ms = 1_700_100_000_000
 	var transport := ScriptedTransport.new()

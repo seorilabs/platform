@@ -23,7 +23,7 @@ const AtomicJsonStore := preload("core/atomic_json_store.gd")
 const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.7.3"
+const SDK_VERSION := "0.7.4"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -75,6 +75,8 @@ var _api_base_url := ""
 var _app_id := ""
 var _runtime := ""
 var _iap_base_url := ""
+var _iap_environment_source: Variant = null
+var _iap_environment_configured := false
 var _ingest_base_url := ""
 var _ads_base_url := ""
 var _auth_base_url := ""
@@ -110,6 +112,7 @@ func _ready() -> void:
 ## options 키:
 ##   base_url        : String (필수) — 세션·설정
 ##   iap_base_url    : String (선택) — 결제. 없으면 base_url
+##   iap_environment : String | Callable (선택) — production 또는 sandbox. 생략 시 서버 기본값
 ##   ingest_base_url : String (선택) — 이벤트. 없으면 base_url
 ##   ads_base_url    : String (선택) — 광고 정책·claim. 있으면 세션도 이 역할에서 발급
 ##   auth_base_url   : String (선택) — 세션 발급·갱신. 없으면 ads_base_url 또는 base_url
@@ -130,6 +133,8 @@ func configure(options: Dictionary) -> void:
 	_api_base_url = base.strip_edges()
 	_app_id = String(options.get("app_id", "")).strip_edges()
 	_iap_base_url = String(options.get("iap_base_url", "")).strip_edges()
+	_iap_environment_configured = options.has("iap_environment")
+	_iap_environment_source = options.get("iap_environment")
 	if _iap_base_url.is_empty():
 		_iap_base_url = base
 	_ingest_base_url = String(options.get("ingest_base_url", "")).strip_edges()
@@ -979,13 +984,23 @@ func account_references(callback: Callable) -> void:
 ## 반복하지 않아 IAP 불변식 1·2의 멱등 원장과 별개인 클라이언트 완료 모호성을
 ## 만들지 않는다.
 func _iap_request(request_data: Dictionary, callback: Callable) -> void:
+	var scoped_request := request_data.duplicate(true)
+	if _iap_environment_configured:
+		var environment: Variant = _iap_environment_source
+		if environment is Callable:
+			environment = environment.call() if environment.is_valid() else null
+		if not (environment is String) or not ["production", "sandbox"].has(environment):
+			callback.call(_client_error("environment_mismatch", "결제 환경을 확인하지 못했어요"))
+			return
+		# 인증 갱신 뒤 재전송하더라도 처음 선택한 환경을 보존한다.
+		scoped_request["iap_environment"] = environment
 	with_token(func(session_token: String, error: Dictionary) -> void:
 		if session_token.is_empty():
 			callback.call(_auth_error_response(error))
 			return
 
 		_send_iap_request(
-			request_data,
+			scoped_request,
 			session_token,
 			callback,
 			false,

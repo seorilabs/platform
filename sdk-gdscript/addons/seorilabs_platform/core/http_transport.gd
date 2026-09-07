@@ -200,6 +200,9 @@ func _build_headers(data: Dictionary) -> PackedStringArray:
 	if not runtime.is_empty():
 		headers.append("X-Seori-Runtime: " + runtime)
 
+	var iap_environment := String(data.get("iap_environment", ""))
+	if ["production", "sandbox"].has(iap_environment):
+		headers.append("X-Seori-IAP-Environment: " + iap_environment)
 	return headers
 
 
