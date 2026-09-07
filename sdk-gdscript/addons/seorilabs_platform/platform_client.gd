@@ -23,7 +23,7 @@ const AtomicJsonStore := preload("core/atomic_json_store.gd")
 const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.7.4"
+const SDK_VERSION := "0.7.5"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
