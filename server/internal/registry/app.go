@@ -107,7 +107,8 @@ type IAPConfig struct {
 	// provider 전역 환경변수에 두면 여러 앱을 한 서비스에서 검증할 수 없다.
 	AppStoreBundleID string `json:"app_store_bundle_id,omitempty" firestore:"app_store_bundle_id,omitempty"`
 	// AppleSandboxEnabled는 기존 기본 환경과 별도로 Apple 테스트 거래만
-	// 허용한다. 검증기·원장·worker 모두 이 허용 범위를 따른다. ADR 0027.
+	// 허용한다. 기존 공용 원장을 쓰는 앱만 대상이며 앱 범위 원장은 거부한다.
+	// 검증기·원장·worker·Admin 모두 이 허용 범위를 따른다. ADR 0027.
 	AppleSandboxEnabled bool `json:"apple_sandbox_enabled,omitempty" firestore:"apple_sandbox_enabled,omitempty"`
 	// EntitlementIDs는 이 앱에 지급할 수 있는 entitlement allowlist다.
 	// 전역 SKU 카탈로그는 상품 매핑의 원장이고, 이 목록은 앱 경계의 원장이다.
@@ -124,7 +125,7 @@ func (a App) IAPEnvironmentAllowed(env LedgerEnvironment) bool {
 		return false
 	}
 	return env == a.IAP.LedgerEnvironment ||
-		(env == LedgerSandbox && a.IAP.AppleSandboxEnabled && a.FeatureEnabled("iap") && a.MarketEnabled("app_store"))
+		(env == LedgerSandbox && a.IAP.AppleSandboxEnabled && a.IAP.LegacyUnscopedLedger && a.FeatureEnabled("iap") && a.MarketEnabled("app_store"))
 }
 
 type AuthConfig struct {
@@ -262,6 +263,11 @@ func (a App) Validate() error {
 	}
 	if a.IAP.AppleSandboxEnabled && (!a.FeatureEnabled("iap") || !a.MarketEnabled("app_store") || a.IAP.LedgerEnvironment != LedgerProduction) {
 		return fmt.Errorf("%s: 추가 Apple sandbox에는 production 기본 환경과 활성 App Store IAP가 필요하다", a.AppID)
+	}
+	// Admin의 기존 공용 원장 조작과 같은 배치를 보장한다. 앱 범위 원장을
+	// 지원한다고 선언만 하고 서로 다른 원장을 읽고 쓰는 설정은 받지 않는다.
+	if a.IAP.AppleSandboxEnabled && !a.IAP.LegacyUnscopedLedger {
+		return fmt.Errorf("%s: 추가 Apple sandbox는 기존 공용 원장 앱에서만 지원한다", a.AppID)
 	}
 	if a.FeatureEnabled("iap") && a.MarketEnabled("google_play") {
 		if !androidPackagePattern.MatchString(a.IAP.GooglePlayPackageName) ||

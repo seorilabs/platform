@@ -33,7 +33,7 @@ func TestAdminEnvironmentBoundary(t *testing.T) {
 			prod, sandbox := &fakeLedger{env: domain.EnvProduction}, &fakeLedger{env: domain.EnvSandbox}
 			h := newHandler(t, prod, &fakeValidator{email: identity}, &fakeAuditor{})
 			apps := &fakeApps{app: registry.App{AppID: "a", Status: registry.StatusActive, Features: map[string]bool{"iap": true},
-				IAP: registry.IAPConfig{LedgerEnvironment: registry.LedgerProduction, Markets: []string{"app_store"}, AppleSandboxEnabled: tc.allowed, EntitlementIDs: []string{"sp_a"}}}}
+				IAP: registry.IAPConfig{LedgerEnvironment: registry.LedgerProduction, LegacyUnscopedLedger: true, Markets: []string{"app_store"}, AppleSandboxEnabled: tc.allowed, EntitlementIDs: []string{"sp_a"}}}}
 			h.apps = apps
 			other, err := NewHandler(sandbox, h.config, h.users, apps, h.catalog, h.auth, h.auditor)
 			if err != nil {

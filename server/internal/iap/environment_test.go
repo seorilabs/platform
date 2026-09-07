@@ -37,7 +37,7 @@ func TestIAPEnvironmentSelection(t *testing.T) {
 				prod, sandbox := &fakeService{}, &fakeService{}
 				session := paidSession()
 				app := registry.App{AppID: session.AppID, Features: map[string]bool{"iap": true},
-					IAP: registry.IAPConfig{LedgerEnvironment: registry.LedgerProduction, Markets: []string{"app_store"}, AppleSandboxEnabled: tc.allowed}}
+					IAP: registry.IAPConfig{LedgerEnvironment: registry.LedgerProduction, LegacyUnscopedLedger: true, Markets: []string{"app_store"}, AppleSandboxEnabled: tc.allowed}}
 				h := NewHandler(prod, &fakeSessions{sess: session}).WithApps(&fakeApps{app: app})
 				if tc.configured {
 					h.WithEnvironmentServices(map[domain.Scope]Service{{AppID: session.AppID, Environment: domain.EnvSandbox}: sandbox})
