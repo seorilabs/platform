@@ -23,8 +23,12 @@ const (
 )
 
 type Item struct {
-	ID       string    `json:"id"`
-	Text     string    `json:"text"`
+	ID   string `json:"id"`
+	Text string `json:"text"`
+	// More는 같은 좌표의 두 번째 본문이다. 리딩 본문(Text)이 짧은 압축본일 때 앱이
+	// `찬찬히 읽기` 접힘과 사전 본문으로 쓰는 원문이다. 없으면 생략한다 — 선택과
+	// 권한 판정은 Text 와 같은 항목에서 이미 끝났으므로 여기서 다시 보지 않는다.
+	More     string    `json:"more,omitempty"`
 	Access   Access    `json:"access"`
 	Contexts []Context `json:"contexts"`
 }
@@ -53,6 +57,7 @@ type ContentVersion struct {
 type Article struct {
 	ID     string `json:"id"`
 	Text   string `json:"text"`
+	More   string `json:"more,omitempty"`
 	Access Access `json:"access"`
 }
 

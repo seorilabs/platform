@@ -201,3 +201,46 @@ func TestResolvePropagatesDailyLimit(t *testing.T) {
 		t.Fatalf("code=%q err=%v", platformerr.CodeOf(err), err)
 	}
 }
+
+func TestResolveAndTermPassThroughMore(t *testing.T) {
+	req := validResolveRequest()
+	release := serviceRelease(t, req)
+	selection, err := Select(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := selection.BaseIDs[0]
+	item := release.Items[id]
+	item.More = "원문 본문"
+	item.Contexts = []Context{ContextReading, ContextTerm}
+	release.Items[id] = item
+	service, err := NewService(fakeApps{testContentApp()}, fakeReleases{release}, serviceUsage{}, &serviceAccess{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Resolve(t.Context(), "ungeul", "puid", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, article := range result.Articles {
+		if article.ID == id {
+			found = true
+			if article.More != "원문 본문" {
+				t.Fatalf("리딩 응답이 more를 안 실었다: %+v", article)
+			}
+		} else if article.More != "" {
+			t.Fatalf("more가 없는 항목에 more가 붙었다: %+v", article)
+		}
+	}
+	if !found {
+		t.Fatalf("기본 항목 %s 가 응답에 없다", id)
+	}
+	term, err := service.Term(t.Context(), "ungeul", "puid", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if term.Article.More != "원문 본문" {
+		t.Fatalf("사전 응답이 more를 안 실었다: %+v", term.Article)
+	}
+}

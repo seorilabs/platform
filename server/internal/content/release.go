@@ -201,6 +201,9 @@ func validateItem(item Item) error {
 	if !contentIDPattern.MatchString(item.ID) || strings.TrimSpace(item.Text) == "" || len(item.Text) > 16*1024 {
 		return fmt.Errorf("content item이 올바르지 않다: %s", item.ID)
 	}
+	if len(item.More) > 16*1024 || (item.More != "" && strings.TrimSpace(item.More) == "") {
+		return fmt.Errorf("content item more가 올바르지 않다: %s", item.ID)
+	}
 	if item.Access != AccessFree && item.Access != AccessDeep {
 		return fmt.Errorf("content item access가 올바르지 않다: %s", item.ID)
 	}

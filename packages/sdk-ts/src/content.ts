@@ -25,6 +25,8 @@ export type SinsalNameFact =
 export interface ContentArticle {
   id: string;
   text: string;
+  /** 같은 좌표의 원문. `text`가 압축본일 때만 온다 — `찬찬히 읽기` 접힘과 사전 본문. */
+  more?: string;
   access: ContentAccess;
 }
 
