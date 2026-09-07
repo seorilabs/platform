@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/seorilabs/platform/server/internal/admin"
+	"github.com/seorilabs/platform/server/internal/iap/domain"
+	"github.com/seorilabs/platform/server/internal/iap/ledger"
 )
 
 // registerAdmin은 백오피스 전용 API를 연다.
@@ -55,6 +57,20 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 	)
 	if err != nil {
 		return err
+	}
+	// Sandbox는 별도 원장 Handler로 고정한다. 실제 조작은 기존 앱 허용,
+	// 사용자, expectedEnvironment, 확인 문구와 write identity 검사를 유지한다.
+	sandboxHandler, err := admin.NewHandler(
+		ledger.New(d.store, domain.EnvSandbox), d.config, d.adminUsers,
+		d.registry, d.iap.catalog, auth, auditAdapter{col: d.events},
+	)
+	if err != nil {
+		return err
+	}
+	if d.iap.ledger.Environment() != domain.EnvSandbox {
+		if err := handler.WithEnvironmentHandlers(map[domain.Environment]*admin.Handler{domain.EnvSandbox: sandboxHandler}); err != nil {
+			return err
+		}
 	}
 	handler.Register(mux)
 	if d.ads == nil {

@@ -45,6 +45,9 @@ type Handler struct {
 	svc      Service
 	sessions Sessions
 	apps     Apps
+	// 기본 서비스는 그대로 두고 추가 허용 환경만 별도로 조립한다.
+	// 같은 Service를 요청 중 변경하지 않아 병렬 운영 결제와 섞이지 않는다.
+	environments map[domain.Scope]Service
 }
 
 func NewHandler(svc Service, sessions Sessions) *Handler {
@@ -54,6 +57,42 @@ func NewHandler(svc Service, sessions Sessions) *Handler {
 func (h *Handler) WithApps(apps Apps) *Handler {
 	h.apps = apps
 	return h
+}
+
+func (h *Handler) WithEnvironmentServices(services map[domain.Scope]Service) *Handler {
+	h.environments = services
+	return h
+}
+
+// serviceFor는 헤더 없는 기존 호출을 유지한다. 헤더는 지급 증거가
+// 아니며 registry 허용과 부팅 때 고정한 서비스가 모두 있어야 선택된다.
+func (h *Handler) serviceFor(r *http.Request, sess identity.Session) (Service, error) {
+	value, err := httpx.OptionalEnumHeader(r, "X-Seori-IAP-Environment", []string{"production", "sandbox"}, platformerr.CodeEnvironmentMismatch)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return h.svc, nil
+	}
+	if h.apps == nil {
+		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "IAP 앱 환경이 준비되지 않았어요")
+	}
+	app, err := h.apps.GetUsable(r.Context(), sess.AppID)
+	if err != nil {
+		return nil, err
+	}
+	env := registry.LedgerEnvironment(value)
+	if !app.IAPEnvironmentAllowed(env) {
+		return nil, platformerr.New(platformerr.CodeEnvironmentMismatch, "이 앱에서 허용하지 않는 IAP 환경이에요")
+	}
+	if env == app.IAP.LedgerEnvironment {
+		return h.svc, nil
+	}
+	service := h.environments[domain.Scope{AppID: sess.AppID, Environment: domain.Environment(value)}]
+	if service == nil {
+		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "요청한 IAP 환경이 준비되지 않았어요")
+	}
+	return service, nil
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -77,6 +116,10 @@ type verifyRequest struct {
 
 func (h *Handler) verifyPurchase(w http.ResponseWriter, r *http.Request) error {
 	sess, err := h.requirePayingSession(r)
+	if err != nil {
+		return err
+	}
+	svc, err := h.serviceFor(r, sess)
 	if err != nil {
 		return err
 	}
@@ -116,7 +159,7 @@ func (h *Handler) verifyPurchase(w http.ResponseWriter, r *http.Request) error {
 		proof.AITAccountHash = strings.TrimPrefix(sess.AppUserID, prefix)
 	}
 
-	out, err := h.svc.VerifyPurchase(r.Context(), sess.AppID, sess.PlatformUserID, proof)
+	out, err := svc.VerifyPurchase(r.Context(), sess.AppID, sess.PlatformUserID, proof)
 	if err != nil {
 		return err
 	}
@@ -144,12 +187,16 @@ func (h *Handler) listEntitlements(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
+	svc, err := h.serviceFor(r, sess)
+	if err != nil {
+		return err
+	}
 
 	var list []string
-	if scoped, ok := h.svc.(appScopedService); ok {
+	if scoped, ok := svc.(appScopedService); ok {
 		list, err = scoped.ListEntitlementsForApp(r.Context(), sess.AppID, sess.PlatformUserID)
 	} else {
-		list, err = h.svc.ListEntitlements(r.Context(), sess.PlatformUserID)
+		list, err = svc.ListEntitlements(r.Context(), sess.PlatformUserID)
 	}
 	if err != nil {
 		return err
@@ -182,12 +229,16 @@ func (h *Handler) accountReferences(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
+	svc, err := h.serviceFor(r, sess)
+	if err != nil {
+		return err
+	}
 
 	var google, apple string
-	if scoped, ok := h.svc.(appScopedService); ok {
+	if scoped, ok := svc.(appScopedService); ok {
 		google, apple, err = scoped.AccountReferencesForApp(r.Context(), sess.AppID, sess.PlatformUserID)
 	} else {
-		google, apple, err = h.svc.AccountReferences(sess.PlatformUserID)
+		google, apple, err = svc.AccountReferences(sess.PlatformUserID)
 	}
 	if err != nil {
 		return err

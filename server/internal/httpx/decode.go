@@ -112,6 +112,23 @@ func Header(r *http.Request, name string, code platformerr.Code) (string, error)
 	return v, nil
 }
 
+// OptionalEnumHeader는 생략과 빈 값·중복 값을 구분한다. Header.Get만
+// 쓰면 첫 값을 고르게 되어 중복 환경 헤더가 경계를 우회할 수 있다.
+func OptionalEnumHeader(r *http.Request, name string, allowed []string, code platformerr.Code) (string, error) {
+	values := r.Header.Values(name)
+	if len(values) == 0 {
+		return "", nil
+	}
+	if len(values) == 1 {
+		for _, value := range allowed {
+			if values[0] == value {
+				return value, nil
+			}
+		}
+	}
+	return "", platformerr.Newf(code, "%s 헤더가 올바르지 않아요", name)
+}
+
 // BearerToken은 Authorization 헤더에서 Bearer 토큰을 꺼낸다.
 func BearerToken(r *http.Request) (string, error) {
 	v := strings.TrimSpace(r.Header.Get("Authorization"))

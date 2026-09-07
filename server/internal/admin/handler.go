@@ -89,14 +89,64 @@ type Auditor interface {
 
 // Handler는 백오피스 전용 API다.
 type Handler struct {
-	ledger  Ledger
-	config  Config
-	users   Users
-	apps    Apps
-	catalog Catalog
-	auditor Auditor
-	auth    *Authenticator
-	now     func() time.Time
+	ledger                Ledger
+	config                Config
+	users                 Users
+	apps                  Apps
+	catalog               Catalog
+	auditor               Auditor
+	auth                  *Authenticator
+	now                   func() time.Time
+	environments          map[domain.Environment]*Handler
+	additionalEnvironment bool
+}
+
+// WithEnvironmentHandlers는 같은 인증 경계 아래 별도 원장을 연결한다.
+// 요청 도중 기본 Handler의 ledger를 교체하지 않는다. ADR 0027.
+func (h *Handler) WithEnvironmentHandlers(handlers map[domain.Environment]*Handler) error {
+	for env, handler := range handlers {
+		if !env.Valid() || env == h.ledger.Environment() || handler == nil || handler.ledger.Environment() != env || handler.auth != h.auth {
+			return platformerr.New(platformerr.CodeRuntimeConfigInvalid, "추가 Admin 원장 환경이 올바르지 않아요")
+		}
+	}
+	h.environments = handlers
+	for _, handler := range handlers {
+		handler.additionalEnvironment = true
+	}
+	return nil
+}
+
+func (h *Handler) environmentHandler(r *http.Request) (*Handler, error) {
+	value, err := httpx.OptionalEnumHeader(r, "X-Seori-IAP-Environment", []string{"production", "sandbox"}, platformerr.CodeEnvironmentMismatch)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" || domain.Environment(value) == h.ledger.Environment() {
+		return h, nil
+	}
+	selected := h.environments[domain.Environment(value)]
+	if selected == nil {
+		return nil, platformerr.New(platformerr.CodeEnvironmentMismatch, "요청한 Admin 원장 환경이 준비되지 않았어요")
+	}
+	return selected, nil
+}
+
+type adminRoute func(*Handler, http.ResponseWriter, *http.Request) error
+
+func (h *Handler) route(pattern string, handler adminRoute) httpx.Handler {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		selected := h
+		// 설정·사용자·광고 API는 IAP 환경 헤더의 영향을 받지 않는다.
+		if strings.Contains(pattern, "/iap/") || strings.Contains(pattern, "/entitlements") ||
+			pattern == "GET /v1/admin/orders/recent" || pattern == "GET /v1/admin/operator-grants" || pattern == "GET /v1/admin/health" {
+			var err error
+			selected, err = h.environmentHandler(r)
+			if err != nil {
+				return err
+			}
+		}
+		return handler(selected, w, r)
+	}
 }
 
 // WithClock은 시계를 주입한다. 테스트용이다.
@@ -129,43 +179,43 @@ func NewHandler(
 // 모든 라우트가 OIDC 인증을 거친다. 인증 없는 Admin 경로를 하나라도
 // 열면 원장 전체가 노출된다.
 func (h *Handler) Register(mux *http.ServeMux) {
-	readRoutes := map[string]httpx.Handler{
+	readRoutes := map[string]adminRoute{
 		// 조회 — 등급 A
-		"GET /v1/admin/orders/recent":                     h.recentOrders,
-		"GET /v1/admin/users/{reference}":                 h.user,
-		"GET /v1/admin/users/{puid}/entitlements":         h.userEntitlements,
-		"GET /v1/admin/operator-grants":                   h.operatorGrants,
-		"GET /v1/admin/apps/{appId}/iap/catalog":          h.iapCatalog,
-		"GET /v1/admin/apps/{appId}/iap/refund-reviews":   h.refundReviews,
-		"GET /v1/admin/iap/sandbox-resets/{requestId}":    h.sandboxResetStatus,
-		"GET /v1/admin/health":                            h.health,
-		"GET /v1/admin/metrics":                           h.metrics,
-		"GET /v1/admin/apps/{appId}/config/update-policy": h.updatePolicy,
+		"GET /v1/admin/orders/recent":                     (*Handler).recentOrders,
+		"GET /v1/admin/users/{reference}":                 (*Handler).user,
+		"GET /v1/admin/users/{puid}/entitlements":         (*Handler).userEntitlements,
+		"GET /v1/admin/operator-grants":                   (*Handler).operatorGrants,
+		"GET /v1/admin/apps/{appId}/iap/catalog":          (*Handler).iapCatalog,
+		"GET /v1/admin/apps/{appId}/iap/refund-reviews":   (*Handler).refundReviews,
+		"GET /v1/admin/iap/sandbox-resets/{requestId}":    (*Handler).sandboxResetStatus,
+		"GET /v1/admin/health":                            (*Handler).health,
+		"GET /v1/admin/metrics":                           (*Handler).metrics,
+		"GET /v1/admin/apps/{appId}/config/update-policy": (*Handler).updatePolicy,
 	}
-	writeRoutes := map[string]httpx.Handler{
+	writeRoutes := map[string]adminRoute{
 		// 조작 — 등급 C. reason과 requestId가 필수다
-		"POST /v1/admin/entitlements/grant":  h.grantEntitlement,
-		"POST /v1/admin/entitlements/revoke": h.revokeEntitlement,
+		"POST /v1/admin/entitlements/grant":  (*Handler).grantEntitlement,
+		"POST /v1/admin/entitlements/revoke": (*Handler).revokeEntitlement,
 
 		// sandbox 원장에서만 동작한다. production에서는 거부한다
-		"POST /v1/admin/iap/sandbox-reset":                                   h.resetAppStoreSandbox,
-		"POST /v1/admin/iap/sandbox-resets/{requestId}/resume":               h.resumeAppStoreSandboxReset,
-		"POST /v1/admin/iap/sandbox-resets/{requestId}/close-not-started":    h.closeAppStoreSandboxResetNotStarted,
-		"POST /v1/admin/apps/{appId}/iap/refund-reviews/{reviewId}/decision": h.decideRefundReview,
+		"POST /v1/admin/iap/sandbox-reset":                                   (*Handler).resetAppStoreSandbox,
+		"POST /v1/admin/iap/sandbox-resets/{requestId}/resume":               (*Handler).resumeAppStoreSandboxReset,
+		"POST /v1/admin/iap/sandbox-resets/{requestId}/close-not-started":    (*Handler).closeAppStoreSandboxResetNotStarted,
+		"POST /v1/admin/apps/{appId}/iap/refund-reviews/{reviewId}/decision": (*Handler).decideRefundReview,
 
 		// break-glass. 백오피스가 죽어도 점검 모드는 켤 수 있어야 한다
-		"POST /v1/admin/config/maintenance": h.setMaintenance,
+		"POST /v1/admin/config/maintenance": (*Handler).setMaintenance,
 
 		// 업데이트 유도 정책. 권장은 그냥 걸리고 강제는 확인 문구와
 		// 관측 가드를 통과해야 한다. 해제는 언제나 즉시 가능하다
-		"POST /v1/admin/config/update-policy": h.setUpdatePolicy,
+		"POST /v1/admin/config/update-policy": (*Handler).setUpdatePolicy,
 	}
 
 	for pattern, handler := range readRoutes {
-		mux.Handle(pattern, h.auth.Middleware(AccessRead, http.HandlerFunc(httpx.Wrap(handler))))
+		mux.Handle(pattern, h.auth.Middleware(AccessRead, http.HandlerFunc(httpx.Wrap(h.route(pattern, handler)))))
 	}
 	for pattern, handler := range writeRoutes {
-		mux.Handle(pattern, h.auth.Middleware(AccessWrite, http.HandlerFunc(httpx.Wrap(handler))))
+		mux.Handle(pattern, h.auth.Middleware(AccessWrite, http.HandlerFunc(httpx.Wrap(h.route(pattern, handler)))))
 	}
 }
 
@@ -200,7 +250,7 @@ func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, 
 		return nil, platformerr.New(platformerr.CodeAuthForbidden,
 			"이 앱은 IAP 관리가 활성화되지 않았어요")
 	}
-	if domain.Environment(app.IAP.LedgerEnvironment) != h.ledger.Environment() {
+	if !app.IAPEnvironmentAllowed(registry.LedgerEnvironment(h.ledger.Environment())) {
 		return nil, platformerr.New(platformerr.CodeEnvironmentMismatch,
 			"앱 레지스트리와 Admin 원장 환경이 달라요")
 	}
@@ -542,7 +592,10 @@ func (h *Handler) environmentMismatches(ctx context.Context) []environmentMismat
 			continue
 		}
 		got := string(app.IAP.LedgerEnvironment)
-		if got == want {
+		if app.IAPEnvironmentAllowed(registry.LedgerEnvironment(want)) {
+			continue
+		}
+		if h.additionalEnvironment {
 			continue
 		}
 		out = append(out, environmentMismatch{AppID: app.AppID, Registry: got, Ledger: want})
@@ -1109,7 +1162,7 @@ func (h *Handler) validateIAPContext(
 		return registry.App{}, platformerr.New(platformerr.CodeAuthForbidden,
 			"이 앱은 IAP 관리가 활성화되지 않았어요")
 	}
-	if string(app.IAP.LedgerEnvironment) != expectedEnvironment {
+	if !app.IAPEnvironmentAllowed(registry.LedgerEnvironment(expectedEnvironment)) {
 		return registry.App{}, platformerr.New(platformerr.CodeEnvironmentMismatch,
 			"앱 레지스트리와 요청한 원장 환경이 달라요")
 	}
