@@ -24,7 +24,18 @@
     "markets": ["google_play", "app_store", "apps_in_toss"],
     "google_play_package_name": "com.seorilabs.lizardtycoon",
     "app_store_bundle_id": "com.seorilabs.lizardtycoon",
-    "entitlement_ids": ["sp_galaxy_gecko", "sp_shootingstar_tokay"]
+    "entitlement_ids": [
+      "sp_galaxy_gecko",
+      "sp_shootingstar_tokay",
+      "sp_aurora_skink",
+      "sp_moonlight_crested",
+      "sp_gargoyle_gecko",
+      "sp_uromastyx",
+      "ft_rack_pack_1",
+      "ft_rack_pack_2",
+      "th_night_sky_terrarium",
+      "ck_starlight_accessory_set"
+    ]
   },
   "platform_event_allowlist": [
     "lizard_adopted",
