@@ -142,3 +142,63 @@ func TestUngeulIAPRegistryContract(t *testing.T) {
 			ungeul.Content.TicketEntitlementID, ungeul.Content.TicketUnitsPerPurchase)
 	}
 }
+
+// 운글 클라이언트의 분석 계약(saju-reader `design/saju-reader/analytics/event-contract.json`)이
+// 보내는 이벤트 이름 전부가 allowlist 에 있어야 한다. 서버는 allowlist 밖 이벤트를 오류 없이
+// 200 으로 버리므로(`events/handler.go`), 이름 하나가 빠지면 앱은 정상인데 적재만 0건이 된다.
+// 계약에 이벤트를 더한 PR 이 이 목록도 함께 늘리도록 여기서 고정한다.
+func TestUngeulEventAllowlistCoversClientContract(t *testing.T) {
+	source := NewFSSource(os.DirFS("../../../registry"), "apps")
+	apps, err := source.LoadApps(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ungeul *App
+	for i := range apps {
+		if apps[i].AppID == "ungeul" {
+			ungeul = &apps[i]
+			break
+		}
+	}
+	if ungeul == nil {
+		t.Fatal("ungeul registry가 없다")
+	}
+
+	clientContract := []string{
+		// 첫 리딩 퍼널과 결과 화면.
+		"home_viewed", "input_step_viewed", "reading_started", "reading_input_blocked",
+		"time_choice_shown", "time_choice_completed", "reading_generated",
+		"reading_section_viewed", "term_help_opened", "term_label_rendered",
+		// 심화 게이트와 보상형 광고.
+		"deep_gate_shown", "deep_means_selected", "deep_ticket_used",
+		"reward_ad_requested", "reward_ad_shown", "reward_ad_granted",
+		"reward_ad_declined", "reward_ad_closed",
+		// 정체성 카드 공유·홈 타일·궁합.
+		"identity_share_requested", "identity_share_outcome", "home_tile_tapped",
+		"pairing_picker_viewed", "pairing_started", "pairing_generated", "pairing_section_viewed",
+		// 체감 일치도 문항 노출·응답·닫음 (`feedback-contract.json`). 점수·이유는 GA4 로 오지 않는다.
+		"feedback_prompt_shown", "feedback_prompt_responded", "feedback_prompt_dismissed",
+	}
+	expected := make(map[string]bool, len(clientContract))
+	for _, name := range clientContract {
+		expected[name] = true
+		if !ungeul.EventAllowed(name) {
+			t.Errorf("클라이언트 계약 이벤트 %q 가 platform_event_allowlist 에 없다", name)
+		}
+	}
+	seen := make(map[string]bool, len(ungeul.PlatformEventAllowlist))
+	for _, name := range ungeul.PlatformEventAllowlist {
+		if seen[name] {
+			t.Errorf("platform_event_allowlist 에 %q 가 중복이다", name)
+		}
+		seen[name] = true
+		// 어느 계약에도 없는 이름이 allowlist 에 남으면 서버가 받는 것과 앱이 보내는 것이 갈린 것이다.
+		if !expected[name] {
+			t.Errorf("platform_event_allowlist 의 %q 는 어느 클라이언트 계약에도 없다", name)
+		}
+	}
+	if len(ungeul.PlatformEventAllowlist) != len(clientContract) {
+		t.Fatalf("allowlist=%d, want %d (계약과 같은 크기)", len(ungeul.PlatformEventAllowlist), len(clientContract))
+	}
+}
