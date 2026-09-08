@@ -1081,6 +1081,51 @@ describe("Content와 Identity", () => {
     assert.equal(f.calls[1]!.headers["X-Firebase-AppCheck"], "attested-content");
   });
 
+  it("궁합 해설은 pairings:resolve 로 보내고 세션과 App Check를 붙인다", async () => {
+    const f = fakeFetch([
+      ok({
+        platformToken: "pt-content", refreshToken: "rt-content",
+        platformUserId: "pu-content", appUserId: "uid-content",
+        isAnonymous: false, expiresIn: 3600,
+      }),
+      ok({
+        schemaVersion: 1, contentVersion: `sha256-${"a".repeat(64)}`, pairKey: `pk_${"b".repeat(64)}`,
+        articles: [], locked: [{ deepKey: "gunghap", section: "gunghap" }],
+      }),
+    ]);
+    const platform = new Platform({
+      baseUrl: "https://platform.test", appId: "ungeul", fetchImpl: f.impl,
+      appCheckToken: async () => "attested-content",
+    });
+    await platform.signIn({ kind: "firebase-id-token", value: "firebase-id-token" });
+    const request = {
+      schemaVersion: 1 as const,
+      a: { kind: "full" as const, chart: { year: "丙午", month: "乙未", day: "丁巳", hour: "丙午" } },
+      b: { kind: "three_pillar" as const, chart: { year: "乙丑", month: "戊寅", day: "癸酉" } },
+      pair: {
+        ilgan: { aToB: "pyeonjae" as const, bToA: "pyeongwan" as const, hap: false },
+        ilji: { tags: ["samhap" as const], primary: "samhap" as const },
+        ohaeng: [
+          { name: "mok" as const, a: "보통" as const, b: "보통" as const, kind: "plain" as const },
+          { name: "hwa" as const, a: "과다" as const, b: "부족" as const, kind: "fill_a" as const },
+          { name: "to" as const, a: "보통" as const, b: "보통" as const, kind: "plain" as const },
+          { name: "geum" as const, a: "부족" as const, b: "보통" as const, kind: "plain" as const },
+          { name: "su" as const, a: "부족" as const, b: "보통" as const, kind: "plain" as const },
+        ],
+        close: { stem: "sanggeuk" as const, branch: "hap" as const },
+      },
+      unlock: { section: "gunghap" as const, kind: "ticket" as const },
+    };
+    const got = await platform.content.resolvePairing(request);
+
+    assert.equal(got.locked[0]?.deepKey, "gunghap");
+    assert.equal(f.calls[1]!.url, "https://platform.test/v1/content/pairings:resolve");
+    assert.equal(f.calls[1]!.method, "POST");
+    assert.deepEqual(f.calls[1]!.body, request);
+    assert.equal(f.calls[1]!.headers.Authorization, "Bearer pt-content");
+    assert.equal(f.calls[1]!.headers["X-Firebase-AppCheck"], "attested-content");
+  });
+
   it("Firebase custom token bridge는 기존 ID token을 선택적으로 보낸다", async () => {
     const f = fakeFetch([ok({ firebaseCustomToken: "custom", appUserId: "uid" })]);
     const platform = new Platform({

@@ -183,6 +183,10 @@ type ContentConfig struct {
 	TicketUnitsPerPurchase int    `json:"ticket_units_per_purchase,omitempty" firestore:"ticket_units_per_purchase,omitempty"`
 	// SeasonEntitlements는 연도 문자열을 활성 entitlement에 연결한다.
 	SeasonEntitlements map[string]string `json:"season_entitlements,omitempty" firestore:"season_entitlements,omitempty"`
+	// PairingEnabled는 궁합(pairings:resolve) 킬 스위치다. 꺼져 있으면 좌표를 만들기 전에
+	// content_not_enabled로 거절한다. 레지스트리 파일은 환경을 모르므로 staging에 먼저
+	// regsync하고 앱이 나간 뒤 production에 regsync하는 것이 "단계적 켜기"다.
+	PairingEnabled bool `json:"pairing_enabled,omitempty" firestore:"pairing_enabled,omitempty"`
 }
 
 // StoreConfig는 마켓 배포 페이지의 원장이다.
@@ -344,7 +348,7 @@ func (a App) validateContent() error {
 	if !a.FeatureEnabled("content") {
 		if cfg.Bucket != "" || cfg.Prefix != "" || cfg.ReadingDailyLimit != 0 ||
 			cfg.TermDailyLimit != 0 || cfg.RewardKey != "" || cfg.TicketEntitlementID != "" ||
-			cfg.TicketUnitsPerPurchase != 0 || len(cfg.SeasonEntitlements) != 0 {
+			cfg.TicketUnitsPerPurchase != 0 || len(cfg.SeasonEntitlements) != 0 || cfg.PairingEnabled {
 			return fmt.Errorf("%s: content가 비활성인데 content 설정이 존재한다", a.AppID)
 		}
 		return nil

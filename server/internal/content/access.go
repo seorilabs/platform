@@ -101,7 +101,9 @@ func (s *AccessService) Authorized(
 			}
 		}
 	}
-	if s.entitlements == nil {
+	// 궁합(deepKey "gunghap")은 연도와 무관하다. 시즌 entitlement는 한 해의 흐름을 여는
+	// 것이라 여기서 보면 시즌 구매자가 궁합까지 함께 열게 된다. year 0이 그 표시다.
+	if year == 0 || s.entitlements == nil {
 		return false, nil
 	}
 	entitlementID := app.Content.SeasonEntitlements[yearString(year)]

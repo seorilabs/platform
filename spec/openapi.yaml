@@ -451,6 +451,57 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /content/pairings:resolve:
+    post:
+      tags: [content]
+      summary: 두 파생 명식에 성립하는 궁합 해설 선택
+      description: |
+        두 사람의 파생 명식(`a`, `b` — 종류와 기둥 간지)과 앱이 계산한 짝 사실(`pair`)을
+        받는다. 생년월일, 출생시각, 장소, 프로필명은 받지 않는다. 서버는 두 명식에서 일간
+        십성 양방향·천간합·일지 관계·오행 상태·마무리를 **전부 다시 유도**해 `pair`와
+        대조하고, 하나라도 다르면 `content_selector_invalid`로 거절한다. 임의 article ID
+        배열은 받지 않는다.
+
+        `pairKey`는 두 명식 해시를 정렬해 다시 해시한 값이라 A×B와 B×A가 같다. 재조회는
+        `readings:resolve`와 같은 신규 명식 일일 한도(`reading_daily_limit`)를 공유하며
+        같은 `pairKey`는 한도에서 제외한다.
+
+        궁합 본문은 전부 심화(`deep`)다. `unlock`(`reward_claim` 또는 `ticket`, 열람권
+        1장 = 궁합 1건)이 없거나 서버 권한 근거가 없으면 오류로 우회하지 않고 `locked`에
+        `gunghap` 하나를 돌려주며 `articles`는 비어 있다. 연도와 무관하므로 시즌
+        entitlement는 보지 않는다.
+
+        레지스트리 `content.pairing_enabled`가 꺼진 앱은 `content_not_enabled`(403)다.
+        앱은 이 응답과 404를 같은 뜻(궁합 미제공)으로 다룬다.
+      operationId: resolveContentPairing
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/ContentAppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveContentPairingRequest' }
+      responses:
+        '200':
+          description: 선택 결과. 잠긴 심화 본문은 articles에 포함하지 않는다.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result: { $ref: '#/components/schemas/ResolvedContentPairing' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /content/terms/{termId}:
     get:
       tags: [content]
@@ -547,10 +598,14 @@ paths:
                               properties:
                                 readingKey:
                                   type: string
-                                  description: 명식 파생값 해시. PII가 아니다.
+                                  description: |
+                                    명식 파생값 해시. PII가 아니다. 리딩은 `rk_`, 궁합은
+                                    명식 쌍의 `pk_`(pairKey)다.
                                 deepKey:
                                   type: string
-                                  description: 열람 단위 키. 현재는 `flow:<연도>`뿐이다.
+                                  description: |
+                                    열람 단위 키. `flow:<연도>`(같은 명식의 세운과 12개월 월운)
+                                    또는 `gunghap`(명식 쌍 하나의 궁합 전체)이다.
                                 year:
                                   type: integer
                                   description: deepKey에서 뽑은 연도. 형식이 다르면 생략된다.
@@ -2438,6 +2493,144 @@ components:
               deepKey: { type: string, pattern: '^flow:[0-9]{4}$' }
               section: { type: string, enum: [seun, wolun] }
               year: { type: integer, minimum: 1900, maximum: 2200 }
+
+    PairingSideFacts:
+      type: object
+      additionalProperties: false
+      required: [kind, chart]
+      properties:
+        kind: { type: string, enum: [full, three_pillar] }
+        chart:
+          description: 시각 미상 three_pillar 명식에서는 hour가 없어야 한다.
+          type: object
+          additionalProperties: false
+          required: [year, month, day]
+          properties:
+            year: { $ref: '#/components/schemas/GanjiFact' }
+            month: { $ref: '#/components/schemas/GanjiFact' }
+            day: { $ref: '#/components/schemas/GanjiFact' }
+            hour: { $ref: '#/components/schemas/GanjiFact' }
+
+    PairBranchRelation:
+      type: string
+      enum: [yukhap, samhap, banghap, chung, hyeong, pa, hae, wonjin, gwimun]
+
+    PairOhaengFact:
+      type: object
+      additionalProperties: false
+      required: [name, a, b, kind]
+      properties:
+        name: { type: string, enum: [mok, hwa, to, geum, su] }
+        a: { $ref: '#/components/schemas/OhaengStateFact' }
+        b: { $ref: '#/components/schemas/OhaengStateFact' }
+        kind:
+          type: string
+          enum: [fill_a, fill_b, overlap, gap, plain]
+          description: '`fill_b`는 B가 A의 빈 자리를 채운다는 뜻. 과다×과다는 overlap, 부족×부족은 gap.'
+
+    PairFacts:
+      description: |
+        앱 계산 코어가 두 명식에서 뽑은 짝 사실. 서버가 같은 값을 다시 유도해 대조하므로
+        표기 규칙이 양쪽에서 같아야 한다 — `aToB`는 B의 일간에서 본 A의 일간 십성(A가 B에게
+        무엇인가), `ilji.tags`는 고정 순서(육합·삼합·방합·충·형·파·해·원진·귀문)의 두 일지
+        관계이며 삼합·방합은 두 글자 반합, 자형은 넣지 않는다. `primary`는 충 > 원진 > 귀문 >
+        형 > 육합 > 삼합 > 방합 > 파 > 해 우선순위의 대표 관계이고 태그가 없으면 같은 글자는
+        `same`, 아니면 `none`이다. `ohaeng`은 목·화·토·금·수 순서 다섯 줄이며 상태는 리딩과
+        같은 임계값(개수 4 이상 과다, 0 부족)이다. `close.stem`은 두 일간 오행의 갈래,
+        `close.branch`는 `primary`가 합 계열·same이면 hap, 부딪힘 계열이면 chung이다.
+      type: object
+      additionalProperties: false
+      required: [ilgan, ilji, ohaeng, close]
+      properties:
+        ilgan:
+          type: object
+          additionalProperties: false
+          required: [aToB, bToA, hap]
+          properties:
+            aToB: { $ref: '#/components/schemas/SipseongFact' }
+            bToA: { $ref: '#/components/schemas/SipseongFact' }
+            hap: { type: boolean, description: 두 일간의 천간합(甲己·乙庚·丙辛·丁壬·戊癸) }
+        ilji:
+          type: object
+          additionalProperties: false
+          required: [tags, primary]
+          properties:
+            tags:
+              type: array
+              maxItems: 3
+              uniqueItems: true
+              items: { $ref: '#/components/schemas/PairBranchRelation' }
+            primary:
+              type: string
+              enum: [yukhap, samhap, banghap, chung, hyeong, pa, hae, wonjin, gwimun, same, none]
+        ohaeng:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items: { $ref: '#/components/schemas/PairOhaengFact' }
+        close:
+          type: object
+          additionalProperties: false
+          required: [stem, branch]
+          properties:
+            stem: { type: string, enum: [bihwa, sangsaeng, sanggeuk] }
+            branch: { type: string, enum: [hap, chung, none] }
+
+    ResolveContentPairingRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, a, b, pair]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        a: { $ref: '#/components/schemas/PairingSideFacts' }
+        b: { $ref: '#/components/schemas/PairingSideFacts' }
+        pair: { $ref: '#/components/schemas/PairFacts' }
+        unlock:
+          oneOf:
+            - $ref: '#/components/schemas/RewardClaimPairingUnlock'
+            - $ref: '#/components/schemas/TicketPairingUnlock'
+
+    RewardClaimPairingUnlock:
+      type: object
+      additionalProperties: false
+      required: [section, kind, claimId]
+      properties:
+        section: { type: string, enum: [gunghap] }
+        kind: { type: string, enum: [reward_claim] }
+        claimId: { type: string, pattern: '^cl_[A-Za-z0-9._-]{1,128}$' }
+
+    TicketPairingUnlock:
+      type: object
+      additionalProperties: false
+      required: [section, kind]
+      properties:
+        section: { type: string, enum: [gunghap] }
+        kind: { type: string, enum: [ticket] }
+
+    ResolvedContentPairing:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, contentVersion, pairKey, articles, locked]
+      properties:
+        schemaVersion: { type: integer, minimum: 1 }
+        contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+        pairKey:
+          type: string
+          pattern: '^pk_[a-f0-9]{64}$'
+          description: 두 명식 해시를 정렬해 다시 해시한 값. A×B와 B×A가 같다.
+        articles:
+          type: array
+          items: { $ref: '#/components/schemas/ContentArticle' }
+        locked:
+          type: array
+          maxItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [deepKey, section]
+            properties:
+              deepKey: { type: string, enum: [gunghap] }
+              section: { type: string, enum: [gunghap] }
 
     ProductId:
       type: string

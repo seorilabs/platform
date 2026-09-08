@@ -315,6 +315,19 @@ func TestContentConfigValidation(t *testing.T) {
 			t.Fatalf("환경을 포함한 prefix %q error = %v", prefix, err)
 		}
 	}
+
+	app = validContentApp()
+	app.Content.PairingEnabled = true
+	if err := app.Validate(); err != nil {
+		t.Fatalf("pairing_enabled 있는 content config: %v", err)
+	}
+
+	// 궁합 킬 스위치도 content 설정이다. content가 꺼진 앱에 남아 있으면 배선 실수다.
+	app = validAppForTest()
+	app.Content = ContentConfig{PairingEnabled: true}
+	if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "content가 비활성") {
+		t.Fatalf("content 비활성 앱의 pairing_enabled error = %v", err)
+	}
 }
 
 func TestValidateAppSetRejectsCrossAppAdMobUnitReuse(t *testing.T) {

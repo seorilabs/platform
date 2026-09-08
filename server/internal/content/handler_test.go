@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,6 +45,11 @@ func (f *fakeAppChecks) VerifyAppCheck(_ context.Context, _ string, token string
 
 func testHandler(t *testing.T, appChecks *fakeAppChecks) *http.ServeMux {
 	t.Helper()
+	return testHandlerWith(t, appChecks, testContentApp())
+}
+
+func testHandlerWith(t *testing.T, appChecks *fakeAppChecks, app registry.App) *http.ServeMux {
+	t.Helper()
 	req := validResolveRequest()
 	selection, err := Select(req)
 	if err != nil {
@@ -58,7 +64,13 @@ func testHandler(t *testing.T, appChecks *fakeAppChecks) *http.ServeMux {
 			items[id] = Item{ID: id, Text: "심화 해설", Access: AccessDeep, Contexts: []Context{ContextReading}}
 		}
 	}
-	app := testContentApp()
+	pairingSelection, err := SelectPairing(validPairingRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range pairingSelection.DeepIDs {
+		items[id] = Item{ID: id, Text: "궁합 해설", Access: AccessDeep, Contexts: []Context{ContextReading}}
+	}
 	service, err := NewService(fakeApps{app}, fakeReleases{Release{
 		SchemaVersion: 1, ContentVersion: "sha256-" + strings.Repeat("a", 64), Items: items,
 	}}, fakeUsage{}, nil)
@@ -82,6 +94,7 @@ func TestHandlerRequiresAppCheck(t *testing.T) {
 	}{
 		{name: "version", method: http.MethodGet, path: "/v1/content/version"},
 		{name: "resolve", method: http.MethodPost, path: "/v1/content/readings:resolve", body: `{}`},
+		{name: "pairing", method: http.MethodPost, path: "/v1/content/pairings:resolve", body: `{}`},
 		{name: "term", method: http.MethodGet, path: "/v1/content/terms/ilju.gapja"},
 		{name: "deep-access", method: http.MethodGet, path: "/v1/content/deep-access"},
 	} {
@@ -116,6 +129,7 @@ func TestHandlerRequiresPlatformSession(t *testing.T) {
 	}{
 		{name: "version", method: http.MethodGet, path: "/v1/content/version"},
 		{name: "resolve", method: http.MethodPost, path: "/v1/content/readings:resolve", body: `{}`},
+		{name: "pairing", method: http.MethodPost, path: "/v1/content/pairings:resolve", body: `{}`},
 		{name: "term", method: http.MethodGet, path: "/v1/content/terms/ilju.gapja"},
 		{name: "deep-access", method: http.MethodGet, path: "/v1/content/deep-access"},
 	} {
@@ -136,6 +150,59 @@ func TestHandlerRejectsArbitraryArticleIDs(t *testing.T) {
 	r.Header.Set(appCheckHeader, "attested")
 	w := httptest.NewRecorder()
 	testHandler(t, &fakeAppChecks{}).ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "articleIds") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func pairingRequestBody(t *testing.T) string {
+	t.Helper()
+	body, err := json.Marshal(validPairingRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+func TestHandlerResolvesPairingAsLockedWithoutAccess(t *testing.T) {
+	app := testContentApp()
+	app.Content.PairingEnabled = true
+	r := httptest.NewRequest(http.MethodPost, "/v1/content/pairings:resolve", strings.NewReader(pairingRequestBody(t)))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set(appCheckHeader, "attested")
+	checks := &fakeAppChecks{}
+	w := httptest.NewRecorder()
+	testHandlerWith(t, checks, app).ServeHTTP(w, r)
+	if w.Code != http.StatusOK || checks.token != "attested" {
+		t.Fatalf("status=%d token=%q body=%s", w.Code, checks.token, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"locked":[{"deepKey":"gunghap","section":"gunghap"}]`) ||
+		!strings.Contains(body, `"articles":[]`) || !strings.Contains(body, `"pairKey":"pk_`) {
+		t.Fatalf("body=%s", body)
+	}
+}
+
+func TestHandlerRejectsPairingWhenRegistryFlagIsOff(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/v1/content/pairings:resolve", strings.NewReader(pairingRequestBody(t)))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set(appCheckHeader, "attested")
+	w := httptest.NewRecorder()
+	testHandler(t, &fakeAppChecks{}).ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "content_not_enabled") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandlerRejectsPairingArticleIDs(t *testing.T) {
+	app := testContentApp()
+	app.Content.PairingEnabled = true
+	r := httptest.NewRequest(http.MethodPost, "/v1/content/pairings:resolve",
+		strings.NewReader(`{"schemaVersion":1,"a":{},"b":{},"pair":{},"articleIds":["gung-ilji.same"]}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set(appCheckHeader, "attested")
+	w := httptest.NewRecorder()
+	testHandlerWith(t, &fakeAppChecks{}, app).ServeHTTP(w, r)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "articleIds") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}

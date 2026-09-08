@@ -264,19 +264,28 @@ func validateScope(values []string, unlock *UnlockRequest) (map[string]bool, err
 	if (unlock.Section != "seun" && unlock.Section != "wolun") || !out[unlock.Section] {
 		return nil, selectorError("잠금 해제 대상이 조회 범위에 없다")
 	}
+	if err := validateUnlockMeans(*unlock); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// validateUnlockMeans는 해제 수단의 형식만 본다. 대상 섹션은 리딩(seun·wolun)과
+// 궁합(gunghap)이 각자 정하므로 호출하는 쪽이 먼저 확인한다.
+func validateUnlockMeans(unlock UnlockRequest) error {
 	switch unlock.Kind {
 	case "reward_claim":
 		if !rewardClaimIDPattern.MatchString(unlock.ClaimID) {
-			return nil, selectorError("광고 claim ID가 올바르지 않다")
+			return selectorError("광고 claim ID가 올바르지 않다")
 		}
 	case "ticket":
 		if unlock.ClaimID != "" {
-			return nil, selectorError("열람권 요청에 광고 claim을 넣을 수 없다")
+			return selectorError("열람권 요청에 광고 claim을 넣을 수 없다")
 		}
 	default:
-		return nil, selectorError("지원하지 않는 잠금 해제 수단이다")
+		return selectorError("지원하지 않는 잠금 해제 수단이다")
 	}
-	return out, nil
+	return nil
 }
 
 func validateJohap(f JohapFact, pillar, dayPillar string) error {

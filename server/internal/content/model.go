@@ -134,6 +134,68 @@ type ResolveResult struct {
 	Locked         []LockedDeep `json:"locked"`
 }
 
+// PairingSideFacts는 궁합 한쪽의 파생 명식이다. 생년월일·시각·이름은 없다 — 서버가
+// 유도에 쓰는 것은 종류와 기둥 간지뿐이다.
+type PairingSideFacts struct {
+	Kind  string     `json:"kind"`
+	Chart ChartFacts `json:"chart"`
+}
+
+// PairIlganFacts의 AToB는 A가 B에게 무엇인가 — B의 일간에서 본 A의 일간 십성이다.
+type PairIlganFacts struct {
+	AToB string `json:"aToB"`
+	BToA string `json:"bToA"`
+	Hap  bool   `json:"hap"`
+}
+
+type PairIljiFacts struct {
+	Tags    []string `json:"tags"`
+	Primary string   `json:"primary"`
+}
+
+type PairOhaengFact struct {
+	Name string `json:"name"`
+	A    string `json:"a"`
+	B    string `json:"b"`
+	Kind string `json:"kind"`
+}
+
+type PairCloseFacts struct {
+	Stem   string `json:"stem"`
+	Branch string `json:"branch"`
+}
+
+// PairFacts는 앱 계산 코어가 두 명식에서 뽑은 짝 사실이다. 서버는 이것을 좌표로 믿지 않고
+// 두 명식에서 같은 값을 다시 유도해 대조한다(pairing_selector.go).
+type PairFacts struct {
+	Ilgan  PairIlganFacts   `json:"ilgan"`
+	Ilji   PairIljiFacts    `json:"ilji"`
+	Ohaeng []PairOhaengFact `json:"ohaeng"`
+	Close  PairCloseFacts   `json:"close"`
+}
+
+type ResolvePairingRequest struct {
+	SchemaVersion int              `json:"schemaVersion"`
+	A             PairingSideFacts `json:"a"`
+	B             PairingSideFacts `json:"b"`
+	Pair          PairFacts        `json:"pair"`
+	Unlock        *UnlockRequest   `json:"unlock,omitempty"`
+}
+
+// LockedPairing에는 연도가 없다. 궁합은 명식 쌍 하나가 열람 단위라 deepKey가 고정이다.
+type LockedPairing struct {
+	DeepKey string `json:"deepKey"`
+	Section string `json:"section"`
+}
+
+type ResolvePairingResult struct {
+	SchemaVersion  int             `json:"schemaVersion"`
+	ContentVersion string          `json:"contentVersion"`
+	PairKey        string          `json:"pairKey"`
+	Articles       []Article       `json:"articles"`
+	Locked         []LockedPairing `json:"locked"`
+}
+
 type TermResult struct {
 	SchemaVersion  int     `json:"schemaVersion"`
 	ContentVersion string  `json:"contentVersion"`
