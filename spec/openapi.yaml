@@ -1849,10 +1849,16 @@ paths:
       tags: [ads]
       summary: 보상 광고 claim 생성
       operationId: createAdRewardClaim
+      description: |
+        앱 레지스트리의 request_cooldown_seconds가 설정된 placement는 사용자별 새 요청 사이의
+        간격을 서버 시각으로 제한한다. UTC 날짜 변경에도 간격을 유지한다. 동일 requestId의
+        재조회는 기존 claim을 반환하며 간격과 일일 지급 횟수를 추가로 소비하지 않는다.
+        미시청·취소 요청 생성은 일일 지급 횟수를 차감하지 않는다.
       parameters: [{ $ref: '#/components/parameters/SeoriApp' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateAdRewardClaimRequest' } } } }
       responses:
         '201': { description: 생성 또는 동일 requestId 결과, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '429': { $ref: '#/components/responses/RateLimited' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Unprocessable' }

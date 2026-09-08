@@ -138,6 +138,14 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `spiritgate-defenders` | 활성 | 미사용 | 활성 | 비활성 | 활성 | — |
 | `ungeul` | 활성 | production | 비활성 | 활성 | 활성 | `deep_reading_ticket` |
 
+## 광고 요청 간격
+
+광고 placement의 `request_cooldown_seconds`는 새 claim 요청 사이의 최소 간격이다.
+생략·0은 추가 요청 간격 제한 없음이며 기존 `cooldown_seconds`의 지급 간격과 구분한다.
+범위는 0~86,400초다. 서버 사용자·placement별로 UTC 자정을 넘어 적용하며, 동일
+request ID 재시도와 미지급 광고는 일일 보상 횟수를 추가 차감하지 않는다.
+`lord-ledger/city_supply`는 요청 간격 30초, 지급 일일 한도 3회다.
+
 ## ledger_environment가 서비스와 다르면
 
 **admin 경로가 전부 422 `environment_mismatch`로 막힌다. 결제는 멀쩡하다.**
