@@ -101,7 +101,14 @@
     "reward_ad_shown",
     "reward_ad_granted",
     "reward_ad_declined",
-    "reward_ad_closed"
+    "reward_ad_closed",
+    "identity_share_requested",
+    "identity_share_outcome",
+    "home_tile_tapped",
+    "pairing_picker_viewed",
+    "pairing_started",
+    "pairing_generated",
+    "pairing_section_viewed"
   ],
   "cors_origins": [
     "https://localhost",
