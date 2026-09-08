@@ -63,7 +63,8 @@
           "max_amount": 1000
         },
         "daily_limit": 3,
-        "cooldown_seconds": 30
+        "cooldown_seconds": 30,
+        "request_cooldown_seconds": 30
       }
     ]
   }

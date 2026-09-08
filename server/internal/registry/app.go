@@ -145,12 +145,13 @@ type AdsConfig struct {
 }
 
 type AdsPlacementConfig struct {
-	ID              string                       `json:"id" firestore:"id"`
-	Format          string                       `json:"format" firestore:"format"`
-	Providers       map[string]AdsProviderConfig `json:"providers" firestore:"providers"`
-	Reward          *AdsRewardConfig             `json:"reward,omitempty" firestore:"reward,omitempty"`
-	DailyLimit      int                          `json:"daily_limit" firestore:"daily_limit"`
-	CooldownSeconds int                          `json:"cooldown_seconds" firestore:"cooldown_seconds"`
+	ID                     string                       `json:"id" firestore:"id"`
+	Format                 string                       `json:"format" firestore:"format"`
+	Providers              map[string]AdsProviderConfig `json:"providers" firestore:"providers"`
+	Reward                 *AdsRewardConfig             `json:"reward,omitempty" firestore:"reward,omitempty"`
+	DailyLimit             int                          `json:"daily_limit" firestore:"daily_limit"`
+	CooldownSeconds        int                          `json:"cooldown_seconds" firestore:"cooldown_seconds"`
+	RequestCooldownSeconds int                          `json:"request_cooldown_seconds,omitempty" firestore:"request_cooldown_seconds,omitempty"`
 }
 
 type AdsProviderConfig struct {
@@ -485,6 +486,9 @@ func (a App) validateAds() error {
 		}
 		if placement.DailyLimit <= 0 || placement.CooldownSeconds < 0 {
 			return fmt.Errorf("%s/%s: 일일 한도와 cooldown이 올바르지 않다", a.AppID, placement.ID)
+		}
+		if placement.RequestCooldownSeconds < 0 || placement.RequestCooldownSeconds > 86400 {
+			return fmt.Errorf("%s/%s: 요청 간격은 0~86400초여야 한다", a.AppID, placement.ID)
 		}
 		if len(placement.Providers) == 0 {
 			return fmt.Errorf("%s/%s: provider 설정이 필요하다", a.AppID, placement.ID)

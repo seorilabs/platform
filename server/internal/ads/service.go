@@ -18,7 +18,7 @@ import (
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 type Repository interface {
-	CreateClaim(context.Context, Claim, int, int) (Claim, error)
+	CreateClaim(context.Context, Claim, int, int, int) (Claim, error)
 	GetClaim(context.Context, string) (Claim, error)
 	ConfirmClaim(context.Context, ConfirmInput) (Claim, error)
 	AcknowledgeClaim(context.Context, string, string, string, time.Time) (Claim, error)
@@ -127,7 +127,7 @@ func (s *Service) CreateClaim(ctx context.Context, in CreateClaimInput) (Claim, 
 	}
 	// 보상을 받은 뒤 한도 초과로 거부되는 일을 줄이기 위해 claim 생성 시에도
 	// 현재 사용량을 확인한다. 최종 원자적 한도 판정은 confirm에서 다시 한다.
-	return s.repo.CreateClaim(ctx, claim, placement.DailyLimit, placement.CooldownSeconds)
+	return s.repo.CreateClaim(ctx, claim, placement.DailyLimit, placement.CooldownSeconds, placement.RequestCooldownSeconds)
 }
 
 func (s *Service) validateClaimInput(ctx context.Context, in CreateClaimInput) (registry.App, registry.AdsPlacementConfig, error) {
