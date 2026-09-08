@@ -1,0 +1,70 @@
+{
+  "app_id": "lord-ledger",
+  "display_name": "삼국지 풍운록",
+  "firebase_project_id": "lord-ledger",
+  "firebase_custom_token_service_account": "platform-auth@lord-ledger.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": true,
+    "iap": false,
+    "ads": true,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "platform_event_allowlist": [
+    "ad_reward_cancelled",
+    "ad_reward_failed",
+    "ad_reward_granted",
+    "ad_reward_request",
+    "ad_reward_watched",
+    "battle_end",
+    "battle_start",
+    "first_command",
+    "game_load",
+    "game_over",
+    "game_start",
+    "seori_sdk_error",
+    "seori_session_start",
+    "session_start",
+    "turn_end",
+    "tutorial_begin",
+    "tutorial_complete",
+    "tutorial_skip"
+  ],
+  "cors_origins": [
+    "http://localhost:5173",
+    "https://lord-ledger.apps.tossmini.com",
+    "https://lord-ledger.private-apps.tossmini.com",
+    "https://seorilabs.github.io"
+  ],
+  "ads": {
+    "providers": [
+      "admob"
+    ],
+    "placements": [
+      {
+        "id": "city_supply",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-2444587584524186/5352255759",
+            "ios_ad_unit_id": "ca-app-pub-2444587584524186/5673383051",
+            "reward_item": "food",
+            "reward_amount": 1000
+          }
+        },
+        "reward": {
+          "key": "food",
+          "min_amount": 1000,
+          "max_amount": 1000
+        },
+        "daily_limit": 3,
+        "cooldown_seconds": 30
+      }
+    ]
+  }
+}
