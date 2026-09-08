@@ -365,6 +365,20 @@ func TestValidateAppSetAllowsUnitReuseInsideOneApp(t *testing.T) {
 	}
 }
 
+func TestAdsRequestCooldownBounds(t *testing.T) {
+	for _, seconds := range []int{-1, 0, 30, 86400, 86401} {
+		app := validAppForTest()
+		app.Features["ads"] = true
+		app.Ads = rewardedAdsForTest("ca-app-pub-1111111111111111/1111111111")
+		app.Ads.Placements[0].RequestCooldownSeconds = seconds
+		err := app.Validate()
+		wantValid := seconds >= 0 && seconds <= 86400
+		if (err == nil) != wantValid {
+			t.Fatalf("seconds=%d valid=%v err=%v", seconds, wantValid, err)
+		}
+	}
+}
+
 func rewardedAdsForTest(unit string) AdsConfig {
 	return AdsConfig{
 		Providers: []string{"admob"},

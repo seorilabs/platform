@@ -56,6 +56,7 @@ type transactionDoc struct {
 type usageDoc struct {
 	Count           int       `firestore:"count"`
 	LastConfirmedAt time.Time `firestore:"lastConfirmedAt"`
+	LastRequestedAt time.Time `firestore:"lastRequestedAt,omitempty"`
 }
 type policyDoc struct {
 	AppID                string    `firestore:"appId"`
@@ -95,7 +96,7 @@ func appHealthPath(appID string) (fspath.Path, error) {
 	return path(appHealthCollection + "/" + hash(appID))
 }
 
-func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, cooldownSeconds int) (Claim, error) {
+func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, cooldownSeconds, requestCooldownSeconds int) (Claim, error) {
 	cp, err := claimPath(c.ClaimID)
 	if err != nil {
 		return Claim{}, err
@@ -138,8 +139,8 @@ func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, 
 		if err != nil {
 			return err
 		}
+		usage := usageDoc{}
 		if usageExists {
-			var usage usageDoc
 			if err := usageSnap.DataTo(&usage); err != nil {
 				return err
 			}
@@ -148,6 +149,38 @@ func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, 
 			}
 			if !usage.LastConfirmedAt.IsZero() && c.CreatedAt.Sub(usage.LastConfirmedAt) < time.Duration(cooldownSeconds)*time.Second {
 				return platformerr.New(platformerr.CodeAdCooldown, "잠시 후 다시 시도해 주세요")
+			}
+		}
+		if requestCooldownSeconds > 0 {
+			lastRequested := usage.LastRequestedAt
+			// 최대 요청 간격은 하루다. 자정 직전 요청도 확인하여 새 UTC 일자로
+			// 간격 제한을 우회하지 못하게 한다. 새 collection은 만들지 않는다.
+			cutoff := c.CreatedAt.Add(-time.Duration(requestCooldownSeconds) * time.Second)
+			if cutoff.UTC().Format("2006-01-02") != c.CreatedAt.UTC().Format("2006-01-02") {
+				previous, err := usagePath(ConfirmInput{AppID: c.AppID, PlatformUserID: c.PlatformUserID}, c.PlacementID, cutoff.UTC().Format("2006-01-02"))
+				if err != nil {
+					return err
+				}
+				exists, snap, err := tx.Exists(previous)
+				if err != nil {
+					return err
+				}
+				if exists {
+					var prior usageDoc
+					if err := snap.DataTo(&prior); err != nil {
+						return err
+					}
+					if prior.LastRequestedAt.After(lastRequested) {
+						lastRequested = prior.LastRequestedAt
+					}
+				}
+			}
+			if !lastRequested.IsZero() && c.CreatedAt.Sub(lastRequested) < time.Duration(requestCooldownSeconds)*time.Second {
+				return platformerr.New(platformerr.CodeAdCooldown, "잠시 후 다시 시도해 주세요")
+			}
+			usage.LastRequestedAt = c.CreatedAt
+			if err := tx.Set(up, usage); err != nil {
+				return err
 			}
 		}
 		if err := tx.Create(cp, c); err != nil {
