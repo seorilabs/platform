@@ -177,8 +177,12 @@ func TestUngeulEventAllowlistCoversClientContract(t *testing.T) {
 		// 정체성 카드 공유·홈 타일·궁합.
 		"identity_share_requested", "identity_share_outcome", "home_tile_tapped",
 		"pairing_picker_viewed", "pairing_started", "pairing_generated", "pairing_section_viewed",
+		// 체감 일치도 문항 노출·응답·닫음 (`feedback-contract.json`). 점수·이유는 GA4 로 오지 않는다.
+		"feedback_prompt_shown", "feedback_prompt_responded", "feedback_prompt_dismissed",
 	}
+	expected := make(map[string]bool, len(clientContract))
 	for _, name := range clientContract {
+		expected[name] = true
 		if !ungeul.EventAllowed(name) {
 			t.Errorf("클라이언트 계약 이벤트 %q 가 platform_event_allowlist 에 없다", name)
 		}
@@ -189,5 +193,12 @@ func TestUngeulEventAllowlistCoversClientContract(t *testing.T) {
 			t.Errorf("platform_event_allowlist 에 %q 가 중복이다", name)
 		}
 		seen[name] = true
+		// 어느 계약에도 없는 이름이 allowlist 에 남으면 서버가 받는 것과 앱이 보내는 것이 갈린 것이다.
+		if !expected[name] {
+			t.Errorf("platform_event_allowlist 의 %q 는 어느 클라이언트 계약에도 없다", name)
+		}
+	}
+	if len(ungeul.PlatformEventAllowlist) != len(clientContract) {
+		t.Fatalf("allowlist=%d, want %d (계약과 같은 크기)", len(ungeul.PlatformEventAllowlist), len(clientContract))
 	}
 }
