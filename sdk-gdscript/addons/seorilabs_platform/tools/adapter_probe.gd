@@ -83,6 +83,7 @@ class IdentitySpy:
 
 func _initialize() -> void:
 	await _check_firebase_identity()
+	await _check_identity_read_failure()
 	await _check_rewarded_claim_flow()
 	await _check_policy_fail_closed()
 	await _check_invalid_adapter_contract()
@@ -155,7 +156,7 @@ func _check_firebase_identity() -> void:
 	failed_migration._load_state_once()
 	_expect(failed_migration._state.is_empty(), "ID token 제거 저장 실패 뒤 신원 상태가 메모리에 남았다")
 	_expect(failed_migration._current_id_token.is_empty(), "ID token 제거 저장 실패 뒤 token이 메모리에 남았다")
-	_expect(failed_migration.current_identity().is_empty(), "ID token 제거 저장 실패가 성공 신원으로 노출됐다")
+	_expect(failed_migration.current_identity().get("reason") == "firebase_identity_state_invalid", "ID token 제거 저장 실패와 미가입을 구분하지 못했다")
 	failed_migration.free()
 	var failed_persist := FirebaseAdapterSpy.new()
 	root.add_child(failed_persist)
@@ -296,6 +297,38 @@ func _check_invalid_adapter_contract() -> void:
 	identity_adapter.free()
 	incomplete_identity.free()
 	platform.free()
+
+
+func _check_identity_read_failure() -> void:
+	for contents: String in ["{broken", "[]", "{}", '{"refresh_token":"fixture"}', '{"uid":42}', '{"uid":" "}',
+		JSON.stringify({"uid": "a".repeat(129)}), JSON.stringify({"uid": "가".repeat(43)})]:
+		var file := FileAccess.open(IDENTITY_FAIL_PATH, FileAccess.WRITE)
+		file.store_string(contents)
+		file.close()
+		var adapter := FirebaseIdentityAdapter.new()
+		adapter.configure({"state_path": IDENTITY_FAIL_PATH})
+		var result := adapter.current_identity()
+		_expect(result.get("success") == false and result.get("reason") == "firebase_identity_state_invalid", "신원 읽기 실패를 미가입으로 반환했다")
+		var ensured: Dictionary = await adapter.ensure_identity()
+		_expect(ensured.get("reason") == "firebase_identity_state_invalid", "손상된 기존 신원이 새 가입 경로로 진행됐다")
+		_expect(FileAccess.get_file_as_string(IDENTITY_FAIL_PATH) == contents, "조회만으로 손상된 신원을 제거했다")
+		adapter.free()
+	DirAccess.remove_absolute(IDENTITY_FAIL_PATH)
+	DirAccess.make_dir_absolute(IDENTITY_FAIL_PATH)
+	var unreadable := FirebaseIdentityAdapter.new()
+	unreadable.configure({"state_path": IDENTITY_FAIL_PATH})
+	_expect(unreadable.current_identity().get("success") == false, "읽을 수 없는 신원 경로를 미가입으로 반환했다")
+	unreadable.free()
+	DirAccess.remove_absolute(IDENTITY_FAIL_PATH)
+	var absent := FirebaseIdentityAdapter.new()
+	absent.configure({"state_path": IDENTITY_FAIL_PATH})
+	_expect(absent.current_identity().is_empty(), "실제로 없는 신원은 가입 없이 빈 결과를 반환해야 한다")
+	absent.free()
+	_expect(AtomicJsonStore.write(IDENTITY_FAIL_PATH, {"uid": "a".repeat(128)}), "최대 길이 신원을 저장하지 못했다")
+	var maximum := FirebaseIdentityAdapter.new()
+	maximum.configure({"state_path": IDENTITY_FAIL_PATH})
+	_expect(maximum.current_identity().get("uid") == "a".repeat(128), "서버가 허용하는 128바이트 UID를 거부했다")
+	maximum.free()
 
 
 func _id_token(uid: String) -> String:
