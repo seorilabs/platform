@@ -90,14 +90,19 @@ func current_identity() -> Dictionary:
 	return _identity_result() if not _state.is_empty() else {}
 
 
-func clear_local_state() -> void:
+func clear_local_state() -> bool:
 	_state = {}
 	_current_id_token = ""
 	_loaded = true
-	_state_valid = true
 	_state_dirty = false
-	if FileAccess.file_exists(_state_path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(_state_path))
+	var removed := true
+	for path in [_state_path, _state_path + AtomicJsonStore.TEMP_SUFFIX]:
+		if FileAccess.file_exists(path):
+			removed = DirAccess.remove_absolute(ProjectSettings.globalize_path(path)) == OK and removed
+		if DirAccess.dir_exists_absolute(path):
+			removed = false
+	_state_valid = removed
+	return removed
 
 
 func _sign_in_with_platform_custom_token(existing_id_token: String, expected_uid: String) -> Dictionary:
