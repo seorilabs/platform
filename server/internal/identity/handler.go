@@ -80,6 +80,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	if h.kakaoUnlink != nil {
 		mux.HandleFunc("POST /v1/auth/webhooks/kakao/unlink", httpx.Wrap(h.kakaoUnlinkWebhook))
 	}
+	mux.HandleFunc("POST /v1/auth/account-deletions", httpx.Wrap(h.requestAccountDeletion))
+	mux.HandleFunc("POST /v1/auth/account-deletions/status", httpx.Wrap(h.accountDeletionStatus))
 	mux.HandleFunc("DELETE /v1/auth/firebase-account", httpx.Wrap(h.deleteFirebaseAccount))
 	mux.HandleFunc("POST /v1/auth/refresh", httpx.Wrap(h.refresh))
 	mux.HandleFunc("DELETE /v1/users/me", httpx.Wrap(h.deleteMe))

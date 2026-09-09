@@ -92,6 +92,7 @@ type GA4Config struct {
 	// 접두사를 벗겨야 횡단 쿼리가 가능해진다.
 	// GA4로는 기존 이름 그대로 보내 시계열을 끊지 않는다.
 	EventPrefix string `json:"event_prefix" firestore:"event_prefix"`
+	PropertyID  string `json:"property_id,omitempty" firestore:"property_id,omitempty"`
 }
 
 type IAPConfig struct {
@@ -243,6 +244,14 @@ func (a App) Validate() error {
 		}
 	} else if a.FirebaseCustomTokenServiceAccount != "" {
 		return fmt.Errorf("%s: bridge가 비활성인데 custom token service account가 설정됐다", a.AppID)
+	}
+	if a.FeatureEnabled("account_deletion") {
+		if !a.FeatureEnabled("firebase_custom_token_bridge") || a.FeatureEnabled("iap") || a.FeatureEnabled("content") || len(a.Auth.AccountProviders) > 0 {
+			return fmt.Errorf("%s: account deletion supports Firebase guest apps without IAP or content only", a.AppID)
+		}
+		if _, err := strconv.ParseUint(a.GA4.PropertyID, 10, 64); err != nil || a.GA4.PropertyID == "0" {
+			return fmt.Errorf("%s: account deletion needs a GA4 property", a.AppID)
+		}
 	}
 	switch a.Status {
 	case StatusActive, StatusPaused:

@@ -27,12 +27,29 @@ const (
 	appHealthCollection     = "ad_app_health"
 )
 
+// AccountGuard는 소비자인 ads에 정의하고 identity 구현을 조립한다.
+type AccountGuard interface {
+	CheckAccountActive(*store.Tx, string, string) error
+}
+
 type StoreRepository struct {
+	accounts    AccountGuard
 	store       *store.Client
 	operational *operational.Repository
 }
 
 func NewStoreRepository(st *store.Client) *StoreRepository { return &StoreRepository{store: st} }
+
+func (r *StoreRepository) WithAccounts(guard AccountGuard) *StoreRepository {
+	r.accounts = guard
+	return r
+}
+func (r *StoreRepository) checkAccount(tx *store.Tx, appID, puid string) error {
+	if r.accounts == nil {
+		return nil
+	}
+	return r.accounts.CheckAccountActive(tx, appID, puid)
+}
 
 func (r *StoreRepository) WithOperationalEvents(repo *operational.Repository) *StoreRepository {
 	r.operational = repo
@@ -107,6 +124,10 @@ func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, 
 	}
 	result := c
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkAccount(tx, c.AppID, c.PlatformUserID); err != nil {
+			return err
+		}
+
 		exists, snap, err := tx.Exists(rp)
 		if err != nil {
 			return err
@@ -228,6 +249,10 @@ func (r *StoreRepository) ConfirmClaim(ctx context.Context, in ConfirmInput) (Cl
 	}
 	var result Claim
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkAccount(tx, in.AppID, in.PlatformUserID); err != nil {
+			return err
+		}
+
 		claimSnap, err := tx.Get(cp)
 		if errors.Is(err, store.ErrNotFound) {
 			return platformerr.New(platformerr.CodeClaimNotFound, "보상 claim을 찾을 수 없어요")
@@ -316,6 +341,10 @@ func (r *StoreRepository) AcknowledgeClaim(ctx context.Context, id, appID, puid 
 	}
 	var result Claim
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkAccount(tx, appID, puid); err != nil {
+			return err
+		}
+
 		snap, err := tx.Get(p)
 		if errors.Is(err, store.ErrNotFound) {
 			return platformerr.New(platformerr.CodeClaimNotFound, "보상 claim을 찾을 수 없어요")
@@ -430,6 +459,10 @@ func (r *StoreRepository) suppression(ctx context.Context, record SuppressionRec
 	}
 	var out SuppressionResult
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkAccount(tx, record.AppID, record.PlatformUserID); err != nil {
+			return err
+		}
+
 		exists, snap, err := tx.Exists(rp)
 		if err != nil {
 			return err

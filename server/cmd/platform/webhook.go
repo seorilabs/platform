@@ -232,12 +232,21 @@ func newWorkerFor(
 // Cloud Run Job으로 주기 실행한다. 여러 인스턴스가 겹쳐 돌아도
 // lease가 중복 완료를 막는다 — Firebase의 maxInstances:1 보장이
 // Cloud Run Job에는 없어서 이게 유일한 방어선이다.
-func runWorker(ctx context.Context, cfg config.Config) error {
+func runWorker(ctx context.Context, cfg config.Config) (runErr error) {
 	deps, err := newDeps(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer deps.Close()
+
+	// 결제 처리 실패와 무관하게 이미 접수한 개인정보 삭제를 진행한다.
+	if deps.deletions != nil {
+		deletionErr := deps.deletions.RunOnce(ctx)
+		defer func() { runErr = errors.Join(runErr, deletionErr) }()
+		if deletionErr != nil {
+			slog.ErrorContext(ctx, "계정 삭제 재시도 대기", "err", deletionErr)
+		}
+	}
 
 	if deps.iap == nil {
 		// 결제 설정 없이 워커를 띄우면 아무 일도 하지 않으면서

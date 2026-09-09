@@ -173,6 +173,7 @@ type Service struct {
 	blocklist        Blocklist
 	aitLogin         map[string]AITLoginVerifier
 	users            UserRepository
+	deletions        DeletionRepository
 	issuer           *SessionIssuer
 	customTokens     CustomTokenIssuer
 	appCheck         AppCheckVerifier
@@ -219,6 +220,15 @@ func NewService(
 // 조회 자체가 실패하면 그 에러를 그대로 올린다. 차단 여부를 모른 채
 // 통과시키면 차단이 무의미해진다.
 func (s *Service) ensureNotBlocked(ctx context.Context, appID, uid string) error {
+	if s.deletions != nil {
+		deleting, err := s.deletions.AccountDeleting(ctx, appID, uid)
+		if err != nil {
+			return err
+		}
+		if deleting {
+			return deletionDenied()
+		}
+	}
 	blocked, err := s.blocklist.Blocked(ctx, appID, uid)
 	if err != nil {
 		return err
