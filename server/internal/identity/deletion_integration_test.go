@@ -90,8 +90,12 @@ func TestDeletionTransactionRecoveryAndCleanup(t *testing.T) {
 		if jobs[0].Step != step {
 			t.Fatalf("step=%d", jobs[0].Step)
 		}
-		if step == 2 {
+		if step == 3 {
 			jobs[0].AnalyticsJobRef = "asia-northeast3/long-job"
+			accepted := now.UTC()
+			jobs[0].AnalyticsPhaseAcceptedAt = &accepted
+			jobs[0].GoogleDeletionRequestedAt = &accepted
+			jobs[0].GoogleAnalyticsDeletion = "accepted"
 			if err = repo.AdvanceDeletion(ctx, jobs[0], false); err != nil {
 				t.Fatal(err)
 			}
@@ -99,6 +103,9 @@ func TestDeletionTransactionRecoveryAndCleanup(t *testing.T) {
 			jobs, err = repo.ClaimDeletions(ctx, 1)
 			if err != nil || len(jobs) != 1 || jobs[0].AnalyticsJobRef != "asia-northeast3/long-job" {
 				t.Fatal("long query reference lost", err)
+			}
+			if jobs[0].AnalyticsPhaseAcceptedAt == nil || !jobs[0].AnalyticsPhaseAcceptedAt.Equal(accepted) {
+				t.Fatal("Google acceptance was lost across copy cleanup retry")
 			}
 		}
 		if step == 3 {

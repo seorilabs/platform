@@ -21,7 +21,8 @@ type FirebaseAccountEraser interface {
 	DeleteFirebaseIdentity(context.Context, registry.App, string) error
 }
 type AnalyticsAccountEraser interface {
-	DeleteAnalyticsIdentity(context.Context, registry.App, string, string) (time.Time, string, error)
+	SubmitAnalyticsDeletion(context.Context, registry.App, string) (time.Time, error)
+	DeleteAnalyticsCopies(context.Context, registry.App, string, string) (string, error)
 }
 type DeletionIdentityEraser interface {
 	DeleteIdentityData(context.Context, string, string, string) error
@@ -65,7 +66,7 @@ func (w *DeletionWorker) step(ctx context.Context, j *DeletionJob) error {
 	if err != nil {
 		return err
 	}
-	if !app.FeatureEnabled("account_deletion") || app.FirebaseProjectID != j.FirebaseProjectID || app.GA4.PropertyID != j.GA4PropertyID {
+	if app.FirebaseProjectID != j.FirebaseProjectID || app.GA4.PropertyID != j.GA4PropertyID {
 		return errors.New("identity: deletion app configuration unavailable")
 	}
 	switch j.Step {
@@ -77,37 +78,20 @@ func (w *DeletionWorker) step(ctx context.Context, j *DeletionJob) error {
 		}
 		return nil
 	case 2:
-		if j.PlatformUserID != "" {
-			at, ref, err := w.Events.DeleteAnalyticsIdentity(ctx, app, j.PlatformUserID, j.AnalyticsJobRef)
-			j.AnalyticsJobRef = ref
-			if !at.IsZero() {
-				j.GoogleDeletionRequestedAt = &at
-				j.GoogleAnalyticsDeletion = "accepted"
-			}
-			if err != nil {
-				return err
-			}
-		}
-		j.GoogleAnalyticsDeletion = "accepted"
-		if j.PlatformUserID == "" {
-			j.GoogleAnalyticsDeletion = "not_collected"
-		}
-		return nil
+		// Google 접수와 BigQuery 사본 삭제를 분리한다. 사본의 user_id와
+		// pseudo ID 연결은 지연 내보내기가 끝나는 최종 단계까지 보존한다.
+		return w.submitAnalytics(ctx, app, j)
 	case 3:
-		// 접수 직전에 발급된 custom token은 최초 Auth 삭제 뒤 UID를
-		// 재생성할 수 있다. 토큰 유효기간이 지난 최종 단계에서 다시 지운다.
+		// 접수 직전 custom token의 재생성 가능 시간이 지난 뒤 다시 지운다.
 		if err := w.Firebase.DeleteFirebaseIdentity(ctx, app, j.UID); err != nil {
 			return err
 		}
-		// GA4는 일별 테이블을 날짜 이후 3일까지 갱신한다. 저장소에서 정한
-		// 4일 후 재검사 시점은 Google 내부 삭제 완료를 주장하는 기간이 아니다.
+		if err := w.submitAnalytics(ctx, app, j); err != nil {
+			return err
+		}
 		if j.PlatformUserID != "" {
-			at, ref, err := w.Events.DeleteAnalyticsIdentity(ctx, app, j.PlatformUserID, j.AnalyticsJobRef)
+			ref, err := w.Events.DeleteAnalyticsCopies(ctx, app, j.PlatformUserID, j.AnalyticsJobRef)
 			j.AnalyticsJobRef = ref
-			if !at.IsZero() {
-				j.GoogleDeletionRequestedAt = &at
-				j.GoogleAnalyticsDeletion = "accepted"
-			}
 			if err != nil {
 				return err
 			}
@@ -116,4 +100,24 @@ func (w *DeletionWorker) step(ctx context.Context, j *DeletionJob) error {
 	default:
 		return errors.New("identity: unknown deletion step")
 	}
+}
+
+// Google 접수 시각을 단계별로 저장한다. BQ 준비가 실패해 job ID조차
+// 없더라도 다음 실행이 같은 단계의 Google 요청을 반복하지 않는다.
+func (w *DeletionWorker) submitAnalytics(ctx context.Context, app registry.App, j *DeletionJob) error {
+	if j.PlatformUserID == "" {
+		j.GoogleAnalyticsDeletion = "not_collected"
+		return nil
+	}
+	if j.AnalyticsPhaseAcceptedAt != nil {
+		return nil
+	}
+	at, err := w.Events.SubmitAnalyticsDeletion(ctx, app, j.PlatformUserID)
+	if err != nil {
+		return err
+	}
+	j.AnalyticsPhaseAcceptedAt = &at
+	j.GoogleDeletionRequestedAt = &at
+	j.GoogleAnalyticsDeletion = "accepted"
+	return nil
 }

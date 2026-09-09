@@ -18,7 +18,7 @@ import (
 type FirebaseAccountDeleter struct{}
 
 func (FirebaseAccountDeleter) DeleteFirebaseIdentity(ctx context.Context, app registry.App, uid string) error {
-	if uid == "" || !app.FeatureEnabled("account_deletion") {
+	if uid == "" || app.FirebaseProjectID == "" {
 		return fmt.Errorf("identity: Firebase deletion target missing")
 	}
 	// 기존 앱별 서명 SA를 재사용한다. 워커 기본 SA에 전체 앱의 Auth 권한을

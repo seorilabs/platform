@@ -120,9 +120,8 @@ func TestDeletionFailsClosedWhenStateUnavailable(t *testing.T) {
 }
 
 type deletionSteps struct {
-	calls   []string
-	fail    string
-	resumed bool
+	calls []string
+	fail  string
 }
 
 func (m *deletionSteps) call(s string) error {
@@ -138,23 +137,59 @@ func (m *deletionSteps) DeleteFirebaseIdentity(context.Context, registry.App, st
 func (m *deletionSteps) DeleteAccountData(context.Context, string, string) error {
 	return m.call("ads")
 }
-func (m *deletionSteps) DeleteAnalyticsIdentity(context.Context, registry.App, string, string) (time.Time, string, error) {
-	if m.resumed {
-		return time.Time{}, "asia-northeast3/job-qa", m.call("analytics")
-	}
-	return time.Now(), "asia-northeast3/job-qa", m.call("analytics")
+func (m *deletionSteps) SubmitAnalyticsDeletion(context.Context, registry.App, string) (time.Time, error) {
+	return time.Now(), m.call("google")
+}
+func (m *deletionSteps) DeleteAnalyticsCopies(context.Context, registry.App, string, string) (string, error) {
+	return "asia-northeast3/job-qa", m.call("analytics")
 }
 
 func TestDeletionResumePreservesGoogleReceiptTime(t *testing.T) {
 	app := deletionTestApp()
-	steps := &deletionSteps{resumed: true}
-	w := DeletionWorker{Registry: registry.New(fakeSource{apps: []registry.App{app}}), Firebase: steps, Events: steps, Identity: steps}
-	accepted := time.Now().UTC().Add(-time.Hour)
 	for _, step := range []int{2, 3} {
-		j := DeletionJob{AppID: app.AppID, UID: "uid", PlatformUserID: "pu_test", FirebaseProjectID: app.FirebaseProjectID, GA4PropertyID: app.GA4.PropertyID, Step: step, GoogleDeletionRequestedAt: &accepted, GoogleAnalyticsDeletion: "accepted", AnalyticsJobRef: "asia-northeast3/job-qa"}
-		if err := w.step(context.Background(), &j); err != nil || j.GoogleDeletionRequestedAt == nil || !j.GoogleDeletionRequestedAt.Equal(accepted) {
-			t.Fatalf("step %d lost original Google receipt: %v", step, err)
+		for _, jobRef := range []string{"", "asia-northeast3/job-qa"} {
+			steps := &deletionSteps{fail: "google"}
+			w := DeletionWorker{Registry: registry.New(fakeSource{apps: []registry.App{app}}), Firebase: steps, Events: steps, Identity: steps}
+			accepted := time.Now().UTC().Add(-time.Hour)
+			j := DeletionJob{AppID: app.AppID, UID: "uid", PlatformUserID: "pu_test", FirebaseProjectID: app.FirebaseProjectID, GA4PropertyID: app.GA4.PropertyID, Step: step, GoogleDeletionRequestedAt: &accepted, AnalyticsPhaseAcceptedAt: &accepted, GoogleAnalyticsDeletion: "accepted", AnalyticsJobRef: jobRef}
+			if err := w.step(context.Background(), &j); err != nil || j.GoogleDeletionRequestedAt == nil || !j.GoogleDeletionRequestedAt.Equal(accepted) {
+				t.Fatalf("step %d lost original Google receipt: %v", step, err)
+			}
+			for _, call := range steps.calls {
+				if call == "google" {
+					t.Fatal("a BQ retry repeated Google submission")
+				}
+			}
 		}
+	}
+}
+
+func TestAcceptedDeletionSurvivesFeatureDisable(t *testing.T) {
+	app := deletionTestApp()
+	app.Features["account_deletion"] = false
+	steps := &deletionSteps{}
+	w := DeletionWorker{Registry: registry.New(fakeSource{apps: []registry.App{app}}), Firebase: steps, Ads: steps, Events: steps, Identity: steps}
+	for step := 0; step < 4; step++ {
+		j := DeletionJob{AppID: app.AppID, UID: "uid", PlatformUserID: "pu_test", FirebaseProjectID: app.FirebaseProjectID, GA4PropertyID: app.GA4.PropertyID, Step: step}
+		if err := w.step(context.Background(), &j); err != nil {
+			t.Fatal("feature rollback stalled accepted deletion", err)
+		}
+	}
+	repo := &deletionMemory{}
+	svc := deletionService(t, fakeVerifier{}, repo)
+	svc.registry = w.Registry
+	if _, err := svc.RequestAccountDeletion(context.Background(), app.AppID, "uid", strings.Repeat("a", 64)); platformerr.CodeOf(err) != platformerr.CodeAuthForbidden || repo.uid != "" {
+		t.Fatal("disabled feature admitted a new request")
+	}
+}
+
+func TestDeletionKeepsLinkageUntilDelayedCopyCleanup(t *testing.T) {
+	app := deletionTestApp()
+	steps := &deletionSteps{}
+	w := DeletionWorker{Registry: registry.New(fakeSource{apps: []registry.App{app}}), Events: steps}
+	j := DeletionJob{AppID: app.AppID, PlatformUserID: "pu_test", FirebaseProjectID: app.FirebaseProjectID, GA4PropertyID: app.GA4.PropertyID, Step: 2}
+	if err := w.step(context.Background(), &j); err != nil || strings.Join(steps.calls, ",") != "google" {
+		t.Fatal("initial submission erased the linkage needed by delayed exports", err)
 	}
 }
 func (m *deletionSteps) DeleteIdentityData(context.Context, string, string, string) error {
@@ -168,7 +203,7 @@ func TestDeletionFinalStepRequiresAnalyticsCleanup(t *testing.T) {
 	if err := w.step(context.Background(), &j); err == nil {
 		t.Fatal("분석 삭제 실패 후 완료했다")
 	}
-	if strings.Join(steps.calls, ",") != "firebase,analytics" {
+	if strings.Join(steps.calls, ",") != "firebase,google,analytics" {
 		t.Fatal("분석 정리 실패 중 복구에 필요한 identity를 지웠다")
 	}
 	steps.fail = ""

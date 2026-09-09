@@ -15,7 +15,7 @@ import (
 
 func TestDeletionSQLKeepsIAPAndScopesEveryCopy(t *testing.T) {
 	sql := deletionSQL("platform-project", "platform", []string{"game.analytics_123.events_20260909"})
-	for _, part := range []string{"app_id=@app AND platform_user_id=@user", "NOT STARTS_WITH(action, 'iap.')", "WHERE user_id=@user"} {
+	for _, part := range []string{"app_id=@app AND platform_user_id=@user", "NOT STARTS_WITH(action, 'iap.')", "WHERE target.user_id=@user", "target.user_id IS NULL OR target.user_id=''", "linked.stream_id=target.stream_id", "COMMIT TRANSACTION"} {
 		if !strings.Contains(sql, part) {
 			t.Fatal("missing scope", part)
 		}
@@ -50,9 +50,10 @@ func TestDeletionResumesBigQueryWithoutGoogleSubmission(t *testing.T) {
 	defer func() { _ = client.Close() }()
 	c := &Collector{client: client}
 	// No service account is configured: reaching Google submission would fail.
-	app := registry.App{Features: map[string]bool{"account_deletion": true}}
-	at, ref, err := c.DeleteAnalyticsIdentity(context.Background(), app, "pu_qa", "asia-northeast3/saved-job")
-	if err != nil || ref != "asia-northeast3/saved-job" || !at.IsZero() || requests == 0 {
-		t.Fatalf("saved job was not resumed: at=%v ref=%q requests=%d err=%v", at, ref, requests, err)
+	app := registry.App{FirebaseProjectID: "game"}
+	app.GA4.PropertyID = "123"
+	ref, err := c.DeleteAnalyticsCopies(context.Background(), app, "pu_qa", "asia-northeast3/saved-job")
+	if err != nil || ref != "asia-northeast3/saved-job" || requests == 0 {
+		t.Fatalf("saved job was not resumed: ref=%q requests=%d err=%v", ref, requests, err)
 	}
 }
