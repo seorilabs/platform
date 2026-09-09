@@ -300,7 +300,8 @@ func _check_invalid_adapter_contract() -> void:
 
 
 func _check_identity_read_failure() -> void:
-	for contents: String in ["{broken", "[]", "{}", '{"refresh_token":"fixture"}', '{"uid":42}', '{"uid":" "}']:
+	for contents: String in ["{broken", "[]", "{}", '{"refresh_token":"fixture"}', '{"uid":42}', '{"uid":" "}',
+		JSON.stringify({"uid": "a".repeat(129)}), JSON.stringify({"uid": "가".repeat(43)})]:
 		var file := FileAccess.open(IDENTITY_FAIL_PATH, FileAccess.WRITE)
 		file.store_string(contents)
 		file.close()
@@ -323,6 +324,11 @@ func _check_identity_read_failure() -> void:
 	absent.configure({"state_path": IDENTITY_FAIL_PATH})
 	_expect(absent.current_identity().is_empty(), "실제로 없는 신원은 가입 없이 빈 결과를 반환해야 한다")
 	absent.free()
+	_expect(AtomicJsonStore.write(IDENTITY_FAIL_PATH, {"uid": "a".repeat(128)}), "최대 길이 신원을 저장하지 못했다")
+	var maximum := FirebaseIdentityAdapter.new()
+	maximum.configure({"state_path": IDENTITY_FAIL_PATH})
+	_expect(maximum.current_identity().get("uid") == "a".repeat(128), "서버가 허용하는 128바이트 UID를 거부했다")
+	maximum.free()
 
 
 func _id_token(uid: String) -> String:

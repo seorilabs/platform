@@ -235,7 +235,7 @@ func _load_state_once() -> void:
 		# 정상 초기 상태는 파일이 없는 경우다. SDK는 신원 없는 빈 파일을
 		# 저장하지 않으므로 기존 빈 객체도 손상으로 보고 재가입을 막는다.
 		var uid: Variant = stored.get("value", {}).get("uid")
-		_state_valid = uid is String and not uid.strip_edges().is_empty()
+		_state_valid = uid is String and not uid.strip_edges().is_empty() and uid.to_utf8_buffer().size() <= 128
 	if _state_valid:
 		_state = (stored.get("value", {}) as Dictionary).duplicate(true)
 		# 0.6.1까지 저장하던 ID token은 메모리로만 옮기고 디스크에서 즉시 제거한다.
