@@ -18,6 +18,11 @@ var rewardClaimIDPattern = regexp.MustCompile(`^cl_[A-Za-z0-9._-]{1,128}$`)
 
 var stems = []rune("甲乙丙丁戊己庚辛壬癸")
 var branches = []rune("子丑寅卯辰巳午未申酉戌亥")
+
+// 순서는 기존 앱이 원진의 첫 성립 쌍을 고르던 순서이기도 하다. 관계 검증과
+// 이미 발급한 열람 키 보존이 같은 표를 사용하므로 쌍을 추가하거나 재정렬하지 않는다.
+const wonjinPairs = "子未 丑午 寅酉 卯申 辰亥 巳戌"
+
 var stemRoman = []string{"gap", "eul", "byeong", "jeong", "mu", "gi", "gyeong", "sin", "im", "gye"}
 var branchRoman = []string{"ja", "chuk", "in", "myo", "jin", "sa", "o", "mi", "shin", "yu", "sul", "hae"}
 var sipseongRoman = []string{
@@ -128,7 +133,7 @@ func Select(req ResolveRequest) (Selection, error) {
 		deep["wolun"].Add("wolun." + fact.Sipseong + "_" + fact.State)
 	}
 
-	canonical, err := json.Marshal(reading)
+	canonical, err := json.Marshal(readingForKey(reading))
 	if err != nil {
 		return Selection{}, platformerr.Wrap(err, platformerr.CodeInternal,
 			"리딩 키를 만들지 못했어요")
@@ -143,6 +148,54 @@ func Select(req ResolveRequest) (Selection, error) {
 		},
 		Scope: scope,
 	}, nil
+}
+
+// readingForKey는 원진 위치 표시를 바로잡기 전에 발급한 열람 키를 보존한다.
+// 기존 앱은 첫 성립 쌍만 보아 일주 밖이라고 보냈지만, 뒤의 다른 성립 쌍에 일지가
+// 참여할 수 있었다. 이 경우에만 키 직렬화용 복사본을 옛 값으로 되돌린다.
+// 본문 선택과 원본 요청은 현재의 정확한 ilju를 그대로 사용한다.
+func readingForKey(reading DerivedReadingFacts) DerivedReadingFacts {
+	if reading.Kind != "full" {
+		return reading
+	}
+	wonjinIndex := -1
+	for index, fact := range reading.Sinsal {
+		if fact.Name == "wonjin" && fact.Variant == "ilju" {
+			wonjinIndex = index
+			break
+		}
+	}
+	if wonjinIndex < 0 {
+		return reading
+	}
+	// normalizeReading을 통과한 네 기둥만 받으므로 각 간지의 두 번째 글자가 지지다.
+	dayBranch := []rune(reading.Chart.Day)[1]
+	present := map[rune]bool{}
+	for _, pillar := range []string{reading.Chart.Year, reading.Chart.Month, reading.Chart.Day, reading.Chart.Hour} {
+		present[[]rune(pillar)[1]] = true
+	}
+	firstMatched := false
+	for _, pair := range strings.Fields(wonjinPairs) {
+		chars := []rune(pair)
+		if !present[chars[0]] || !present[chars[1]] {
+			continue
+		}
+		involvesDay := chars[0] == dayBranch || chars[1] == dayBranch
+		if !firstMatched {
+			if involvesDay {
+				return reading
+			}
+			firstMatched = true
+			continue
+		}
+		if involvesDay {
+			out := reading
+			out.Sinsal = append([]SinsalFact(nil), reading.Sinsal...)
+			out.Sinsal[wonjinIndex].Variant = "outer"
+			return out
+		}
+	}
+	return reading
 }
 
 func normalizeReading(in DerivedReadingFacts) (DerivedReadingFacts, error) {
@@ -480,7 +533,7 @@ func validRelationPair(kind string, a, b rune) bool {
 	case "hae":
 		return containsPair("子未 丑午 寅巳 卯辰 申亥 酉戌")
 	case "wonjin":
-		return containsPair("子未 丑午 寅酉 卯申 辰亥 巳戌")
+		return containsPair(wonjinPairs)
 	case "gwimun":
 		return containsPair("子酉 丑午 寅未 卯申 辰亥 巳戌")
 	case "hyeong":
