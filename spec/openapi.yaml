@@ -375,6 +375,8 @@ paths:
         앱의 Firebase ID token을 검증하고 해당 uid의 Platform identity 매핑과
         PII 없는 사용자 문서를 삭제한다. Firebase Auth와 앱 데이터 삭제는 앱
         프로젝트가 이어서 수행한다. IAP 감사 원장은 삭제하지 않는다.
+        account_deletion 기능을 켠 앱에서는 403으로 거부한다. 연결 자료를 잃지
+        않도록 /auth/account-deletions로 전체 삭제를 접수해야 한다.
       operationId: deleteFirebaseAccount
       security: []
       parameters:
@@ -840,6 +842,8 @@ paths:
         PII를 저장하지 않더라도 삭제 경로는 있어야 한다.
 
         **IAP 원장 문서는 삭제하지 않는다.** 소유자 참조만 끊는다.
+        account_deletion 기능을 켠 앱에서는 매핑만 지우지 않고 403으로 거부한다.
+        /auth/account-deletions로 전체 삭제를 접수해야 한다.
       operationId: deleteCurrentUser
       responses:
         '200':
@@ -856,6 +860,7 @@ paths:
                         properties:
                           deleted: { type: boolean }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # 마켓별 엔드포인트를 두지 않는다. 증빙 필드 이름도 마켓마다 다르지
   # 않고 token 하나다. 마켓이 늘 때마다 경로와 필드가 늘면 SDK가 마켓

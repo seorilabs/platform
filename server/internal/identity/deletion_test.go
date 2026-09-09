@@ -7,8 +7,35 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
 )
+
+func TestDeletionEnabledAppCannotOrphanRecordsThroughLegacyAPIs(t *testing.T) {
+	ctx := context.Background()
+	app := deletionTestApp()
+	repo := newMemRepo()
+	puid, err := repo.EnsureUser(ctx, app.AppID, NewIdentity{UID: "firebase-user", AuthType: "firebase"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := newTestService(t, fakeVerifier{}, repo)
+	svc.registry = registry.New(fakeSource{apps: []registry.App{app}})
+	for _, call := range []func() error{
+		func() error { return svc.DeleteFirebaseAccount(ctx, app.AppID, "firebase-user") },
+		func() error {
+			return svc.DeleteCurrentUser(ctx, Session{AppID: app.AppID, AppUserID: "firebase-user", PlatformUserID: puid})
+		},
+	} {
+		if err := call(); platformerr.CodeOf(err) != platformerr.CodeAuthForbidden {
+			t.Fatalf("legacy mapping deletion was allowed: %v", err)
+		}
+		mapped, exists, err := repo.LookupUser(ctx, app.AppID, "firebase-user")
+		if err != nil || !exists || mapped != puid || repo.deleted != 0 {
+			t.Fatal("legacy deletion lost the identity needed to erase historical records")
+		}
+	}
+}
 
 type deletionMemory struct {
 	app          registry.App
