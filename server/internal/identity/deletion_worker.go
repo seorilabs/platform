@@ -87,7 +87,6 @@ func (w *DeletionWorker) step(ctx context.Context, j *DeletionJob) error {
 			if err != nil {
 				return err
 			}
-			j.GoogleDeletionRequestedAt = &at
 		}
 		j.GoogleAnalyticsDeletion = "accepted"
 		if j.PlatformUserID == "" {
@@ -112,7 +111,6 @@ func (w *DeletionWorker) step(ctx context.Context, j *DeletionJob) error {
 			if err != nil {
 				return err
 			}
-			j.GoogleDeletionRequestedAt = &at
 		}
 		return w.Identity.DeleteIdentityData(ctx, j.AppID, j.UID, j.PlatformUserID)
 	default:

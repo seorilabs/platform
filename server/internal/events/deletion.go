@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
@@ -30,23 +30,25 @@ func (c *Collector) DeleteAnalyticsIdentity(ctx context.Context, app registry.Ap
 	if puid == "" || !app.FeatureEnabled("account_deletion") {
 		return time.Time{}, jobRef, errors.New("events: deletion target required")
 	}
-	acceptedAt, err := submitAnalyticsDeletion(ctx, app, puid)
-	if err != nil {
-		return time.Time{}, jobRef, err
-	}
 	if jobRef != "" {
 		location, id, ok := strings.Cut(jobRef, "/")
 		if !ok || location == "" || id == "" {
-			return acceptedAt, jobRef, errors.New("events: deletion job reference invalid")
+			return time.Time{}, jobRef, errors.New("events: deletion job reference invalid")
 		}
 		job, err := c.client.JobFromIDLocation(ctx, id, location)
 		if err == nil {
 			ref, err := waitDeletionJob(ctx, job, jobRef)
-			return acceptedAt, ref, err
+			return time.Time{}, ref, err
 		}
 		if !isGoogleNotFound(err) {
-			return acceptedAt, jobRef, err
+			return time.Time{}, jobRef, err
 		}
+	}
+	// 저장된 작업을 재개할 때는 GA 요청을 중복 제출하지 않는다. GA 일시
+	// 장애나 quota가 이미 실행 중인 BigQuery 작업 조회까지 막으면 안 된다.
+	acceptedAt, err := submitAnalyticsDeletion(ctx, app, puid)
+	if err != nil {
+		return time.Time{}, "", err
 	}
 	// 여러 일자 삭제를 하나의 서버 작업으로 제출한다. 워커 시간 제한이
 	// 지나도 job reference를 원장에 보존해 다음 실행이 같은 작업을 조회한다.

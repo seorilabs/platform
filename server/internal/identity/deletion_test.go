@@ -93,8 +93,9 @@ func TestDeletionFailsClosedWhenStateUnavailable(t *testing.T) {
 }
 
 type deletionSteps struct {
-	calls []string
-	fail  string
+	calls   []string
+	fail    string
+	resumed bool
 }
 
 func (m *deletionSteps) call(s string) error {
@@ -111,7 +112,23 @@ func (m *deletionSteps) DeleteAccountData(context.Context, string, string) error
 	return m.call("ads")
 }
 func (m *deletionSteps) DeleteAnalyticsIdentity(context.Context, registry.App, string, string) (time.Time, string, error) {
+	if m.resumed {
+		return time.Time{}, "asia-northeast3/job-qa", m.call("analytics")
+	}
 	return time.Now(), "asia-northeast3/job-qa", m.call("analytics")
+}
+
+func TestDeletionResumePreservesGoogleReceiptTime(t *testing.T) {
+	app := deletionTestApp()
+	steps := &deletionSteps{resumed: true}
+	w := DeletionWorker{Registry: registry.New(fakeSource{apps: []registry.App{app}}), Firebase: steps, Events: steps, Identity: steps}
+	accepted := time.Now().UTC().Add(-time.Hour)
+	for _, step := range []int{2, 3} {
+		j := DeletionJob{AppID: app.AppID, UID: "uid", PlatformUserID: "pu_test", FirebaseProjectID: app.FirebaseProjectID, GA4PropertyID: app.GA4.PropertyID, Step: step, GoogleDeletionRequestedAt: &accepted, GoogleAnalyticsDeletion: "accepted", AnalyticsJobRef: "asia-northeast3/job-qa"}
+		if err := w.step(context.Background(), &j); err != nil || j.GoogleDeletionRequestedAt == nil || !j.GoogleDeletionRequestedAt.Equal(accepted) {
+			t.Fatalf("step %d lost original Google receipt: %v", step, err)
+		}
+	}
 }
 func (m *deletionSteps) DeleteIdentityData(context.Context, string, string, string) error {
 	return m.call("identity")

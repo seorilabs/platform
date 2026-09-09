@@ -364,6 +364,7 @@ paths:
                       result: { $ref: '#/components/schemas/AccountDeletionStatus' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/firebase-account:
