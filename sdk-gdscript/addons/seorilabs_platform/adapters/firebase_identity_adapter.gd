@@ -87,6 +87,10 @@ func ensure_identity() -> Dictionary:
 
 func current_identity() -> Dictionary:
 	_load_state_once()
+	# 빈 사전은 아직 신원이 없는 경우에만 반환한다. 삭제 같은 소비자가
+	# 손상된 저장소를 미가입으로 오인해 서버 데이터를 남겨서는 안 된다.
+	if not _state_valid or (not _state.is_empty() and String(_state.get("uid", "")).is_empty()):
+		return _failure("firebase_identity_state_invalid")
 	return _identity_result() if not _state.is_empty() else {}
 
 
