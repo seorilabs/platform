@@ -59,8 +59,8 @@ var validScope = stringSet("base", "seun", "wolun")
 type Selection struct {
 	ReadingKey string
 	BaseIDs    []string
-	// OptionalBaseIDs는 계산상 좌표는 만들 수 있지만 모든 신살에 자리별
-	// 변형 문구가 존재하지는 않는 spos 축이다.
+	// OptionalBaseIDs는 모든 항목에 원고가 있는 것은 아닌 신살 자리 해설과
+	// 순차 게시하는 주제별 종합 원고다. 원고가 없는 구 릴리스에서도 기존 해설을 보존한다.
 	OptionalBaseIDs []string
 	DeepIDs         map[string][]string
 	Scope           map[string]bool
@@ -86,6 +86,14 @@ func Select(req ResolveRequest) (Selection, error) {
 	base.Add("ilju." + reading.Ilju)
 	for _, topic := range topics {
 		base.Add("topic." + reading.Ilju + "_" + topic)
+	}
+	// 새 원고가 게시되기 전에도 기존 릴리스는 읽을 수 있다. 좌표는 서버가 명식에서
+	// 다시 계산하며, 임의의 콘텐츠 ID나 개인정보를 요청에 추가하지 않는다.
+	for _, id := range topicContextIDs(reading.Chart) {
+		optionalBase.Add(id)
+	}
+	for _, id := range topicSupportIDs(reading.Sinsal) {
+		optionalBase.Add(id)
 	}
 	for _, fact := range reading.Johap {
 		base.Add("johap." + fact.Sipseong + "_" + fact.Unseong)
@@ -334,6 +342,38 @@ func sipseongForStems(dayStemIndex, otherStemIndex int) int {
 	return group*2 + polarity
 }
 
+// 앱 topic-context.ts와 같은 개수 비교다. 일간 자신과 지지 정기를 각각 한 자리로 센다.
+// 이 비교는 용신이나 신강·신약 판정이 아니다.
+func topicContextIDs(chart ChartFacts) []string {
+	day := runeIndex(stems, []rune(chart.Day)[0])
+	counts := [5]int{}
+	for _, pillar := range []string{chart.Year, chart.Month, chart.Day, chart.Hour} {
+		if pillar == "" {
+			continue
+		}
+		chars := []rune(pillar)
+		counts[sipseongForStems(day, runeIndex(stems, chars[0]))/2]++
+		branch := runeIndex(branches, chars[1])
+		counts[sipseongForStems(day, runeIndex(stems, jeonggi[branch]))/2]++
+	}
+	pairs := [][2]int{{0, 4}, {0, 3}, {1, 3}, {2, 1}, {4, 3}, {1, 4}}
+	ids := make([]string, 0, len(topics))
+	for i, pair := range pairs {
+		left, right := counts[pair[0]], counts[pair[1]]
+		balance := "equal"
+		switch {
+		case left == 0 && right == 0:
+			balance = "absent"
+		case left > right:
+			balance = "left"
+		case left < right:
+			balance = "right"
+		}
+		ids = append(ids, "topic-context."+topics[i]+"_"+balance)
+	}
+	return ids
+}
+
 func positiveMod(value, modulus int) int {
 	return ((value % modulus) + modulus) % modulus
 }
@@ -541,4 +581,30 @@ func (s *idSet) Sorted() []string {
 
 func selectorError(message string) error {
 	return platformerr.New(platformerr.CodeContentSelectorInvalid, message)
+}
+
+// 이미 검증한 신살 중 주제와 관련된 첫 항목만 고른다. 건강 예측에는 신살을 쓰지 않는다.
+func topicSupportIDs(facts []SinsalFact) []string {
+	byTopic := [][]string{
+		{"goegang", "geonrok"},
+		{"nyeonsal_dohwa", "hongyeom", "wonjin"},
+		{"muncheong_gwiin", "hakdang_gwiin", "jangseong"},
+		{"amrok", "geumyeo"},
+		{},
+		{"yeokma", "jisal", "hwagae"},
+	}
+	present := map[string]bool{}
+	for _, fact := range facts {
+		present[fact.Name] = true
+	}
+	ids := []string{}
+	for i, candidates := range byTopic {
+		for _, name := range candidates {
+			if present[name] {
+				ids = append(ids, "topic-support."+topics[i]+"_"+name)
+				break
+			}
+		}
+	}
+	return ids
 }
