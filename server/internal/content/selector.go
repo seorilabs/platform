@@ -18,6 +18,11 @@ var rewardClaimIDPattern = regexp.MustCompile(`^cl_[A-Za-z0-9._-]{1,128}$`)
 
 var stems = []rune("甲乙丙丁戊己庚辛壬癸")
 var branches = []rune("子丑寅卯辰巳午未申酉戌亥")
+
+// 순서는 기존 앱이 원진의 첫 성립 쌍을 고르던 순서이기도 하다. 관계 검증과
+// 이미 발급한 열람 키 보존이 같은 표를 사용하므로 쌍을 추가하거나 재정렬하지 않는다.
+const wonjinPairs = "子未 丑午 寅酉 卯申 辰亥 巳戌"
+
 var stemRoman = []string{"gap", "eul", "byeong", "jeong", "mu", "gi", "gyeong", "sin", "im", "gye"}
 var branchRoman = []string{"ja", "chuk", "in", "myo", "jin", "sa", "o", "mi", "shin", "yu", "sul", "hae"}
 var sipseongRoman = []string{
@@ -59,8 +64,8 @@ var validScope = stringSet("base", "seun", "wolun")
 type Selection struct {
 	ReadingKey string
 	BaseIDs    []string
-	// OptionalBaseIDs는 계산상 좌표는 만들 수 있지만 모든 신살에 자리별
-	// 변형 문구가 존재하지는 않는 spos 축이다.
+	// OptionalBaseIDs는 모든 항목에 원고가 있는 것은 아닌 신살 자리 해설과
+	// 순차 게시하는 주제별 종합 원고다. 원고가 없는 구 릴리스에서도 기존 해설을 보존한다.
 	OptionalBaseIDs []string
 	DeepIDs         map[string][]string
 	Scope           map[string]bool
@@ -86,6 +91,14 @@ func Select(req ResolveRequest) (Selection, error) {
 	base.Add("ilju." + reading.Ilju)
 	for _, topic := range topics {
 		base.Add("topic." + reading.Ilju + "_" + topic)
+	}
+	// 새 원고가 게시되기 전에도 기존 릴리스는 읽을 수 있다. 좌표는 서버가 명식에서
+	// 다시 계산하며, 임의의 콘텐츠 ID나 개인정보를 요청에 추가하지 않는다.
+	for _, id := range topicContextIDs(reading.Chart) {
+		optionalBase.Add(id)
+	}
+	for _, id := range topicSupportIDs(reading.Sinsal) {
+		optionalBase.Add(id)
 	}
 	for _, fact := range reading.Johap {
 		base.Add("johap." + fact.Sipseong + "_" + fact.Unseong)
@@ -120,7 +133,7 @@ func Select(req ResolveRequest) (Selection, error) {
 		deep["wolun"].Add("wolun." + fact.Sipseong + "_" + fact.State)
 	}
 
-	canonical, err := json.Marshal(reading)
+	canonical, err := json.Marshal(readingForKey(reading))
 	if err != nil {
 		return Selection{}, platformerr.Wrap(err, platformerr.CodeInternal,
 			"리딩 키를 만들지 못했어요")
@@ -135,6 +148,54 @@ func Select(req ResolveRequest) (Selection, error) {
 		},
 		Scope: scope,
 	}, nil
+}
+
+// readingForKey는 원진 위치 표시를 바로잡기 전에 발급한 열람 키를 보존한다.
+// 기존 앱은 첫 성립 쌍만 보아 일주 밖이라고 보냈지만, 뒤의 다른 성립 쌍에 일지가
+// 참여할 수 있었다. 이 경우에만 키 직렬화용 복사본을 옛 값으로 되돌린다.
+// 본문 선택과 원본 요청은 현재의 정확한 ilju를 그대로 사용한다.
+func readingForKey(reading DerivedReadingFacts) DerivedReadingFacts {
+	if reading.Kind != "full" {
+		return reading
+	}
+	wonjinIndex := -1
+	for index, fact := range reading.Sinsal {
+		if fact.Name == "wonjin" && fact.Variant == "ilju" {
+			wonjinIndex = index
+			break
+		}
+	}
+	if wonjinIndex < 0 {
+		return reading
+	}
+	// normalizeReading을 통과한 네 기둥만 받으므로 각 간지의 두 번째 글자가 지지다.
+	dayBranch := []rune(reading.Chart.Day)[1]
+	present := map[rune]bool{}
+	for _, pillar := range []string{reading.Chart.Year, reading.Chart.Month, reading.Chart.Day, reading.Chart.Hour} {
+		present[[]rune(pillar)[1]] = true
+	}
+	firstMatched := false
+	for _, pair := range strings.Fields(wonjinPairs) {
+		chars := []rune(pair)
+		if !present[chars[0]] || !present[chars[1]] {
+			continue
+		}
+		involvesDay := chars[0] == dayBranch || chars[1] == dayBranch
+		if !firstMatched {
+			if involvesDay {
+				return reading
+			}
+			firstMatched = true
+			continue
+		}
+		if involvesDay {
+			out := reading
+			out.Sinsal = append([]SinsalFact(nil), reading.Sinsal...)
+			out.Sinsal[wonjinIndex].Variant = "outer"
+			return out
+		}
+	}
+	return reading
 }
 
 func normalizeReading(in DerivedReadingFacts) (DerivedReadingFacts, error) {
@@ -334,6 +395,57 @@ func sipseongForStems(dayStemIndex, otherStemIndex int) int {
 	return group*2 + polarity
 }
 
+// 앱 topic-context.ts와 같은 개수 비교다. 일간 자신과 지지 정기를 각각 한 자리로 센다.
+// 이 비교는 용신이나 신강·신약 판정이 아니다.
+func topicContextIDs(chart ChartFacts) []string {
+	day := runeIndex(stems, []rune(chart.Day)[0])
+	counts := [5]int{}
+	hiddenCounts := [5]int{}
+	// 운글 chart_details.JIJANGGAN의 여기→정기 순서. 겉글자 집계와 합산하지 않는다.
+	hiddenStems := []string{"壬癸", "癸辛己", "戊丙甲", "甲乙", "乙癸戊", "戊庚丙", "丙己丁", "丁乙己", "戊壬庚", "庚辛", "辛丁戊", "戊甲壬"}
+	for _, pillar := range []string{chart.Year, chart.Month, chart.Day, chart.Hour} {
+		if pillar == "" {
+			continue
+		}
+		chars := []rune(pillar)
+		counts[sipseongForStems(day, runeIndex(stems, chars[0]))/2]++
+		branch := runeIndex(branches, chars[1])
+		counts[sipseongForStems(day, runeIndex(stems, jeonggi[branch]))/2]++
+		for _, stem := range hiddenStems[branch] {
+			hiddenCounts[sipseongForStems(day, runeIndex(stems, stem))/2]++
+		}
+	}
+	pairs := [][2]int{{0, 4}, {0, 3}, {1, 3}, {2, 1}, {4, 3}, {1, 4}}
+	ids := make([]string, 0, len(topics))
+	for i, pair := range pairs {
+		left, right := counts[pair[0]], counts[pair[1]]
+		balance := "equal"
+		switch {
+		case left == 0 && right == 0:
+			balance = "absent"
+		case left > right:
+			balance = "left"
+		case left < right:
+			balance = "right"
+		}
+		ids = append(ids, "topic-context."+topics[i]+"_"+balance)
+		if balance == "absent" {
+			hiddenLeft, hiddenRight := hiddenCounts[pair[0]], hiddenCounts[pair[1]]
+			if hiddenLeft == 0 && hiddenRight == 0 {
+				continue
+			}
+			hiddenBalance := "equal"
+			if hiddenLeft > hiddenRight {
+				hiddenBalance = "left"
+			} else if hiddenLeft < hiddenRight {
+				hiddenBalance = "right"
+			}
+			ids = append(ids, "topic-hidden."+topics[i]+"_"+hiddenBalance)
+		}
+	}
+	return ids
+}
+
 func positiveMod(value, modulus int) int {
 	return ((value % modulus) + modulus) % modulus
 }
@@ -421,7 +533,7 @@ func validRelationPair(kind string, a, b rune) bool {
 	case "hae":
 		return containsPair("子未 丑午 寅巳 卯辰 申亥 酉戌")
 	case "wonjin":
-		return containsPair("子未 丑午 寅酉 卯申 辰亥 巳戌")
+		return containsPair(wonjinPairs)
 	case "gwimun":
 		return containsPair("子酉 丑午 寅未 卯申 辰亥 巳戌")
 	case "hyeong":
@@ -541,4 +653,30 @@ func (s *idSet) Sorted() []string {
 
 func selectorError(message string) error {
 	return platformerr.New(platformerr.CodeContentSelectorInvalid, message)
+}
+
+// 이미 검증한 신살 중 주제와 관련된 첫 항목만 고른다. 건강 예측에는 신살을 쓰지 않는다.
+func topicSupportIDs(facts []SinsalFact) []string {
+	byTopic := [][]string{
+		{"goegang", "geonrok"},
+		{"nyeonsal_dohwa", "hongyeom", "wonjin"},
+		{"muncheong_gwiin", "hakdang_gwiin", "jangseong"},
+		{"amrok", "geumyeo"},
+		{},
+		{"yeokma", "jisal", "hwagae"},
+	}
+	present := map[string]bool{}
+	for _, fact := range facts {
+		present[fact.Name] = true
+	}
+	ids := []string{}
+	for i, candidates := range byTopic {
+		for _, name := range candidates {
+			if present[name] {
+				ids = append(ids, "topic-support."+topics[i]+"_"+name)
+				break
+			}
+		}
+	}
+	return ids
 }
