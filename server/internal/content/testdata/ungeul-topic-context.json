@@ -262,6 +262,7 @@
       "topic-context.il_left",
       "topic-context.don_equal",
       "topic-context.geongang_absent",
+      "topic-hidden.geongang_right",
       "topic-context.heureum_left"
     ]
   },
@@ -784,6 +785,7 @@
       "topic-context.seonghyang_right",
       "topic-context.gwangye_left",
       "topic-context.il_absent",
+      "topic-hidden.il_right",
       "topic-context.don_left",
       "topic-context.geongang_left",
       "topic-context.heureum_right"
@@ -1010,6 +1012,7 @@
       "topic-context.il_left",
       "topic-context.don_left",
       "topic-context.geongang_absent",
+      "topic-hidden.geongang_right",
       "topic-context.heureum_left"
     ]
   },
@@ -1027,6 +1030,7 @@
       "topic-context.il_left",
       "topic-context.don_left",
       "topic-context.geongang_absent",
+      "topic-hidden.geongang_right",
       "topic-context.heureum_left"
     ]
   },
@@ -1299,7 +1303,8 @@
       "topic-context.il_right",
       "topic-context.don_left",
       "topic-context.geongang_right",
-      "topic-context.heureum_absent"
+      "topic-context.heureum_absent",
+      "topic-hidden.heureum_right"
     ]
   },
   {
@@ -1504,6 +1509,7 @@
       "topic-context.gwangye_left",
       "topic-context.il_right",
       "topic-context.don_absent",
+      "topic-hidden.don_right",
       "topic-context.geongang_left",
       "topic-context.heureum_right"
     ]
@@ -1593,6 +1599,7 @@
       "topic-context.seonghyang_equal",
       "topic-context.gwangye_left",
       "topic-context.il_absent",
+      "topic-hidden.il_left",
       "topic-context.don_left",
       "topic-context.geongang_left",
       "topic-context.heureum_right"
@@ -1885,7 +1892,8 @@
       "topic-context.il_right",
       "topic-context.don_left",
       "topic-context.geongang_right",
-      "topic-context.heureum_absent"
+      "topic-context.heureum_absent",
+      "topic-hidden.heureum_left"
     ]
   },
   {
@@ -2209,7 +2217,8 @@
       "topic-context.il_right",
       "topic-context.don_left",
       "topic-context.geongang_right",
-      "topic-context.heureum_absent"
+      "topic-context.heureum_absent",
+      "topic-hidden.heureum_right"
     ]
   },
   {
@@ -2226,7 +2235,8 @@
       "topic-context.il_right",
       "topic-context.don_left",
       "topic-context.geongang_right",
-      "topic-context.heureum_absent"
+      "topic-context.heureum_absent",
+      "topic-hidden.heureum_right"
     ]
   },
   {
@@ -2967,6 +2977,7 @@
       "topic-context.gwangye_equal",
       "topic-context.il_right",
       "topic-context.don_absent",
+      "topic-hidden.don_equal",
       "topic-context.geongang_equal",
       "topic-context.heureum_right"
     ]
@@ -3069,6 +3080,7 @@
       "topic-context.il_left",
       "topic-context.don_left",
       "topic-context.geongang_absent",
+      "topic-hidden.geongang_left",
       "topic-context.heureum_left"
     ]
   },
@@ -3324,6 +3336,7 @@
       "topic-context.gwangye_right",
       "topic-context.il_right",
       "topic-context.don_absent",
+      "topic-hidden.don_right",
       "topic-context.geongang_right",
       "topic-context.heureum_right"
     ]
@@ -3498,6 +3511,7 @@
       "topic-context.seonghyang_left",
       "topic-context.gwangye_left",
       "topic-context.il_absent",
+      "topic-hidden.il_equal",
       "topic-context.don_left",
       "topic-context.geongang_left",
       "topic-context.heureum_right"
@@ -3515,9 +3529,12 @@
       "topic-context.seonghyang_left",
       "topic-context.gwangye_left",
       "topic-context.il_absent",
+      "topic-hidden.il_equal",
       "topic-context.don_left",
       "topic-context.geongang_absent",
-      "topic-context.heureum_absent"
+      "topic-hidden.geongang_right",
+      "topic-context.heureum_absent",
+      "topic-hidden.heureum_left"
     ]
   },
   {
@@ -4048,6 +4065,7 @@
       "topic-context.gwangye_left",
       "topic-context.il_right",
       "topic-context.don_absent",
+      "topic-hidden.don_equal",
       "topic-context.geongang_left",
       "topic-context.heureum_right"
     ]
@@ -4065,6 +4083,7 @@
       "topic-context.gwangye_left",
       "topic-context.il_right",
       "topic-context.don_absent",
+      "topic-hidden.don_equal",
       "topic-context.geongang_equal",
       "topic-context.heureum_right"
     ]
@@ -4239,6 +4258,7 @@
       "topic-context.seonghyang_left",
       "topic-context.gwangye_left",
       "topic-context.il_absent",
+      "topic-hidden.il_right",
       "topic-context.don_left",
       "topic-context.geongang_left",
       "topic-context.heureum_right"
@@ -5020,6 +5040,7 @@
       "topic-context.gwangye_equal",
       "topic-context.il_right",
       "topic-context.don_absent",
+      "topic-hidden.don_right",
       "topic-context.geongang_right",
       "topic-context.heureum_right"
     ]
@@ -5037,6 +5058,7 @@
       "topic-context.gwangye_right",
       "topic-context.il_right",
       "topic-context.don_absent",
+      "topic-hidden.don_right",
       "topic-context.geongang_right",
       "topic-context.heureum_right"
     ]
@@ -5114,6 +5136,7 @@
       "topic-context.il_left",
       "topic-context.don_right",
       "topic-context.geongang_absent",
+      "topic-hidden.geongang_left",
       "topic-context.heureum_left"
     ]
   },
@@ -5288,6 +5311,260 @@
       "topic-context.don_equal",
       "topic-context.geongang_equal",
       "topic-context.heureum_equal"
+    ]
+  },
+  {
+    "chart": {
+      "year": "庚戌",
+      "month": "庚辰",
+      "day": "辛未",
+      "hour": "戊戌"
+    },
+    "sinsal": [
+      {
+        "name": "amrok"
+      },
+      {
+        "name": "banan"
+      },
+      {
+        "name": "biin"
+      },
+      {
+        "name": "cheonsal"
+      },
+      {
+        "name": "gasuk"
+      },
+      {
+        "name": "gongmang"
+      },
+      {
+        "name": "hwagae"
+      },
+      {
+        "name": "wolsal"
+      },
+      {
+        "name": "yangin"
+      }
+    ],
+    "supportIds": [
+      "topic-support.don_amrok",
+      "topic-support.heureum_hwagae"
+    ],
+    "ids": [
+      "topic-context.seonghyang_right",
+      "topic-context.gwangye_left",
+      "topic-context.il_absent",
+      "topic-hidden.il_right",
+      "topic-context.don_absent",
+      "topic-hidden.don_left",
+      "topic-context.geongang_left",
+      "topic-context.heureum_right"
+    ]
+  },
+  {
+    "chart": {
+      "year": "庚戌",
+      "month": "庚辰",
+      "day": "辛未"
+    },
+    "sinsal": [],
+    "supportIds": [],
+    "ids": [
+      "topic-context.seonghyang_equal",
+      "topic-context.gwangye_left",
+      "topic-context.il_absent",
+      "topic-hidden.il_right",
+      "topic-context.don_absent",
+      "topic-hidden.don_left",
+      "topic-context.geongang_left",
+      "topic-context.heureum_right"
+    ]
+  },
+  {
+    "chart": {
+      "year": "庚戌",
+      "month": "甲申",
+      "day": "甲申",
+      "hour": "辛未"
+    },
+    "sinsal": [
+      {
+        "name": "banan"
+      },
+      {
+        "name": "cheoneul_gwiin"
+      },
+      {
+        "name": "cheonsal"
+      },
+      {
+        "name": "cheonui_seong"
+      },
+      {
+        "name": "gasuk"
+      },
+      {
+        "name": "geupgak"
+      },
+      {
+        "name": "gongmang"
+      },
+      {
+        "name": "gugin_gwiin"
+      },
+      {
+        "name": "hwagae"
+      },
+      {
+        "name": "hyeonchim"
+      },
+      {
+        "name": "jisal"
+      },
+      {
+        "name": "wolsal"
+      },
+      {
+        "name": "yeokma"
+      }
+    ],
+    "supportIds": [
+      "topic-support.heureum_yeokma"
+    ],
+    "ids": [
+      "topic-context.seonghyang_left",
+      "topic-context.gwangye_right",
+      "topic-context.il_right",
+      "topic-context.don_left",
+      "topic-context.geongang_right",
+      "topic-context.heureum_absent",
+      "topic-hidden.heureum_equal"
+    ]
+  },
+  {
+    "chart": {
+      "year": "庚戌",
+      "month": "甲申",
+      "day": "甲申"
+    },
+    "sinsal": [],
+    "supportIds": [],
+    "ids": [
+      "topic-context.seonghyang_left",
+      "topic-context.gwangye_right",
+      "topic-context.il_right",
+      "topic-context.don_left",
+      "topic-context.geongang_right",
+      "topic-context.heureum_absent",
+      "topic-hidden.heureum_right"
+    ]
+  },
+  {
+    "chart": {
+      "year": "庚戌",
+      "month": "己丑",
+      "day": "丁巳",
+      "hour": "丁未"
+    },
+    "sinsal": [
+      {
+        "name": "amrok"
+      },
+      {
+        "name": "banan"
+      },
+      {
+        "name": "biin"
+      },
+      {
+        "name": "cheondeok_gwiin"
+      },
+      {
+        "name": "cheonsal"
+      },
+      {
+        "name": "eumyang_chachak"
+      },
+      {
+        "name": "gasuk"
+      },
+      {
+        "name": "geupgak"
+      },
+      {
+        "name": "gongmang"
+      },
+      {
+        "name": "goran"
+      },
+      {
+        "name": "gwimun_gwansal"
+      },
+      {
+        "name": "gyeokgak"
+      },
+      {
+        "name": "hongyeom"
+      },
+      {
+        "name": "hwagae"
+      },
+      {
+        "name": "jisal"
+      },
+      {
+        "name": "mangsin"
+      },
+      {
+        "name": "nakjeong_gwansal"
+      },
+      {
+        "name": "woldeok_gwiin"
+      },
+      {
+        "name": "wolsal"
+      },
+      {
+        "name": "wonjin"
+      },
+      {
+        "name": "yangin"
+      }
+    ],
+    "supportIds": [
+      "topic-support.gwangye_hongyeom",
+      "topic-support.don_amrok",
+      "topic-support.heureum_jisal"
+    ],
+    "ids": [
+      "topic-context.seonghyang_left",
+      "topic-context.gwangye_left",
+      "topic-context.il_left",
+      "topic-context.don_right",
+      "topic-context.geongang_absent",
+      "topic-hidden.geongang_equal",
+      "topic-context.heureum_left"
+    ]
+  },
+  {
+    "chart": {
+      "year": "庚戌",
+      "month": "己丑",
+      "day": "丁巳"
+    },
+    "sinsal": [],
+    "supportIds": [],
+    "ids": [
+      "topic-context.seonghyang_left",
+      "topic-context.gwangye_left",
+      "topic-context.il_left",
+      "topic-context.don_right",
+      "topic-context.geongang_absent",
+      "topic-hidden.geongang_right",
+      "topic-context.heureum_left"
     ]
   }
 ]

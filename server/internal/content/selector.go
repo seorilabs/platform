@@ -347,6 +347,9 @@ func sipseongForStems(dayStemIndex, otherStemIndex int) int {
 func topicContextIDs(chart ChartFacts) []string {
 	day := runeIndex(stems, []rune(chart.Day)[0])
 	counts := [5]int{}
+	hiddenCounts := [5]int{}
+	// 운글 chart_details.JIJANGGAN의 여기→정기 순서. 겉글자 집계와 합산하지 않는다.
+	hiddenStems := []string{"壬癸", "癸辛己", "戊丙甲", "甲乙", "乙癸戊", "戊庚丙", "丙己丁", "丁乙己", "戊壬庚", "庚辛", "辛丁戊", "戊甲壬"}
 	for _, pillar := range []string{chart.Year, chart.Month, chart.Day, chart.Hour} {
 		if pillar == "" {
 			continue
@@ -355,6 +358,9 @@ func topicContextIDs(chart ChartFacts) []string {
 		counts[sipseongForStems(day, runeIndex(stems, chars[0]))/2]++
 		branch := runeIndex(branches, chars[1])
 		counts[sipseongForStems(day, runeIndex(stems, jeonggi[branch]))/2]++
+		for _, stem := range hiddenStems[branch] {
+			hiddenCounts[sipseongForStems(day, runeIndex(stems, stem))/2]++
+		}
 	}
 	pairs := [][2]int{{0, 4}, {0, 3}, {1, 3}, {2, 1}, {4, 3}, {1, 4}}
 	ids := make([]string, 0, len(topics))
@@ -370,6 +376,19 @@ func topicContextIDs(chart ChartFacts) []string {
 			balance = "right"
 		}
 		ids = append(ids, "topic-context."+topics[i]+"_"+balance)
+		if balance == "absent" {
+			hiddenLeft, hiddenRight := hiddenCounts[pair[0]], hiddenCounts[pair[1]]
+			if hiddenLeft == 0 && hiddenRight == 0 {
+				continue
+			}
+			hiddenBalance := "equal"
+			if hiddenLeft > hiddenRight {
+				hiddenBalance = "left"
+			} else if hiddenLeft < hiddenRight {
+				hiddenBalance = "right"
+			}
+			ids = append(ids, "topic-hidden."+topics[i]+"_"+hiddenBalance)
+		}
 	}
 	return ids
 }
