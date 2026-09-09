@@ -30,7 +30,7 @@
           "min_amount": 3,
           "max_amount": 3
         },
-        "daily_limit": 3,
+        "daily_limit": 1,
         "cooldown_seconds": 30
       }
     ]

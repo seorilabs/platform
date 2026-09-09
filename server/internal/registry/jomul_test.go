@@ -42,9 +42,9 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 		placement.Reward.MinAmount != 3 || placement.Reward.MaxAmount != 3 {
 		t.Fatalf("보상 계약이 클라이언트와 다르다: %+v", placement.Reward)
 	}
-	// 아동 대상 제품의 「하루 3회, 1회 1편」이 제품 계약이다.
-	if placement.DailyLimit != 3 {
-		t.Fatalf("daily_limit=%d, want 3", placement.DailyLimit)
+	// 아동 대상 제품의 「힌트 0개에서 하루 1회, 1회 1편」이 제품 계약이다.
+	if placement.DailyLimit != 1 {
+		t.Fatalf("daily_limit=%d, want 1", placement.DailyLimit)
 	}
 
 	provider, ok := placement.Providers["admob"]
