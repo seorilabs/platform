@@ -30,6 +30,11 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	if !jomul.FeatureEnabled("ads") {
 		t.Fatal("조물조물 광고 feature가 비활성이다")
 	}
+	// registry와 앱 opt-in은 둘 다 켜져야 heartbeat가 돈다. registry만 꺼지면 token이
+	// enabled=false 로 돌아가 이미 마켓에 나간 빌드의 동접이 통째로 사라진다.
+	if !jomul.FeatureEnabled("presence") {
+		t.Fatal("조물조물 presence feature가 비활성이다")
+	}
 
 	placement, ok := jomul.AdsPlacement("hint_reward")
 	if !ok {
