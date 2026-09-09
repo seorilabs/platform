@@ -9,6 +9,7 @@
     "events": false,
     "iap": false,
     "ads": true,
+    "presence": true,
     "firebase_custom_token_bridge": true
   },
   "ads": {
