@@ -83,7 +83,7 @@ class IdentitySpy:
 
 func _initialize() -> void:
 	await _check_firebase_identity()
-	_check_identity_read_failure()
+	await _check_identity_read_failure()
 	await _check_rewarded_claim_flow()
 	await _check_policy_fail_closed()
 	await _check_invalid_adapter_contract()
@@ -300,7 +300,7 @@ func _check_invalid_adapter_contract() -> void:
 
 
 func _check_identity_read_failure() -> void:
-	for contents: String in ["{broken", "[]", '{"refresh_token":"fixture"}']:
+	for contents: String in ["{broken", "[]", "{}", '{"refresh_token":"fixture"}', '{"uid":42}', '{"uid":" "}']:
 		var file := FileAccess.open(IDENTITY_FAIL_PATH, FileAccess.WRITE)
 		file.store_string(contents)
 		file.close()
@@ -308,6 +308,8 @@ func _check_identity_read_failure() -> void:
 		adapter.configure({"state_path": IDENTITY_FAIL_PATH})
 		var result := adapter.current_identity()
 		_expect(result.get("success") == false and result.get("reason") == "firebase_identity_state_invalid", "신원 읽기 실패를 미가입으로 반환했다")
+		var ensured: Dictionary = await adapter.ensure_identity()
+		_expect(ensured.get("reason") == "firebase_identity_state_invalid", "손상된 기존 신원이 새 가입 경로로 진행됐다")
 		_expect(FileAccess.get_file_as_string(IDENTITY_FAIL_PATH) == contents, "조회만으로 손상된 신원을 제거했다")
 		adapter.free()
 	DirAccess.remove_absolute(IDENTITY_FAIL_PATH)
