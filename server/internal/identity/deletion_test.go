@@ -110,8 +110,8 @@ func (m *deletionSteps) DeleteFirebaseIdentity(context.Context, registry.App, st
 func (m *deletionSteps) DeleteAccountData(context.Context, string, string) error {
 	return m.call("ads")
 }
-func (m *deletionSteps) DeleteAnalyticsIdentity(context.Context, registry.App, string) (time.Time, error) {
-	return time.Now(), m.call("analytics")
+func (m *deletionSteps) DeleteAnalyticsIdentity(context.Context, registry.App, string, string) (time.Time, string, error) {
+	return time.Now(), "asia-northeast3/job-qa", m.call("analytics")
 }
 func (m *deletionSteps) DeleteIdentityData(context.Context, string, string, string) error {
 	return m.call("identity")
@@ -124,7 +124,7 @@ func TestDeletionFinalStepRequiresAnalyticsCleanup(t *testing.T) {
 	if err := w.step(context.Background(), &j); err == nil {
 		t.Fatal("분석 삭제 실패 후 완료했다")
 	}
-	if strings.Join(steps.calls, ",") != "analytics" {
+	if strings.Join(steps.calls, ",") != "firebase,analytics" {
 		t.Fatal("분석 정리 실패 중 복구에 필요한 identity를 지웠다")
 	}
 	steps.fail = ""
@@ -132,8 +132,13 @@ func TestDeletionFinalStepRequiresAnalyticsCleanup(t *testing.T) {
 	if err := w.step(context.Background(), &j); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(steps.calls, ",") != "analytics,identity" {
+	if strings.Join(steps.calls, ",") != "firebase,analytics,identity" {
 		t.Fatal("최종 삭제 순서가 다르다")
+	}
+	app.FirebaseCustomTokenServiceAccount = "rotated@" + app.FirebaseProjectID + ".iam.gserviceaccount.com"
+	w.Registry = registry.New(fakeSource{apps: []registry.App{app}})
+	if err := w.step(context.Background(), &j); err != nil {
+		t.Fatal("same-project credential rotation stalled deletion", err)
 	}
 	j.FirebaseProjectID = "other-project"
 	steps.calls = nil

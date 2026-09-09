@@ -21,7 +21,7 @@ type FirebaseAccountEraser interface {
 	DeleteFirebaseIdentity(context.Context, registry.App, string) error
 }
 type AnalyticsAccountEraser interface {
-	DeleteAnalyticsIdentity(context.Context, registry.App, string) (time.Time, error)
+	DeleteAnalyticsIdentity(context.Context, registry.App, string, string) (time.Time, string, error)
 }
 type DeletionIdentityEraser interface {
 	DeleteIdentityData(context.Context, string, string, string) error
@@ -65,7 +65,7 @@ func (w *DeletionWorker) step(ctx context.Context, j *DeletionJob) error {
 	if err != nil {
 		return err
 	}
-	if !app.FeatureEnabled("account_deletion") || app.FirebaseProjectID != j.FirebaseProjectID || app.GA4.PropertyID != j.GA4PropertyID || app.FirebaseCustomTokenServiceAccount != j.ServiceAccount {
+	if !app.FeatureEnabled("account_deletion") || app.FirebaseProjectID != j.FirebaseProjectID || app.GA4.PropertyID != j.GA4PropertyID {
 		return errors.New("identity: deletion app configuration unavailable")
 	}
 	switch j.Step {
@@ -78,7 +78,12 @@ func (w *DeletionWorker) step(ctx context.Context, j *DeletionJob) error {
 		return nil
 	case 2:
 		if j.PlatformUserID != "" {
-			at, err := w.Events.DeleteAnalyticsIdentity(ctx, app, j.PlatformUserID)
+			at, ref, err := w.Events.DeleteAnalyticsIdentity(ctx, app, j.PlatformUserID, j.AnalyticsJobRef)
+			j.AnalyticsJobRef = ref
+			if !at.IsZero() {
+				j.GoogleDeletionRequestedAt = &at
+				j.GoogleAnalyticsDeletion = "accepted"
+			}
 			if err != nil {
 				return err
 			}
@@ -90,10 +95,20 @@ func (w *DeletionWorker) step(ctx context.Context, j *DeletionJob) error {
 		}
 		return nil
 	case 3:
+		// 접수 직전에 발급된 custom token은 최초 Auth 삭제 뒤 UID를
+		// 재생성할 수 있다. 토큰 유효기간이 지난 최종 단계에서 다시 지운다.
+		if err := w.Firebase.DeleteFirebaseIdentity(ctx, app, j.UID); err != nil {
+			return err
+		}
 		// GA4는 일별 테이블을 날짜 이후 3일까지 갱신한다. 저장소에서 정한
 		// 4일 후 재검사 시점은 Google 내부 삭제 완료를 주장하는 기간이 아니다.
 		if j.PlatformUserID != "" {
-			at, err := w.Events.DeleteAnalyticsIdentity(ctx, app, j.PlatformUserID)
+			at, ref, err := w.Events.DeleteAnalyticsIdentity(ctx, app, j.PlatformUserID, j.AnalyticsJobRef)
+			j.AnalyticsJobRef = ref
+			if !at.IsZero() {
+				j.GoogleDeletionRequestedAt = &at
+				j.GoogleAnalyticsDeletion = "accepted"
+			}
 			if err != nil {
 				return err
 			}

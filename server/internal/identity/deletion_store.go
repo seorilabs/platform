@@ -21,6 +21,7 @@ const deletionUsers = "account_deletion_users"
 // 삭제 대상 식별자는 처리에 필요한 동안만 남긴다. 완료 시 제거하고
 // 상태 확인용 해시 접수증과 토큰 재사용 방지 표시는 30일 후 정리한다.
 type DeletionJob struct {
+	AnalyticsJobRef           string     `firestore:"analyticsJobRef,omitempty"`
 	UserMarkerHash            string     `firestore:"userMarkerHash,omitempty"`
 	IdentityDeletedAt         time.Time  `firestore:"identityDeletedAt,omitempty"`
 	GoogleDeletionRequestedAt *time.Time `firestore:"googleDeletionRequestedAt,omitempty"`
@@ -278,11 +279,17 @@ func (r *StoreRepository) AdvanceDeletion(ctx context.Context, j DeletionJob, su
 		if current.Lease != j.Lease || !current.LeaseUntil.After(r.now()) {
 			return errors.New("identity: deletion lease expired")
 		}
+		current.AnalyticsJobRef = j.AnalyticsJobRef
+		if j.GoogleDeletionRequestedAt != nil {
+			current.GoogleDeletionRequestedAt = j.GoogleDeletionRequestedAt
+			current.GoogleAnalyticsDeletion = j.GoogleAnalyticsDeletion
+		}
 		current.Lease = ""
 		current.LeaseUntil = time.Time{}
 		current.NextAttemptAt = r.now().Add(5 * time.Minute)
 		if success {
 			current.Step++
+			current.AnalyticsJobRef = ""
 			if current.Step == 1 {
 				current.IdentityDeletedAt = r.now().UTC()
 			}

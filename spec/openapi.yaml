@@ -784,6 +784,9 @@ paths:
         레지스트리 allowlist에 없는 이벤트는 조용히 버린다.
         PII 키 이름을 가진 파라미터도 버린다.
 
+        account_deletion 기능이 켜진 앱은 인증된 세션을 요구한다. 삭제 또는 차단으로
+        거부된 토큰을 익명 수집으로 낮추지 않는다. 다른 앱의 익명 수집 계약은 유지한다.
+
         부분 수락이다. 일부 이벤트가 거부되어도 200을 반환한다.
       operationId: ingestEvents
       security: []
@@ -823,6 +826,8 @@ paths:
                           accepted: { type: integer }
                           dropped: { type: integer }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
 
   /users/me:

@@ -90,6 +90,17 @@ func TestDeletionTransactionRecoveryAndCleanup(t *testing.T) {
 		if jobs[0].Step != step {
 			t.Fatalf("step=%d", jobs[0].Step)
 		}
+		if step == 2 {
+			jobs[0].AnalyticsJobRef = "asia-northeast3/long-job"
+			if err = repo.AdvanceDeletion(ctx, jobs[0], false); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(6 * time.Minute)
+			jobs, err = repo.ClaimDeletions(ctx, 1)
+			if err != nil || len(jobs) != 1 || jobs[0].AnalyticsJobRef != "asia-northeast3/long-job" {
+				t.Fatal("long query reference lost", err)
+			}
+		}
 		if step == 3 {
 			if err = repo.DeleteIdentityData(ctx, app.AppID, uid, puid); err != nil {
 				t.Fatal(err)

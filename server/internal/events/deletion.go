@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/bigquery"
@@ -24,68 +26,90 @@ var exportTableName = regexp.MustCompile(`^events_(intraday_)?[0-9]{8}$`)
 // DeleteAnalyticsIdentity는 서버가 확인한 platform user ID만 대상으로 삼는다.
 // 클라이언트가 제출한 appInstanceId, userId로 타인의 데이터를 지우지 않는다.
 // 네이티브 수집은 Platform 세션 확인 후 동일 user ID를 설정하는 계약이다.
-func (c *Collector) DeleteAnalyticsIdentity(ctx context.Context, app registry.App, puid string) (time.Time, error) {
+func (c *Collector) DeleteAnalyticsIdentity(ctx context.Context, app registry.App, puid, jobRef string) (time.Time, string, error) {
 	if puid == "" || !app.FeatureEnabled("account_deletion") {
-		return time.Time{}, errors.New("events: deletion target required")
+		return time.Time{}, jobRef, errors.New("events: deletion target required")
 	}
 	acceptedAt, err := submitAnalyticsDeletion(ctx, app, puid)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, jobRef, err
 	}
-	// Google 사용자 삭제는 BigQuery 사본을 지워 주지 않는다. 각 영역이
-	// 가진 사본을 따로 지우며 streaming buffer 오류는 워커가 재시도한다.
-	params := []bigquery.QueryParameter{{Name: "app", Value: app.AppID}, {Name: "user", Value: puid}}
-	for _, table := range []string{EventsTable, AuditTable} {
-		sql := fmt.Sprintf("DELETE FROM `%s.%s.%s` WHERE app_id=@app AND platform_user_id=@user", c.client.Project(), c.dataset, table)
-		if table == AuditTable {
-			sql += " AND NOT STARTS_WITH(action, 'iap.')"
-		} // IAP 감사 원장 불삭제.
-		if err = c.runDeletionQuery(ctx, sql, params); err != nil {
-			return time.Time{}, err
+	if jobRef != "" {
+		location, id, ok := strings.Cut(jobRef, "/")
+		if !ok || location == "" || id == "" {
+			return acceptedAt, jobRef, errors.New("events: deletion job reference invalid")
+		}
+		job, err := c.client.JobFromIDLocation(ctx, id, location)
+		if err == nil {
+			ref, err := waitDeletionJob(ctx, job, jobRef)
+			return acceptedAt, ref, err
+		}
+		if !isGoogleNotFound(err) {
+			return acceptedAt, jobRef, err
 		}
 	}
+	// 여러 일자 삭제를 하나의 서버 작업으로 제출한다. 워커 시간 제한이
+	// 지나도 job reference를 원장에 보존해 다음 실행이 같은 작업을 조회한다.
+	// 고정 1 GiB 상한으로 정상적인 개인정보 삭제가 영구 정지하지 않게 한다.
+	var tables []string
 	dataset := c.client.DatasetInProject(app.FirebaseProjectID, "analytics_"+app.GA4.PropertyID)
-	if _, err = dataset.Metadata(ctx); isGoogleNotFound(err) {
-		return acceptedAt, nil
-	} else if err != nil {
-		return time.Time{}, err
-	}
-	tables := dataset.Tables(ctx)
-	for {
-		table, err := tables.Next()
-		if errors.Is(err, iterator.Done) {
-			break
-		}
-		if err != nil {
-			return time.Time{}, err
-		}
-		if !exportTableName.MatchString(table.TableID) {
-			continue
-		}
-		sql := fmt.Sprintf("DELETE FROM `%s.%s.%s` WHERE user_id=@user", table.ProjectID, table.DatasetID, table.TableID)
-		if err = c.runDeletionQuery(ctx, sql, params[1:]); err != nil && !isGoogleNotFound(err) {
-			return time.Time{}, err
+	if _, err = dataset.Metadata(ctx); err != nil && !isGoogleNotFound(err) {
+		return acceptedAt, "", err
+	} else if err == nil {
+		iter := dataset.Tables(ctx)
+		for {
+			table, err := iter.Next()
+			if errors.Is(err, iterator.Done) {
+				break
+			}
+			if err != nil {
+				return acceptedAt, "", err
+			}
+			if exportTableName.MatchString(table.TableID) {
+				tables = append(tables, fmt.Sprintf("%s.%s.%s", table.ProjectID, table.DatasetID, table.TableID))
+			}
 		}
 	}
-	return acceptedAt, nil
+	metadata, err := c.client.Dataset(c.dataset).Metadata(ctx)
+	if err != nil {
+		return acceptedAt, "", err
+	}
+	q := c.client.Query(deletionSQL(c.client.Project(), c.dataset, tables))
+	q.Parameters = []bigquery.QueryParameter{{Name: "app", Value: app.AppID}, {Name: "user", Value: puid}}
+	q.JobIDConfig = bigquery.JobIDConfig{JobID: "account_deletion_" + uuid.NewString(), Location: metadata.Location}
+	jobRef = q.Location + "/" + q.JobID
+	job, err := q.Run(ctx)
+	if err != nil {
+		return acceptedAt, jobRef, err
+	}
+	ref, err := waitDeletionJob(ctx, job, jobRef)
+	return acceptedAt, ref, err
+}
+func deletionSQL(project, dataset string, gaTables []string) string {
+	statements := []string{
+		fmt.Sprintf("DELETE FROM `%s.%s.events` WHERE app_id=@app AND platform_user_id=@user", project, dataset),
+		fmt.Sprintf("DELETE FROM `%s.%s.audit` WHERE app_id=@app AND platform_user_id=@user AND NOT STARTS_WITH(action, 'iap.')", project, dataset),
+	}
+	for _, table := range gaTables {
+		statements = append(statements, fmt.Sprintf("DELETE FROM `%s` WHERE user_id=@user", table))
+	}
+	return strings.Join(statements, ";\n") + ";"
+}
+func waitDeletionJob(ctx context.Context, job *bigquery.Job, ref string) (string, error) {
+	status, err := job.Wait(ctx)
+	if err != nil {
+		return ref, err
+	}
+	// 끝난 실패 작업 ID는 재사용할 수 없다. 다음 시도는 새 작업으로
+	// streaming buffer 지연 등을 다시 처리한다. 진행 중 작업만 이어받는다.
+	if err = status.Err(); err != nil {
+		return "", err
+	}
+	return ref, nil
 }
 func isGoogleNotFound(err error) bool {
 	var apiErr *googleapi.Error
 	return errors.As(err, &apiErr) && apiErr.Code == http.StatusNotFound
-}
-func (c *Collector) runDeletionQuery(ctx context.Context, sql string, params []bigquery.QueryParameter) error {
-	q := c.client.Query(sql)
-	q.Parameters = params
-	q.MaxBytesBilled = 1 << 30
-	job, err := q.Run(ctx)
-	if err != nil {
-		return err
-	}
-	status, err := job.Wait(ctx)
-	if err != nil {
-		return err
-	}
-	return status.Err()
 }
 func submitAnalyticsDeletion(ctx context.Context, app registry.App, puid string) (time.Time, error) {
 	ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{TargetPrincipal: app.FirebaseCustomTokenServiceAccount, Scopes: []string{"https://www.googleapis.com/auth/analytics.edit"}, Lifetime: 5 * time.Minute})
