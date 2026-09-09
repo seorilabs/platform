@@ -285,6 +285,91 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /auth/account-deletions:
+    post:
+      tags: [auth]
+      summary: 인증된 Firebase 계정과 연결 데이터의 삭제 접수
+      description: |
+        account_deletion 기능이 등록된 앱만 사용한다. Firebase ID token의 uid가
+        삭제 대상이며 임의 사용자 ID는 받지 않는다. 클라이언트는 256비트 무작위
+        receiptToken을 먼저 안전하게 저장하고 동일 값으로 재시도한다.
+        접수 이후 해당 신원의 인증, 계측, 보상 광고를 차단하고 서버에서 이어서 처리한다.
+        기능 비활성화는 신규 접수만 막으며 이미 접수한 작업은 저장된 앱 대상에서 계속 처리한다.
+        Google 삭제 접수와 저장소 사본 정리는 별도 단계다. 지연 내보내기를 고려해
+        Firebase 삭제 확인 후 최소 4일 뒤 계정과 연결된 분석 사본을 함께 정리한다.
+        IAP 감사 원장은 삭제하지 않는다. 기존 firebase-account API의 의미는 유지한다.
+      operationId: requestAccountDeletion
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [appId, firebaseIdToken, receiptToken]
+              properties:
+                appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                firebaseIdToken: { type: string, minLength: 1, maxLength: 4096 }
+                receiptToken: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '202':
+          description: 삭제 접수 또는 동일 요청의 현재 상태. 처리 완료를 뜻하지 않는다.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountDeletionStatus' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/account-deletions/status:
+    post:
+      tags: [auth]
+      summary: 삭제 접수증으로 처리 상태 확인
+      description: |
+        Firebase 계정 삭제 후에도 저장한 접수증으로 확인한다. 접수증은 해당 요청만
+        조회할 수 있는 비밀값이며 URL, 분석 이벤트, 로그에 넣지 않는다.
+        완료 후 접수증은 30일간 확인할 수 있다.
+      operationId: getAccountDeletionStatus
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [appId, receiptToken]
+              properties:
+                appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                receiptToken: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '200':
+          description: 본인 삭제 요청 상태
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountDeletionStatus' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /auth/firebase-account:
     delete:
       tags: [auth]
@@ -293,6 +378,8 @@ paths:
         앱의 Firebase ID token을 검증하고 해당 uid의 Platform identity 매핑과
         PII 없는 사용자 문서를 삭제한다. Firebase Auth와 앱 데이터 삭제는 앱
         프로젝트가 이어서 수행한다. IAP 감사 원장은 삭제하지 않는다.
+        account_deletion 기능을 켠 앱에서는 403으로 거부한다. 연결 자료를 잃지
+        않도록 /auth/account-deletions로 전체 삭제를 접수해야 한다.
       operationId: deleteFirebaseAccount
       security: []
       parameters:
@@ -703,6 +790,9 @@ paths:
         레지스트리 allowlist에 없는 이벤트는 조용히 버린다.
         PII 키 이름을 가진 파라미터도 버린다.
 
+        account_deletion 기능이 켜진 앱은 인증된 세션을 요구한다. 삭제 또는 차단으로
+        거부된 토큰을 익명 수집으로 낮추지 않는다. 다른 앱의 익명 수집 계약은 유지한다.
+
         부분 수락이다. 일부 이벤트가 거부되어도 200을 반환한다.
       operationId: ingestEvents
       security: []
@@ -742,6 +832,8 @@ paths:
                           accepted: { type: integer }
                           dropped: { type: integer }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
 
   /users/me:
@@ -753,6 +845,8 @@ paths:
         PII를 저장하지 않더라도 삭제 경로는 있어야 한다.
 
         **IAP 원장 문서는 삭제하지 않는다.** 소유자 참조만 끊는다.
+        account_deletion 기능을 켠 앱에서는 매핑만 지우지 않고 403으로 거부한다.
+        /auth/account-deletions로 전체 삭제를 접수해야 한다.
       operationId: deleteCurrentUser
       responses:
         '200':
@@ -769,6 +863,7 @@ paths:
                         properties:
                           deleted: { type: boolean }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # 마켓별 엔드포인트를 두지 않는다. 증빙 필드 이름도 마켓마다 다르지
   # 않고 token 하나다. 마켓이 늘 때마다 경로와 필드가 늘면 SDK가 마켓
@@ -2233,6 +2328,21 @@ components:
         pattern: '^[A-Za-z0-9-]{1,39}$'
 
   schemas:
+    AccountDeletionStatus:
+      type: object
+      additionalProperties: false
+      required: [state, requestedAt, googleAnalyticsDeletion]
+      properties:
+        state:
+          type: string
+          enum: [processing, completed]
+          description: completed는 Firebase 및 당사 저장소 삭제 완료다. Google 내부 완료 확인은 별도다.
+        requestedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        googleAnalyticsDeletion:
+          type: string
+          enum: [not_requested, accepted, not_collected]
+          description: accepted는 Google 삭제 요청 접수이며 Google 내부 삭제 완료를 증명하지 않는다.
     EnvelopeOk:
       type: object
       required: [ok]

@@ -175,6 +175,22 @@ func _check_firebase_custom_token_bridge() -> void:
 	if request.get("body", {}) != {"appId": "probe", "firebaseIdToken": "firebase-id-token"}:
 		_fail("Firebase account 삭제 본문이 다르다: %s" % request)
 
+	var receipt := "a".repeat(64)
+	client.request_account_deletion("firebase-id-token", receipt, "app-check", func(_res: Dictionary) -> void: pass)
+	request = transport.last_request
+	if request.get("path") != "/v1/auth/account-deletions" or request.get("body") != {
+		"appId": "probe", "firebaseIdToken": "firebase-id-token", "receiptToken": receipt}:
+		_fail("삭제 접수 대상과 접수증이 보존되지 않는다")
+	client.account_deletion_status(receipt, func(_res: Dictionary) -> void: pass)
+	request = transport.last_request
+	if request.get("method") != "POST" or request.get("path") != "/v1/auth/account-deletions/status" \
+			or request.get("body") != {"appId": "probe", "receiptToken": receipt}:
+		_fail("계정 삭제 뒤 상태 확인에 인증 토큰을 요구하거나 접수증이 URL에 들어간다")
+	var invalid: Array[Dictionary] = []
+	client.account_deletion_status("short", func(result: Dictionary) -> void: invalid.append(result))
+	if invalid.is_empty() or bool(invalid[0].get("ok", true)):
+		_fail("짧은 삭제 접수증을 허용했다")
+
 	client.free()
 
 

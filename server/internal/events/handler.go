@@ -98,12 +98,22 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	// 세션은 선택이다. 없거나 만료됐어도 익명으로 수집한다.
+	// 삭제를 지원하는 앱은 모든 이벤트를 본인 신원에 연결한다. 차단된
+	// 토큰을 익명으로 낮추면 삭제 대상에서 빠진 식별 데이터가 생긴다.
 	var puid string
 	if h.sessions != nil {
-		if sess, err := h.sessions.Authenticate(r); err == nil {
+		sess, authErr := h.sessions.Authenticate(r)
+		if authErr == nil {
+			if sess.AppID != app.AppID {
+				return platformerr.New(platformerr.CodeAuthForbidden, "앱과 세션이 일치하지 않아요")
+			}
 			puid = sess.PlatformUserID
+		} else if app.FeatureEnabled("account_deletion") || platformerr.CodeOf(authErr) == platformerr.CodeAuthForbidden || platformerr.CodeOf(authErr) == platformerr.CodeUserBlocked {
+			return authErr
 		}
+	}
+	if app.FeatureEnabled("account_deletion") && puid == "" {
+		return platformerr.New(platformerr.CodeAuthRequired, "인증된 계정이 필요해요")
 	}
 
 	rows, dropped := h.buildRows(r.Context(), app, req, puid)

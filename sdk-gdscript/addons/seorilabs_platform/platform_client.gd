@@ -23,7 +23,7 @@ const AtomicJsonStore := preload("core/atomic_json_store.gd")
 const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.7.6"
+const SDK_VERSION := "0.7.7"
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -229,6 +229,38 @@ func delete_firebase_account(
 		},
 		callback,
 	)
+
+## 접수증은 호출 전에 앱이 저장한다. 응답 유실 시 같은 값으로 재시도한다.
+func request_account_deletion(firebase_id_token: String, receipt_token: String,
+		app_check_token: String, callback: Callable) -> void:
+	if firebase_id_token.is_empty() or not _valid_deletion_receipt(receipt_token):
+		callback.call(_client_error("request_invalid", "삭제 접수 정보를 확인해 주세요"))
+		return
+	_transport.request({"method": "POST", "path": "/v1/auth/account-deletions",
+		"base_url": _api_base_url, "no_retry": true,
+		"app_check_token": app_check_token,
+		"body": {"appId": _app_id, "firebaseIdToken": firebase_id_token,
+			"receiptToken": receipt_token}}, callback)
+
+
+## Firebase 계정 삭제 이후에도 상태를 읽는다. 접수증을 URL에 넣지 않는다.
+func account_deletion_status(receipt_token: String, callback: Callable) -> void:
+	if not _valid_deletion_receipt(receipt_token):
+		callback.call(_client_error("request_invalid", "삭제 접수 정보를 확인해 주세요"))
+		return
+	_transport.request({"method": "POST", "path": "/v1/auth/account-deletions/status",
+		"base_url": _api_base_url, "no_retry": true,
+		"body": {"appId": _app_id, "receiptToken": receipt_token}}, callback)
+
+
+static func _valid_deletion_receipt(value: String) -> bool:
+	if value.length() != 64:
+		return false
+	for character in value:
+		if not character in "0123456789abcdef":
+			return false
+	return true
+
 
 ## 자격증명으로 세션을 연다.
 ##

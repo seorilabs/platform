@@ -89,9 +89,10 @@ func run() error {
 //
 // composition root에서만 조립한다. 패키지끼리 직접 조립하지 않는다.
 type deps struct {
-	store    *store.Client
-	registry *registry.Registry
-	identity *identity.Handler
+	deletions *identity.DeletionWorker
+	store     *store.Client
+	registry  *registry.Registry
+	identity  *identity.Handler
 	// adminUsers는 세션 issuer 없이 PII 없는 사용자 조회만 제공한다.
 	adminUsers      *identity.StoreRepository
 	blocklist       *blocklist.Service
@@ -181,6 +182,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		)
 		// 버전 최초 관측은 세션 원장과 같은 Firestore·outbox 자원을 쓴다.
 		svc.WithAppVersionObserver(users)
+		svc.WithAccountDeletions(users)
 		// 세션 응답에 설정을 동봉해 부팅 왕복을 1회로 줄인다. Godot의
 		// HTTPRequest는 동시 1요청만 처리하므로 이게 실제로 값을 한다.
 		svc.WithConfigOverlay(d.config)
@@ -255,13 +257,18 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	// 이벤트를 다루는 role만 BigQuery에 붙는다.
 	// api는 감사 원장을 남겨야 하므로 함께 연다.
 	if cfg.Role == config.RoleIngest || cfg.Role == config.RoleAPI ||
-		cfg.Role == config.RoleIAP || cfg.Role == config.RoleAdmin {
+		cfg.Role == config.RoleIAP || cfg.Role == config.RoleAdmin || cfg.Role == config.RoleWorker {
 		col, err := events.NewCollector(ctx, cfg.ProjectID, cfg.BigQueryDataset)
 		if err != nil {
 			closeStore()
 			return nil, err
 		}
 		d.events = col
+	}
+
+	if cfg.Role == config.RoleWorker {
+		users := identity.NewStoreRepository(st)
+		d.deletions = &identity.DeletionWorker{Queue: users, Registry: reg, Firebase: identity.FirebaseAccountDeleter{}, Ads: platformads.NewStoreRepository(st), Events: d.events, Identity: users}
 	}
 
 	// 마켓 자격증명은 iap와 worker role에만 마운트된다. R3다.
@@ -287,7 +294,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	}
 
 	if cfg.Role == config.RoleAds || cfg.Role == config.RoleAdmin {
-		repo := platformads.NewStoreRepository(st).WithOperationalEvents(d.operationalRepo)
+		repo := platformads.NewStoreRepository(st).WithOperationalEvents(d.operationalRepo).WithAccounts(d.adminUsers)
 		entitlements := newAdsEntitlements(st)
 		service, err := platformads.NewService(repo, reg, entitlements, d.adminUsers)
 		if err != nil {

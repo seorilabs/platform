@@ -173,6 +173,7 @@ type Service struct {
 	blocklist        Blocklist
 	aitLogin         map[string]AITLoginVerifier
 	users            UserRepository
+	deletions        DeletionRepository
 	issuer           *SessionIssuer
 	customTokens     CustomTokenIssuer
 	appCheck         AppCheckVerifier
@@ -219,6 +220,15 @@ func NewService(
 // 조회 자체가 실패하면 그 에러를 그대로 올린다. 차단 여부를 모른 채
 // 통과시키면 차단이 무의미해진다.
 func (s *Service) ensureNotBlocked(ctx context.Context, appID, uid string) error {
+	if s.deletions != nil {
+		deleting, err := s.deletions.AccountDeleting(ctx, appID, uid)
+		if err != nil {
+			return err
+		}
+		if deleting {
+			return deletionDenied()
+		}
+	}
 	blocked, err := s.blocklist.Blocked(ctx, appID, uid)
 	if err != nil {
 		return err
@@ -449,6 +459,9 @@ func (s *Service) DeleteFirebaseAccount(
 	app, err := s.registry.GetUsable(ctx, appID)
 	if err != nil {
 		return err
+	}
+	if app.FeatureEnabled("account_deletion") {
+		return legacyDeletionDenied()
 	}
 	if !app.FeatureEnabled("firebase_custom_token_bridge") {
 		return platformerr.New(
@@ -730,5 +743,18 @@ func (s *Service) Authenticate(ctx context.Context, appID, sessionToken string) 
 // 앱이 계정을 삭제할 때 부른다. PII를 저장하지 않더라도 삭제 경로는 있어야 한다.
 // ADR 0005 참고.
 func (s *Service) DeleteCurrentUser(ctx context.Context, sess Session) error {
+	app, err := s.registry.GetUsable(ctx, sess.AppID)
+	if err != nil {
+		return err
+	}
+	if app.FeatureEnabled("account_deletion") {
+		return legacyDeletionDenied()
+	}
 	return s.users.DeleteUser(ctx, sess.AppID, sess.AppUserID, sess.PlatformUserID)
+}
+
+func legacyDeletionDenied() error {
+	// 전체 삭제를 선택한 앱은 연결을 먼저 끊으면 과거 광고·분석 자료를
+	// 찾을 수 없다. 이 기능을 켜지 않은 앱의 기존 API 의미는 유지한다.
+	return platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 /auth/account-deletions에서 전체 삭제를 요청해야 해요")
 }

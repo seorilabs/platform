@@ -197,6 +197,9 @@ func (r *StoreRepository) EnsureUser(
 	var result string
 
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkDeletionTx(tx, appID, identity.UID); err != nil {
+			return err
+		}
 		now := r.now()
 
 		exists, snap, err := tx.Exists(idPath)
@@ -949,14 +952,19 @@ func (r *StoreRepository) SaveRefresh(
 		return platformerr.Wrap(err, platformerr.CodeInternal, "세션을 저장하지 못했어요")
 	}
 
-	err = r.store.Set(ctx, p, refreshDoc{
-		PlatformUserID: sess.PlatformUserID,
-		AppID:          sess.AppID,
-		AppUserID:      sess.AppUserID,
-		Anonymous:      sess.IsAnonymous,
-		LinkedAccount:  sess.IsLinkedAccount,
-		ExpiresAt:      expiresAt,
-		CreatedAt:      r.now(),
+	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkDeletionTx(tx, sess.AppID, sess.AppUserID); err != nil {
+			return err
+		}
+		return tx.Set(p, refreshDoc{
+			PlatformUserID: sess.PlatformUserID,
+			AppID:          sess.AppID,
+			AppUserID:      sess.AppUserID,
+			Anonymous:      sess.IsAnonymous,
+			LinkedAccount:  sess.IsLinkedAccount,
+			ExpiresAt:      expiresAt,
+			CreatedAt:      r.now(),
+		})
 	})
 	if err != nil {
 		return platformerr.Wrap(err, platformerr.CodeInternal, "세션을 저장하지 못했어요")

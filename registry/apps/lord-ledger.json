@@ -9,11 +9,13 @@
     "events": true,
     "iap": false,
     "ads": true,
-    "firebase_custom_token_bridge": true
+    "firebase_custom_token_bridge": true,
+    "account_deletion": true
   },
   "require_app_check": false,
   "ga4": {
-    "event_prefix": ""
+    "event_prefix": "",
+    "property_id": "551032382"
   },
   "platform_event_allowlist": [
     "ad_reward_cancelled",
