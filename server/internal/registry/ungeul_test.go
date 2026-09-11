@@ -202,3 +202,62 @@ func TestUngeulEventAllowlistCoversClientContract(t *testing.T) {
 		t.Fatalf("allowlist=%d, want %d (계약과 같은 크기)", len(ungeul.PlatformEventAllowlist), len(clientContract))
 	}
 }
+
+// AppsInToss SDK 는 미니앱을 버전에 따라 다른 호스트에서 띄운다. 2.x 는
+// `<app>.apps.tossmini.com`, 3.x 는 `<app>.web.tossmini.com` 이고 콘솔 QR 테스트 환경도
+// 같은 규칙으로 갈린다. 레지스트리에 없는 origin 은 서버가 preflight 부터 거부하므로,
+// 한쪽만 남으면 그 세대의 번들에서 해설·결제·광고·분석이 한꺼번에 막힌다.
+//
+// **두 세대를 함께 담아 둔다.** 새 번들을 올려도 사용자가 받기 전까지는 옛 호스트에서
+// 계속 요청하기 때문이다. 3.x 가 충분히 퍼진 뒤에 2.x 쪽을 걷는 것은 별도 판단이고,
+// 그때까지 어느 한쪽이 조용히 사라지지 않게 여기서 고정한다.
+func TestUngeulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
+	source := NewFSSource(os.DirFS("../../../registry"), "apps")
+	apps, err := source.LoadApps(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ungeul *App
+	for i := range apps {
+		if apps[i].AppID == "ungeul" {
+			ungeul = &apps[i]
+			break
+		}
+	}
+	if ungeul == nil {
+		t.Fatal("ungeul registry가 없다")
+	}
+
+	required := map[string]string{
+		"https://ungeul.apps.tossmini.com":         "AppsInToss SDK 2.x 실제 서비스",
+		"https://ungeul.private-apps.tossmini.com": "AppsInToss SDK 2.x 콘솔 QR 테스트",
+		"https://ungeul.web.tossmini.com":          "AppsInToss SDK 3.x 실제 서비스",
+		"https://ungeul.private-web.tossmini.com":  "AppsInToss SDK 3.x 콘솔 QR 테스트",
+	}
+	present := make(map[string]bool, len(ungeul.CORSOrigins))
+	for _, origin := range ungeul.CORSOrigins {
+		if present[origin] {
+			t.Errorf("cors_origins 에 %q 가 중복이다", origin)
+		}
+		present[origin] = true
+	}
+	for origin, why := range required {
+		if !present[origin] {
+			t.Errorf("cors_origins 에 %q 가 없다 — %s 번들이 막힌다", origin, why)
+		}
+	}
+
+	// 실제로 서버가 그 origin 을 통과시키는지까지 본다. 목록에 적힌 것과 판정이 갈리면
+	// 레지스트리만 고쳐 두고 런타임은 거부하는 상태가 된다.
+	r := New(staticRegistrySource{apps: []App{*ungeul}})
+	for origin := range required {
+		allowed, err := r.AllowsCORSOrigin(context.Background(), origin)
+		if err != nil {
+			t.Fatalf("AllowsCORSOrigin(%q) error = %v", origin, err)
+		}
+		if !allowed {
+			t.Errorf("등록된 origin 인데 거부됐다: %s", origin)
+		}
+	}
+}
