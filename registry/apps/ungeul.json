@@ -114,6 +114,8 @@
     "https://localhost",
     "capacitor://localhost",
     "https://ungeul.apps.tossmini.com",
-    "https://ungeul.private-apps.tossmini.com"
+    "https://ungeul.private-apps.tossmini.com",
+    "https://ungeul.web.tossmini.com",
+    "https://ungeul.private-web.tossmini.com"
   ]
 }
