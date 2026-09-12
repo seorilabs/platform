@@ -244,6 +244,24 @@ func _check_account_link() -> void:
 	client._refresh_waiters.append({"callback": func(_token: String, _error: Dictionary) -> void: client.sign_out()})
 	transport.respond(transport.requests.size() - 1, _success_response(linked_result))
 	_expect(not client.is_signed_in() and replies.back().get("code") == "auth_state_changed", "갱신 취소 콜백의 로그아웃을 연결 응답이 되돌렸다")
+	client._store_session(_session_result("guest-token", "guest-refresh", 3600))
+	var link_request_index := transport.requests.size()
+	client.complete_account_link("apple", "apple-id-token", "challenge", "app-check", callback)
+	client._session["expiresAt"] = 0
+	var retry_errors: Array[Dictionary] = []
+	client.with_token(func(_token: String, error: Dictionary) -> void:
+		if error.get("code") == "auth_state_changed":
+			client.with_token(func(_retry_token: String, retry_error: Dictionary) -> void:
+				retry_errors.append(retry_error)
+			)
+	)
+	var old_refresh_index := link_request_index + 1
+	_expect(transport.requests.size() == old_refresh_index + 1, "계정 연결과 이전 refresh가 겹치는 조건이 만들어지지 않았다")
+	transport.respond(link_request_index, _success_response(linked_result))
+	_expect(transport.requests.size() == old_refresh_index + 1, "취소 콜백이 새 인증 세대에서 게스트 refresh를 다시 시작했다")
+	_expect(retry_errors.size() == 1 and not retry_errors[0].is_empty(), "취소 중 재시도가 이전 게스트 토큰을 받았다")
+	transport.respond(old_refresh_index, _success_response(_session_result("late-guest", "late-refresh", 3600)))
+	_expect(client.is_account_linked() and client.current_session().get("appUserId") == "returning-user", "늦은 게스트 refresh가 복원 신원을 덮어썼다")
 	client.free()
 
 

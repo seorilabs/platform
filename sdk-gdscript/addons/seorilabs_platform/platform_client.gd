@@ -381,6 +381,9 @@ func complete_account_link(provider: String, id_token: String, nonce: String,
 			# 복원 후 이전 게스트 credential로 자동 재로그인하면 다른 계정으로 돌아간다.
 			# Firebase adapter의 adopt_account_link 성공 뒤 새 ID token으로 sign_in한다.
 			_credential = {}
+			# 취소 콜백이 즉시 재요청해도 새 인증 세대로 게스트 refresh를
+			# 시작하지 못하게 한다. linked 세션 설치 시에만 변경 신호를 보낸다.
+			_session = {}
 			_cancel_refresh_flight(_auth_state_changed_error())
 			if linked_generation != _auth_generation:
 				callback.call(_auth_state_changed_error())
