@@ -220,8 +220,9 @@ func TestAccountProviderAndLinkedIAPValidation(t *testing.T) {
 		app.FirebaseCustomTokenServiceAccount = "platform-auth@test-app.iam.gserviceaccount.com"
 		app.RequireAppCheck = true
 		app.Auth.AccountProviders = map[string]AuthProviderConfig{
-			"kakao": {Audience: "123456789"},
-			"apple": {Audience: "com.seorilabs.testapp"},
+			"kakao":  {Audience: "123456789"},
+			"apple":  {Audience: "com.seorilabs.testapp"},
+			"google": {Audience: "123456789-web.apps.googleusercontent.com"},
 		}
 		app.IAP.RequireLinkedAccount = true
 		return app

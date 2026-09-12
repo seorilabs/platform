@@ -164,6 +164,71 @@ func TestAppleVerifierUsesSHA256Nonce(t *testing.T) {
 	}
 }
 
+func TestGoogleVerifierEnforcesSignedClientAndChallenge(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	key := newTestKey(t)
+	otherKey := newTestKey(t)
+	const audience = "123456789-web.apps.googleusercontent.com"
+	const nonce = "server-issued-challenge"
+	client := staticJWKSClient(t, "google-key", &key.PublicKey)
+	verifier, err := NewGoogle(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier.now = func() time.Time { return now }
+	verifier.keys.now = verifier.now
+	app := registry.App{Auth: registry.AuthConfig{AccountProviders: map[string]registry.AuthProviderConfig{
+		ProviderGoogle: {Audience: audience},
+	}}}
+	tests := []struct {
+		name           string
+		mutate         func(*claims)
+		wrongSignature bool
+		valid          bool
+	}{
+		{name: "canonical issuer", valid: true},
+		{name: "legacy issuer", mutate: func(c *claims) { c.Issuer = "accounts.google.com" }, valid: true},
+		{name: "foreign issuer", mutate: func(c *claims) { c.Issuer = "https://accounts.google.com.evil.example" }},
+		{name: "missing issuer", mutate: func(c *claims) { c.Issuer = "" }},
+		{name: "other client", mutate: func(c *claims) { c.Audience = jwt.ClaimStrings{"other.apps.googleusercontent.com"} }},
+		{name: "other challenge", mutate: func(c *claims) { c.Nonce = "another-challenge" }},
+		{name: "missing challenge", mutate: func(c *claims) { c.Nonce = "" }},
+		{name: "missing issued at", mutate: func(c *claims) { c.IssuedAt = nil }},
+		{name: "future issued at", mutate: func(c *claims) { c.IssuedAt = jwt.NewNumericDate(now.Add(2 * time.Minute)) }},
+		{name: "expired", mutate: func(c *claims) { c.ExpiresAt = jwt.NewNumericDate(now.Add(-2 * time.Minute)) }},
+		{name: "missing expiry", mutate: func(c *claims) { c.ExpiresAt = nil }},
+		{name: "missing subject", mutate: func(c *claims) { c.Subject = "" }},
+		{name: "wrong signature", wrongSignature: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			value := claims{RegisteredClaims: jwt.RegisteredClaims{
+				Issuer: googleIssuer, Subject: "google-subject", Audience: jwt.ClaimStrings{audience},
+				IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			}, Nonce: nonce}
+			if tc.mutate != nil {
+				tc.mutate(&value)
+			}
+			signer := key
+			if tc.wrongSignature {
+				signer = otherKey
+			}
+			token := signToken(t, signer, "google-key", value)
+			subject, err := verifier.Verify(context.Background(), token, nonce, app)
+			if tc.valid {
+				if err != nil || subject != "google-subject" {
+					t.Fatalf("expected Google identity, error=%v", err)
+				}
+			} else if subject != "" || platformerr.CodeOf(err) != platformerr.CodeAuthInvalid {
+				t.Fatalf("expected rejected identity, code=%s", platformerr.CodeOf(err))
+			}
+		})
+	}
+	if _, err := verifier.Verify(context.Background(), "unused", nonce, testAppleApp(audience)); platformerr.CodeOf(err) != platformerr.CodeAuthForbidden {
+		t.Fatalf("Google not registered for app: code=%s", platformerr.CodeOf(err))
+	}
+}
+
 func TestVerifierPreservesProviderUnavailable(t *testing.T) {
 	verifier, err := New(Config{
 		Provider: "kakao", Issuer: "https://issuer.example", JWKSURL: "https://issuer.example/keys",

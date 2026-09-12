@@ -204,7 +204,12 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 				closeStore()
 				return nil, err
 			}
-			if err := svc.ConfigureAccountProviders(users, kakao, apple); err != nil {
+			google, err := oidc.NewGoogle(nil)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			if err := svc.ConfigureAccountProviders(users, kakao, apple, google); err != nil {
 				closeStore()
 				return nil, err
 			}

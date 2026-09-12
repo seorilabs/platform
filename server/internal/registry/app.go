@@ -343,7 +343,7 @@ func (a App) validateAuth() error {
 		return fmt.Errorf("%s: 외부 계정 연결에는 App Check와 firebase custom token bridge가 필요하다", a.AppID)
 	}
 	for provider, cfg := range a.Auth.AccountProviders {
-		if provider != "kakao" && provider != "apple" {
+		if provider != "kakao" && provider != "apple" && provider != "google" {
 			return fmt.Errorf("%s: 지원하지 않는 auth provider다: %q", a.AppID, provider)
 		}
 		if !authProviderAudiencePattern.MatchString(cfg.Audience) || isPlaceholder(cfg.Audience) {

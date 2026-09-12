@@ -3049,7 +3049,8 @@ components:
 
     AccountProvider:
       type: string
-      enum: [kakao, apple]
+      enum: [kakao, apple, google]
+      description: Google은 Credential Manager 또는 Google Sign-In의 서버 client ID와 원문 challenge nonce를 사용한다. Apple은 challenge nonce의 SHA-256을 사용한다.
 
     CreateAccountLinkChallengeRequest:
       type: object
