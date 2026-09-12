@@ -112,7 +112,8 @@ func adopt_account_link(link: Dictionary) -> Dictionary:
 		return _failure("firebase_identity_busy")
 	if not _state_valid or _state.is_empty():
 		return _failure("firebase_identity_state_invalid")
-	if _platform_client == null or not _platform_client.has_method("sign_out"):
+	if _platform_client == null or not _platform_client.has_method("sign_out") \
+		or not _platform_client.has_method("authentication_generation") or not _platform_client.has_method("current_session"):
 		return _failure("platform_auth_sdk_unavailable")
 	var session: Variant = link.get("session")
 	var custom_token: Variant = link.get("firebaseCustomToken")
@@ -124,12 +125,22 @@ func adopt_account_link(link: Dictionary) -> Dictionary:
 	var expected_uid := String(session.get("appUserId", ""))
 	if expected_uid.is_empty() or (link["restored"] == false and expected_uid != String(_state.get("uid", ""))):
 		return _failure("platform_uid_mismatch")
+	var client := _platform_client
+	var generation: int = client.authentication_generation()
+	var current_session: Dictionary = client.current_session()
+	if current_session.get("appUserId") != expected_uid or current_session.get("isLinkedAccount") != true:
+		return _failure("auth_state_changed")
+	var still_current := func() -> bool:
+		return is_instance_valid(client) and _platform_client == client and client.authentication_generation() == generation
 	var previous_state := _state.duplicate(true)
 	var previous_token := _current_id_token
 	var previous_dirty := _state_dirty
 	_identity_busy = true
-	var result: Dictionary = await _exchange_platform_custom_token(custom_token, expected_uid)
+	var result: Dictionary = await _exchange_platform_custom_token(custom_token, expected_uid, still_current)
 	_identity_busy = false
+	# 늦은 실패가 새로 로그인한 세션까지 종료하지 않게 한다.
+	if not still_current.call():
+		return _failure("auth_state_changed")
 	if not result.get("success", false):
 		# 실패한 복원이 다음 자동 갱신에서 뒤늦게 현재 UID를 바꾸지 않게 한다.
 		_state = previous_state
@@ -173,7 +184,7 @@ func _sign_in_with_platform_custom_token(existing_id_token: String, expected_uid
 	return await _exchange_platform_custom_token(custom_token, expected_uid)
 
 
-func _exchange_platform_custom_token(custom_token: String, expected_uid: String) -> Dictionary:
+func _exchange_platform_custom_token(custom_token: String, expected_uid: String, still_current: Callable = Callable()) -> Dictionary:
 	if _api_key.is_empty():
 		return _failure("firebase_api_key_missing")
 	var result: Dictionary = await _request_json(
@@ -182,6 +193,10 @@ func _exchange_platform_custom_token(custom_token: String, expected_uid: String)
 		[],
 		JSON.stringify({"token": custom_token, "returnSecureToken": true}),
 	)
+	# Platform 응답과 Firebase 교환 사이에도 로그아웃·재로그인이 가능하다.
+	# 상태를 바꾸거나 파일을 쓰기 전에 시작 당시 신원 세대를 확인한다.
+	if still_current.is_valid() and not still_current.call():
+		return _failure("auth_state_changed")
 	if not bool(result.get("success", false)):
 		return _failure("firebase_custom_token_sign_in_failed")
 	var data: Dictionary = result.get("data", {})

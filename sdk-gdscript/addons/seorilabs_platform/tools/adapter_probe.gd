@@ -17,6 +17,9 @@ class PlatformSpy:
 	extends Node
 
 	var signed_in := false
+	var account_uid := "linked-uid"
+	var auth_generation := 0
+	var sign_out_count := 0
 	var custom_token_existing := ""
 	var claim_request: Dictionary = {}
 	var policy_response := {"ok": true, "result": {"appUsesAds": true, "adsEnabled": true}}
@@ -27,6 +30,7 @@ class PlatformSpy:
 
 	func sign_in(_credential: Dictionary, callback: Callable) -> void:
 		signed_in = true
+		auth_generation += 1
 		callback.call({"ok": true, "result": {}})
 
 	func is_signed_in() -> bool:
@@ -34,6 +38,14 @@ class PlatformSpy:
 
 	func sign_out() -> void:
 		signed_in = false
+		auth_generation += 1
+		sign_out_count += 1
+
+	func authentication_generation() -> int:
+		return auth_generation
+
+	func current_session() -> Dictionary:
+		return {"appUserId": account_uid, "isLinkedAccount": true} if signed_in else {}
 
 	func get_ads_policy(callback: Callable) -> void:
 		callback.call(policy_response.duplicate(true))
@@ -62,6 +74,8 @@ class FirebaseAdapterSpy:
 	var requests: Array[Dictionary] = []
 	var persist_success := true
 	var persist_to_disk := false
+	var defer_response := false
+	signal response_ready(response: Dictionary)
 
 	func _request_json(
 		url: String,
@@ -71,6 +85,8 @@ class FirebaseAdapterSpy:
 		add_json_header: bool = true,
 	) -> Dictionary:
 		requests.append({"url": url, "method": method, "headers": headers, "body": body, "json": add_json_header})
+		if defer_response:
+			return await response_ready
 		return responses.pop_front() if not responses.is_empty() else {"success": false, "status": 0}
 
 	func _save_state() -> bool:
@@ -91,6 +107,7 @@ func _initialize() -> void:
 	await _check_firebase_identity()
 	await _check_account_link_adoption()
 	await _check_account_link_disk_failure()
+	await _check_account_link_auth_change()
 	await _check_identity_read_failure()
 	await _check_rewarded_claim_flow()
 	await _check_policy_fail_closed()
@@ -205,9 +222,11 @@ func _check_account_link_adoption() -> void:
 	_expect((await adapter.adopt_account_link(invalid)).get("reason") == "platform_uid_mismatch", "새 연결이라고 주장하며 UID를 바꿨다")
 	_expect(adapter.requests.is_empty(), "거부한 계정 전환이 Firebase에 도달했다")
 	adapter._api_key = ""
+	platform.signed_in = true
 	_expect((await adapter.adopt_account_link(link)).get("reason") == "firebase_api_key_missing", "설정 없는 복원을 Firebase에 보냈다")
 	_expect(adapter.requests.is_empty() and adapter._state == guest, "설정 없는 복원이 기존 신원을 바꿨다")
 	adapter._api_key = "api-key"
+	platform.signed_in = true
 	adapter.responses.append({"success": true, "data": {"localId": "wrong-uid", "idToken": "wrong-id", "refreshToken": "wrong-refresh"}})
 	_expect((await adapter.adopt_account_link(link)).get("reason") == "platform_uid_mismatch", "Firebase가 다른 UID를 반환해도 복원했다")
 	_expect(adapter._state == guest and adapter._current_id_token == "guest-id-token", "실패한 복원이 기존 신원을 바꿨다")
@@ -220,6 +239,7 @@ func _check_account_link_adoption() -> void:
 	_expect(not platform.signed_in, "Firebase 복원 실패 후 불일치한 Platform 세션이 남았다")
 	adapter.persist_success = true
 	adapter.responses.append(response)
+	platform.signed_in = true
 	var result: Dictionary = await adapter.adopt_account_link(link)
 	_expect(result.get("success") == true and result.get("uid") == "linked-uid" and result.get("restored") == true, "기존 연결 계정 복원이 실패했다")
 	_expect(not adapter._state.has("id_token") and not "one-time-linked-token" in JSON.stringify(adapter._state), "복원 일회용 token이 저장됐다")
@@ -233,6 +253,7 @@ func _check_account_link_adoption() -> void:
 
 func _check_account_link_disk_failure() -> void:
 	var platform := PlatformSpy.new()
+	platform.signed_in = true
 	root.add_child(platform)
 	var adapter := FirebaseAdapterSpy.new()
 	root.add_child(adapter)
@@ -251,6 +272,7 @@ func _check_account_link_disk_failure() -> void:
 	_expect(FileAccess.get_file_as_string(IDENTITY_PATH) == original and adapter.current_identity().get("uid") == "guest-uid", "저장 실패 후 이전 파일 또는 신원이 변경됐다")
 	_expect(DirAccess.remove_absolute(temp_path) == OK, "저장 실패 조건 제거 실패")
 	adapter.responses.append(response)
+	platform.signed_in = true
 	_expect((await adapter.adopt_account_link(link)).get("success") == true, "저장 복구 후 재시도 실패")
 	var reopened := FirebaseIdentityAdapter.new()
 	reopened.configure({"state_path": IDENTITY_PATH})
@@ -260,6 +282,43 @@ func _check_account_link_disk_failure() -> void:
 	reopened.free()
 	adapter.free()
 	platform.free()
+
+
+func _collect_adoption(adapter: FirebaseAdapterSpy, link: Dictionary, results: Array[Dictionary]) -> void:
+	results.append(await adapter.adopt_account_link(link))
+
+
+func _check_account_link_auth_change() -> void:
+	for action in ["logout", "different-account", "same-account-login"]:
+		for success in [true, false]:
+			var platform := PlatformSpy.new()
+			root.add_child(platform)
+			platform.signed_in = true
+			var adapter := FirebaseAdapterSpy.new()
+			root.add_child(adapter)
+			adapter.configure({"firebase_api_key": "api-key", "platform_client": platform, "state_path": IDENTITY_PATH})
+			adapter.persist_to_disk = true
+			adapter.defer_response = true
+			var guest := {"uid": "guest-uid", "refresh_token": "guest-refresh", "auth_provider": "platform_custom_token_v1"}
+			_expect(AtomicJsonStore.write(IDENTITY_PATH, guest), "이전 신원 파일 생성 실패")
+			var original := FileAccess.get_file_as_string(IDENTITY_PATH)
+			var link := {"session": {"appUserId": "linked-uid", "isLinkedAccount": true, "isAnonymous": false},
+				"firebaseCustomToken": "one-time-linked-token", "restored": true}
+			var results: Array[Dictionary] = []
+			_collect_adoption(adapter, link, results)
+			_expect(adapter.requests.size() == 1 and results.is_empty() and adapter._identity_busy, "비동기 Firebase 교환 대기 조건이 없다")
+			platform.sign_out()
+			if action != "logout":
+				platform.account_uid = "different-uid" if action == "different-account" else "linked-uid"
+				platform.sign_in({}, func(_response: Dictionary) -> void: pass)
+			adapter.response_ready.emit({"success": success, "data": {"localId": "linked-uid", "idToken": "linked-id", "refreshToken": "linked-refresh"}})
+			await process_frame
+			_expect(results.size() == 1 and results[0].get("reason") == "auth_state_changed", "인증 변경 뒤 늦은 Firebase 결과를 받아들였다")
+			_expect(adapter.current_identity().get("uid") == "guest-uid" and FileAccess.get_file_as_string(IDENTITY_PATH) == original, "늦은 결과가 이전 신원 파일을 덮어썼다")
+			_expect(platform.sign_out_count == 1 and platform.signed_in == (action != "logout"), "늦은 실패가 새 세션을 종료하거나 로그아웃을 되돌렸다")
+			_expect(not adapter._identity_busy, "폐기한 Firebase 교환이 후속 신원 요청을 막았다")
+			adapter.free()
+			platform.free()
 
 
 func _check_rewarded_claim_flow() -> void:

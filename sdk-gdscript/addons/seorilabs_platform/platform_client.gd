@@ -335,6 +335,12 @@ func current_session() -> Dictionary:
 	return _session.duplicate(true)
 
 
+## 로그인·로그아웃·계정 연결로 바뀌는 신원 세대. 비동기 adapter의 늦은 결과 폐기에 쓴다.
+## 같은 계정의 정상 session refresh는 이 값을 바꾸지 않는다.
+func authentication_generation() -> int:
+	return _auth_generation
+
+
 func is_signed_in() -> bool:
 	return not _session.is_empty()
 
