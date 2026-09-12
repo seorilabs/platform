@@ -6,7 +6,7 @@ export interface FirebaseCustomTokenResult {
   appUserId: string;
 }
 
-export type AccountProvider = "kakao" | "apple";
+export type AccountProvider = "kakao" | "apple" | "google";
 
 export interface AccountLinkChallenge {
   provider: AccountProvider;

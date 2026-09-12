@@ -32,6 +32,9 @@ class PlatformSpy:
 	func is_signed_in() -> bool:
 		return signed_in
 
+	func sign_out() -> void:
+		signed_in = false
+
 	func get_ads_policy(callback: Callable) -> void:
 		callback.call(policy_response.duplicate(true))
 
@@ -58,6 +61,7 @@ class FirebaseAdapterSpy:
 	var responses: Array[Dictionary] = []
 	var requests: Array[Dictionary] = []
 	var persist_success := true
+	var persist_to_disk := false
 
 	func _request_json(
 		url: String,
@@ -70,6 +74,8 @@ class FirebaseAdapterSpy:
 		return responses.pop_front() if not responses.is_empty() else {"success": false, "status": 0}
 
 	func _save_state() -> bool:
+		if persist_to_disk:
+			return super._save_state()
 		_state_dirty = not persist_success
 		return persist_success
 
@@ -83,6 +89,8 @@ class IdentitySpy:
 
 func _initialize() -> void:
 	await _check_firebase_identity()
+	await _check_account_link_adoption()
+	await _check_account_link_disk_failure()
 	await _check_identity_read_failure()
 	await _check_rewarded_claim_flow()
 	await _check_policy_fail_closed()
@@ -172,6 +180,84 @@ func _check_firebase_identity() -> void:
 	var persist_result: Dictionary = await failed_persist.ensure_identity()
 	_expect(String(persist_result.get("reason", "")) == "firebase_identity_persist_failed", "신원 저장 실패가 성공으로 처리됐다")
 	failed_persist.free()
+	adapter.free()
+	platform.free()
+
+
+func _check_account_link_adoption() -> void:
+	var platform := PlatformSpy.new()
+	root.add_child(platform)
+	var adapter := FirebaseAdapterSpy.new()
+	root.add_child(adapter)
+	adapter.configure({"firebase_api_key": "api-key", "platform_client": platform})
+	adapter._loaded = true
+	var guest := {"uid": "guest-uid", "refresh_token": "guest-refresh", "auth_provider": "platform_custom_token_v1", "expires_at": 0}
+	adapter._state = guest.duplicate(true)
+	adapter._current_id_token = "guest-id-token"
+	var link := {"session": {"appUserId": "linked-uid", "isLinkedAccount": true, "isAnonymous": false},
+		"firebaseCustomToken": "one-time-linked-token", "restored": true}
+	adapter._identity_busy = true
+	_expect((await adapter.adopt_account_link(link)).get("reason") == "firebase_identity_busy", "진행 중인 갱신과 복원을 동시에 시작했다")
+	_expect(not adapter.clear_local_state(), "신원 갱신 중 로컬 신원을 삭제했다")
+	adapter._identity_busy = false
+	var invalid: Dictionary = link.duplicate(true)
+	invalid["restored"] = false
+	_expect((await adapter.adopt_account_link(invalid)).get("reason") == "platform_uid_mismatch", "새 연결이라고 주장하며 UID를 바꿨다")
+	_expect(adapter.requests.is_empty(), "거부한 계정 전환이 Firebase에 도달했다")
+	adapter._api_key = ""
+	_expect((await adapter.adopt_account_link(link)).get("reason") == "firebase_api_key_missing", "설정 없는 복원을 Firebase에 보냈다")
+	_expect(adapter.requests.is_empty() and adapter._state == guest, "설정 없는 복원이 기존 신원을 바꿨다")
+	adapter._api_key = "api-key"
+	adapter.responses.append({"success": true, "data": {"localId": "wrong-uid", "idToken": "wrong-id", "refreshToken": "wrong-refresh"}})
+	_expect((await adapter.adopt_account_link(link)).get("reason") == "platform_uid_mismatch", "Firebase가 다른 UID를 반환해도 복원했다")
+	_expect(adapter._state == guest and adapter._current_id_token == "guest-id-token", "실패한 복원이 기존 신원을 바꿨다")
+	var response := {"success": true, "data": {"localId": "linked-uid", "idToken": "linked-id", "refreshToken": "linked-refresh", "expiresIn": "3600"}}
+	adapter.responses.append(response)
+	adapter.persist_success = false
+	platform.signed_in = true
+	_expect((await adapter.adopt_account_link(link)).get("reason") == "firebase_identity_persist_failed", "신원 저장 실패를 성공으로 알렸다")
+	_expect(adapter._state == guest and adapter._current_id_token == "guest-id-token", "저장 실패가 재시도 전에 신원을 바꿨다")
+	_expect(not platform.signed_in, "Firebase 복원 실패 후 불일치한 Platform 세션이 남았다")
+	adapter.persist_success = true
+	adapter.responses.append(response)
+	var result: Dictionary = await adapter.adopt_account_link(link)
+	_expect(result.get("success") == true and result.get("uid") == "linked-uid" and result.get("restored") == true, "기존 연결 계정 복원이 실패했다")
+	_expect(not adapter._state.has("id_token") and not "one-time-linked-token" in JSON.stringify(adapter._state), "복원 일회용 token이 저장됐다")
+	var linked_state: Dictionary = adapter._state.duplicate(true)
+	adapter.responses.append({"success": true, "data": {"user_id": "different-uid", "id_token": "different-token", "refresh_token": "different-refresh"}})
+	_expect((await adapter._refresh_identity()).get("reason") == "platform_uid_mismatch", "일반 갱신이 다른 계정으로 전환했다")
+	_expect(adapter._state == linked_state and adapter._current_id_token == "linked-id", "거부한 갱신이 연결 신원을 바꿨다")
+	adapter.free()
+	platform.free()
+
+
+func _check_account_link_disk_failure() -> void:
+	var platform := PlatformSpy.new()
+	root.add_child(platform)
+	var adapter := FirebaseAdapterSpy.new()
+	root.add_child(adapter)
+	adapter.configure({"firebase_api_key": "api-key", "platform_client": platform, "state_path": IDENTITY_PATH})
+	adapter.persist_to_disk = true
+	var guest := {"uid": "guest-uid", "refresh_token": "guest-refresh", "auth_provider": "platform_custom_token_v1", "expires_at": 0}
+	_expect(AtomicJsonStore.write(IDENTITY_PATH, guest), "복원 전 신원 저장 실패")
+	var original := FileAccess.get_file_as_string(IDENTITY_PATH)
+	var temp_path := IDENTITY_PATH + AtomicJsonStore.TEMP_SUFFIX
+	_expect(DirAccess.make_dir_absolute(temp_path) == OK, "저장 실패 조건 생성 실패")
+	var link := {"session": {"appUserId": "linked-uid", "isLinkedAccount": true, "isAnonymous": false},
+		"firebaseCustomToken": "one-time-linked-token", "restored": true}
+	var response := {"success": true, "data": {"localId": "linked-uid", "idToken": "linked-id", "refreshToken": "linked-refresh"}}
+	adapter.responses.append(response)
+	_expect((await adapter.adopt_account_link(link)).get("reason") == "firebase_identity_persist_failed", "파일 생성 실패 후 복원이 성공했다")
+	_expect(FileAccess.get_file_as_string(IDENTITY_PATH) == original and adapter.current_identity().get("uid") == "guest-uid", "저장 실패 후 이전 파일 또는 신원이 변경됐다")
+	_expect(DirAccess.remove_absolute(temp_path) == OK, "저장 실패 조건 제거 실패")
+	adapter.responses.append(response)
+	_expect((await adapter.adopt_account_link(link)).get("success") == true, "저장 복구 후 재시도 실패")
+	var reopened := FirebaseIdentityAdapter.new()
+	reopened.configure({"state_path": IDENTITY_PATH})
+	_expect(reopened.current_identity().get("uid") == "linked-uid", "재시작 후 복원 신원이 유실됐다")
+	var stored := FileAccess.get_file_as_string(IDENTITY_PATH)
+	_expect(not "one-time-linked-token" in stored and not "linked-id" in stored, "일회용 토큰 또는 ID 토큰이 파일에 남았다")
+	reopened.free()
 	adapter.free()
 	platform.free()
 

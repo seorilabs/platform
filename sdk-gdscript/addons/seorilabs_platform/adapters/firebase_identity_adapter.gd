@@ -23,6 +23,7 @@ var _current_id_token := ""
 var _loaded := false
 var _state_valid := true
 var _state_dirty := false
+var _identity_busy := false
 
 
 ## options:
@@ -44,6 +45,15 @@ func set_app_check_token(token: String) -> void:
 
 
 func ensure_identity() -> Dictionary:
+	if _identity_busy:
+		return _failure("firebase_identity_busy")
+	_identity_busy = true
+	var result: Dictionary = await _ensure_identity()
+	_identity_busy = false
+	return result
+
+
+func _ensure_identity() -> Dictionary:
 	_load_state_once()
 	if not _state_valid:
 		return _failure("firebase_identity_state_invalid")
@@ -94,7 +104,47 @@ func current_identity() -> Dictionary:
 	return _identity_result() if not _state.is_empty() else {}
 
 
+## 검증된 Platform account-links 응답을 Firebase 신원으로 영속화한다.
+## 복원 시 UID 전환 여부는 서버의 restored 값으로만 허용한다. 게임 저장본 전환은 앱의 책임이다.
+func adopt_account_link(link: Dictionary) -> Dictionary:
+	_load_state_once()
+	if _identity_busy:
+		return _failure("firebase_identity_busy")
+	if not _state_valid or _state.is_empty():
+		return _failure("firebase_identity_state_invalid")
+	if _platform_client == null or not _platform_client.has_method("sign_out"):
+		return _failure("platform_auth_sdk_unavailable")
+	var session: Variant = link.get("session")
+	var custom_token: Variant = link.get("firebaseCustomToken")
+	if not session is Dictionary or not session.get("isLinkedAccount") is bool or not session["isLinkedAccount"] \
+		or not session.get("isAnonymous") is bool or session["isAnonymous"] \
+		or not session.get("appUserId") is String or not custom_token is String or custom_token.is_empty() \
+		or not link.get("restored") is bool:
+		return _failure("platform_account_link_invalid")
+	var expected_uid := String(session.get("appUserId", ""))
+	if expected_uid.is_empty() or (link["restored"] == false and expected_uid != String(_state.get("uid", ""))):
+		return _failure("platform_uid_mismatch")
+	var previous_state := _state.duplicate(true)
+	var previous_token := _current_id_token
+	var previous_dirty := _state_dirty
+	_identity_busy = true
+	var result: Dictionary = await _exchange_platform_custom_token(custom_token, expected_uid)
+	_identity_busy = false
+	if not result.get("success", false):
+		# 실패한 복원이 다음 자동 갱신에서 뒤늦게 현재 UID를 바꾸지 않게 한다.
+		_state = previous_state
+		_current_id_token = previous_token
+		_state_dirty = previous_dirty
+		if _platform_client != null:
+			_platform_client.sign_out()
+		return result
+	result["restored"] = link["restored"]
+	return result
+
+
 func clear_local_state() -> bool:
+	if _identity_busy:
+		return false
 	_state = {}
 	_current_id_token = ""
 	_loaded = true
@@ -120,7 +170,12 @@ func _sign_in_with_platform_custom_token(existing_id_token: String, expected_uid
 	var custom_token := String(bridge_result.get("firebaseCustomToken", ""))
 	if custom_token.is_empty():
 		return _failure("platform_custom_token_missing")
+	return await _exchange_platform_custom_token(custom_token, expected_uid)
 
+
+func _exchange_platform_custom_token(custom_token: String, expected_uid: String) -> Dictionary:
+	if _api_key.is_empty():
+		return _failure("firebase_api_key_missing")
 	var result: Dictionary = await _request_json(
 		"%s/accounts:signInWithCustomToken?key=%s" % [IDENTITY_BASE_URL, _api_key.uri_encode()],
 		HTTPClient.METHOD_POST,
@@ -173,6 +228,9 @@ func _refresh_identity() -> Dictionary:
 	var next_refresh_token := String(data.get("refresh_token", refresh_token))
 	if next_uid.is_empty() or next_id_token.is_empty() or next_refresh_token.is_empty():
 		return _failure("firebase_token_refresh_invalid_response")
+	# 신원 전환은 adopt_account_link에서만 허용한다. 일반 갱신은 같은 UID다.
+	if next_uid != String(_state.get("uid", "")):
+		return _failure("platform_uid_mismatch")
 	_current_id_token = next_id_token
 	_state = {
 		"uid": next_uid,
@@ -195,6 +253,8 @@ func _request_json(
 	add_json_header: bool = true,
 ) -> Dictionary:
 	var request := HTTPRequest.new()
+	request.timeout = float(CALLBACK_TIMEOUT_MS) / 1000.0
+	request.body_size_limit = 256 * 1024
 	add_child(request)
 	var safe_headers := headers.duplicate()
 	if add_json_header and not safe_headers.has("Content-Type: application/json"):

@@ -53,6 +53,7 @@ func _initialize() -> void:
 	_check_loads()
 	_check_client_defaults()
 	_check_firebase_custom_token_bridge()
+	_check_account_link()
 	_check_auth_role_routing()
 	_check_event_context()
 	_check_event_context_request()
@@ -191,6 +192,58 @@ func _check_firebase_custom_token_bridge() -> void:
 	if invalid.is_empty() or bool(invalid[0].get("ok", true)):
 		_fail("짧은 삭제 접수증을 허용했다")
 
+	client.free()
+
+
+func _check_account_link() -> void:
+	var client := PlatformClient.new()
+	var transport := ScriptedTransport.new()
+	client._transport = transport
+	client.add_child(transport)
+	root.add_child(client)
+	client.configure({"base_url": "https://api.example", "auth_base_url": "https://auth.example", "app_id": "test-app"})
+	client._store_session(_session_result("guest-token", "guest-refresh", 3600))
+	client._credential = {"kind": "firebase-id-token", "value": "guest-firebase-token"}
+	_expect(not client.is_account_linked(), "게스트 세션을 연결 계정으로 해석했다")
+	var replies: Array[Dictionary] = []
+	var callback := func(response: Dictionary) -> void: replies.append(response)
+	client.begin_account_link("google", "", callback)
+	client.begin_account_link("unknown", "app-check", callback)
+	_expect(transport.requests.is_empty(), "잘못된 계정 연결 요청을 전송했다")
+	client.begin_account_link("google", "app-check", callback)
+	_expect(transport.requests.size() == 1, "계정 연결 challenge 요청이 없다")
+	var request: Dictionary = transport.requests[0]
+	_expect(request.get("base_url") == "https://api.example" and request.get("token") == "guest-token", "계정 연결 역할 또는 인증이 잘못됐다")
+	_expect(request.get("app_check_token") == "app-check" and request.get("no_retry") == true, "App Check 또는 자동 재시도 금지가 없다")
+	transport.respond(0, _success_response({"provider": "google", "nonce": "challenge", "expiresAt": "2026-09-12T12:00:00Z"}))
+	client.complete_account_link("google", "google-id-token", "challenge", "app-check", callback)
+	var linked_session := _session_result("linked-token", "linked-refresh", 3600)
+	linked_session["isLinkedAccount"] = true
+	linked_session["appUserId"] = "returning-user"
+	var linked_result := {"provider": "google", "restored": true, "firebaseCustomToken": "one-time-token", "session": linked_session}
+	transport.respond(1, _success_response(linked_result))
+	_expect(client.is_account_linked(), "연결 계정 세션을 저장하지 못했다")
+	_expect(client.current_session().get("appUserId") == "returning-user", "기존 계정 UID가 반영되지 않았다")
+	_expect(client._credential.is_empty(), "복원 뒤 이전 게스트 재로그인 credential이 남았다")
+	_expect(not client.current_session().has("firebaseCustomToken"), "일회용 custom token이 세션에 저장됐다")
+	for flag in [false, "true", 1, null]:
+		client._store_session(_session_result("guest-token", "guest-refresh", 3600))
+		var malformed: Dictionary = linked_result.duplicate(true)
+		malformed["session"]["isLinkedAccount"] = flag
+		client.complete_account_link("google", "google-id-token", "challenge", "app-check", callback)
+		transport.respond(transport.requests.size() - 1, _success_response(malformed))
+		_expect(replies.back().get("ok") == false and not client.is_account_linked(), "잘못된 연결 계정 응답을 받아들였다")
+	client.complete_account_link("apple", "apple-id-token", "challenge", "app-check", callback)
+	client.sign_out()
+	linked_result["provider"] = "apple"
+	transport.respond(transport.requests.size() - 1, _success_response(linked_result))
+	_expect(not client.is_signed_in() and replies.back().get("code") == "auth_state_changed", "늦은 계정 연결 응답이 로그아웃을 되돌렸다")
+	client._store_session(_session_result("guest-token", "guest-refresh", 3600))
+	client.complete_account_link("apple", "apple-id-token", "challenge", "app-check", callback)
+	client._refreshing = true
+	client._refresh_waiters.append({"callback": func(_token: String, _error: Dictionary) -> void: client.sign_out()})
+	transport.respond(transport.requests.size() - 1, _success_response(linked_result))
+	_expect(not client.is_signed_in() and replies.back().get("code") == "auth_state_changed", "갱신 취소 콜백의 로그아웃을 연결 응답이 되돌렸다")
 	client.free()
 
 

@@ -347,6 +347,82 @@ func is_anonymous() -> bool:
 	return bool(_session.get("isAnonymous", false))
 
 
+## Firebase로 인증한 게스트와 외부 계정 연결은 다른 사실이다.
+func is_account_linked() -> bool:
+	return _session.get("isLinkedAccount") is bool and _session["isLinkedAccount"]
+
+
+func begin_account_link(provider: String, app_check_token: String, callback: Callable) -> void:
+	_account_link_request("/v1/auth/account-link-challenges", {"provider": provider}, app_check_token, callback)
+
+
+func complete_account_link(provider: String, id_token: String, nonce: String,
+	app_check_token: String, callback: Callable) -> void:
+	if id_token.is_empty() or id_token.to_utf8_buffer().size() > 8192 or nonce.is_empty() or nonce.length() > 128:
+		callback.call(_client_error("request_invalid", "로그인 정보가 올바르지 않아요"))
+		return
+	_account_link_request("/v1/auth/account-links", {"provider": provider, "idToken": id_token, "nonce": nonce},
+		app_check_token, func(response: Dictionary) -> void:
+			if not response.get("ok", false):
+				callback.call(response)
+				return
+			var result: Variant = response.get("result")
+			if not result is Dictionary or not result.get("session") is Dictionary \
+				or not result.get("firebaseCustomToken") is String or String(result.get("firebaseCustomToken")).is_empty() \
+				or result.get("provider") != provider or not result.get("restored") is bool:
+				callback.call(_client_error("auth_invalid", "계정 연결 응답을 확인하지 못했어요"))
+				return
+			var next_session: Dictionary = result["session"]
+			if not _valid_linked_session(next_session):
+				callback.call(_client_error("auth_invalid", "연결 계정을 확인하지 못했어요"))
+				return
+			_auth_generation += 1
+			var linked_generation := _auth_generation
+			# 복원 후 이전 게스트 credential로 자동 재로그인하면 다른 계정으로 돌아간다.
+			# Firebase adapter의 adopt_account_link 성공 뒤 새 ID token으로 sign_in한다.
+			_credential = {}
+			_cancel_refresh_flight(_auth_state_changed_error())
+			if linked_generation != _auth_generation:
+				callback.call(_auth_state_changed_error())
+				return
+			_store_session(next_session)
+			callback.call(response if linked_generation == _auth_generation else _auth_state_changed_error())
+	)
+
+
+static func _valid_linked_session(session: Dictionary) -> bool:
+	if not session.get("isLinkedAccount") is bool or not session["isLinkedAccount"] \
+		or not session.get("isAnonymous") is bool or session["isAnonymous"]:
+		return false
+	for key in ["appUserId", "platformToken", "refreshToken"]:
+		if not session.get(key) is String or session[key].strip_edges().is_empty():
+			return false
+	return true
+
+
+func _account_link_request(path: String, body: Dictionary, app_check_token: String, callback: Callable) -> void:
+	if not body.get("provider") in ["kakao", "apple", "google"]:
+		callback.call(_client_error("request_invalid", "지원하지 않는 로그인 방식이에요"))
+		return
+	if app_check_token.strip_edges().is_empty():
+		callback.call(_client_error("app_check_required", "앱 인증을 확인하지 못했어요"))
+		return
+	var request_generation := _auth_generation
+	with_token(func(token: String, error: Dictionary) -> void:
+		if request_generation != _auth_generation:
+			callback.call(_auth_state_changed_error())
+			return
+		if token.is_empty():
+			callback.call(_auth_error_response(error))
+			return
+		_transport.request({"method": "POST", "path": path, "base_url": _api_base_url,
+			"token": token, "body": body, "app_check_token": app_check_token, "no_retry": true},
+			func(response: Dictionary) -> void:
+				callback.call(response if request_generation == _auth_generation else _auth_state_changed_error())
+		)
+	)
+
+
 ## 유효한 토큰을 콜백으로 준다. 필요하면 갱신한다.
 ##
 ## 콜백은 (token: String, error: Dictionary)를 받는다.
@@ -561,6 +637,7 @@ func _store_session(result: Dictionary) -> void:
 		"supportCode": String(result.get("supportCode", "")),
 		"appUserId": String(result.get("appUserId", "")),
 		"isAnonymous": bool(result.get("isAnonymous", false)),
+		"isLinkedAccount": result.get("isLinkedAccount") is bool and result["isLinkedAccount"],
 		# 공개 current_session의 expiresAt은 기기 sleep과 무관한 Unix epoch ms다.
 		"expiresAt": _now_unix_ms() + int(result.get("expiresIn", 3600)) * 1000,
 	}
