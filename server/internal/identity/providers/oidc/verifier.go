@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -15,20 +16,23 @@ import (
 )
 
 const (
-	ProviderKakao = "kakao"
-	ProviderApple = "apple"
+	ProviderKakao  = "kakao"
+	ProviderApple  = "apple"
+	ProviderGoogle = "google"
 
-	kakaoIssuer = "https://kauth.kakao.com"
-	kakaoJWKS   = "https://kauth.kakao.com/.well-known/jwks.json"
-	appleIssuer = "https://appleid.apple.com"
-	appleJWKS   = "https://appleid.apple.com/auth/keys"
+	kakaoIssuer  = "https://kauth.kakao.com"
+	kakaoJWKS    = "https://kauth.kakao.com/.well-known/jwks.json"
+	appleIssuer  = "https://appleid.apple.com"
+	appleJWKS    = "https://appleid.apple.com/auth/keys"
+	googleIssuer = "https://accounts.google.com"
+	googleJWKS   = "https://www.googleapis.com/oauth2/v3/certs"
 )
 
 type nonceTransform func(string) string
 
 type Verifier struct {
 	provider       string
-	issuer         string
+	issuers        []string
 	keys           *jwksCache
 	nonceTransform nonceTransform
 	now            func() time.Time
@@ -55,7 +59,7 @@ func New(config Config) (*Verifier, error) {
 		config.NonceTransform = func(value string) string { return value }
 	}
 	return &Verifier{
-		provider: config.Provider, issuer: config.Issuer,
+		provider: config.Provider, issuers: []string{config.Issuer},
 		keys:           newJWKSCache(config.JWKSURL, config.Client, config.Now),
 		nonceTransform: config.NonceTransform, now: config.Now,
 	}, nil
@@ -73,6 +77,17 @@ func NewApple(client *http.Client) (*Verifier, error) {
 			return hex.EncodeToString(sum[:])
 		},
 	})
+}
+
+func NewGoogle(client *http.Client) (*Verifier, error) {
+	verifier, err := New(Config{Provider: ProviderGoogle, Issuer: googleIssuer, JWKSURL: googleJWKS, Client: client})
+	if err != nil {
+		return nil, err
+	}
+	// Google의 공식 ID token 계약은 scheme 없는 이전 issuer도 허용한다.
+	// 토큰에서 issuer나 JWKS 주소를 고르지 않고 두 고정 문자열만 대조한다.
+	verifier.issuers = append(verifier.issuers, "accounts.google.com")
+	return verifier, nil
 }
 
 func (v *Verifier) Name() string { return v.provider }
@@ -101,7 +116,6 @@ func (v *Verifier) Verify(
 		return v.keys.key(ctx, kid)
 	},
 		jwt.WithValidMethods([]string{"RS256"}),
-		jwt.WithIssuer(v.issuer),
 		jwt.WithAudience(providerConfig.Audience),
 		jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(),
@@ -116,6 +130,10 @@ func (v *Verifier) Verify(
 		}
 		return "", platformerr.Wrap(err, platformerr.CodeAuthInvalid,
 			"로그인 토큰을 확인할 수 없어요")
+	}
+	if !slices.Contains(v.issuers, parsedClaims.Issuer) {
+		return "", platformerr.New(platformerr.CodeAuthInvalid,
+			"로그인 토큰의 발급자가 올바르지 않아요")
 	}
 	if parsedClaims.IssuedAt == nil {
 		return "", platformerr.New(platformerr.CodeAuthInvalid,

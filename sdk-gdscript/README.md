@@ -89,6 +89,35 @@ platform.verify_purchase(
 )
 ```
 
+### Google·Apple 계정 연결과 복원
+
+Firebase Custom Token 게스트는 `isAnonymous=false`여도 복구 가능한 연결
+계정은 아니다. 구매 허용은 서버의 `isLinkedAccount`와 앱 registry의
+`iap.require_linked_account`로 판정한다. Google·Apple·Kakao 연결은 등록된
+audience와 유효한 Firebase App Check 토큰이 필요하다.
+
+1. `identity.ensure_identity()`의 ID token으로 `platform.sign_in`한다.
+2. `platform.begin_account_link(provider, app_check_token, callback)`으로
+   challenge를 받는다. 네이티브 로그인에는 Google은 원본 nonce,
+   Apple은 nonce의 SHA-256 hex를 전달한다.
+3. 네이티브 SDK가 반환한 ID token과 **원본 nonce**를
+   `platform.complete_account_link(provider, id_token, nonce, app_check_token, callback)`에 보낸다.
+4. 성공 envelope의 `result`를 `await identity.adopt_account_link(result)`에
+   전달한다. 성공한 새 Firebase ID token으로 다시 `platform.sign_in`한다.
+   Custom Token과 ID token은 로그나 파일에 저장하지 않는다.
+
+처음 연결하면 UID를 유지한다. 미연결 기기에서 이미 연결된 계정을 인증하면
+`restored=true`와 기존 UID가 반환된다. 두 연결 계정의 자동 병합은 지원하지 않는다.
+연결 요청은 자동 재시도하지 않으며 로그아웃 뒤 도착한 응답은 폐기한다.
+Firebase 교환이나 디스크 저장 실패는 이전 Firebase 신원을 보존하고 Platform
+세션을 비운다. 재시도는 이전 신원으로 로그인하고 새 challenge를 받는 순서다.
+
+**게임 저장 전환은 앱의 책임이다.** 계정 연결을 시작하기 전에 진행을 보존하고
+원격 저장 업로드를 중단한다. `restored=true`이면 해당 UID의 원격 저장을 먼저
+확인·적용하고 원자적으로 저장한 뒤 업로드를 재개한다. 앱 종료 후에도 복원
+대기 상태를 식별할 수 있어야 한다. 일반 `ensure_identity()`의 토큰 갱신은
+UID 전환을 허용하지 않는다.
+
 ### Apple 테스트 환경
 
 `iap_environment`에 `"production"`, `"sandbox"` 또는 그 문자열을 반환하는
