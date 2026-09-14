@@ -2,6 +2,7 @@ package events
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,12 @@ import (
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
 
 func TestMeasurementProtocolSendsAcceptedRowsWithoutAdConsent(t *testing.T) {
 	var received ga4Request
@@ -82,5 +89,23 @@ func TestMeasurementProtocolSkipsLegacyClientAndRetriesConfigurationFailures(t *
 
 	if err := legacy.Send(t.Context(), app, []*Row{row}); platformerr.CodeOf(err) != platformerr.CodeConfigUnavailable || requests != 1 {
 		t.Fatalf("GA4 upstream 실패가 재시도 오류로 보존되지 않았다: err=%v requests=%d", err, requests)
+	}
+}
+
+func TestMeasurementProtocolDoesNotExposeSecretInTransportError(t *testing.T) {
+	const secret = "never-log-this-secret"
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, errors.New("request failed: " + r.URL.String())
+	})}
+	sender := NewMeasurementProtocol(map[string]string{"jomul": secret}, client)
+	app := registry.App{AppID: "jomul", GA4: registry.GA4Config{EventPrefix: "jomul_", MeasurementID: "G-TEST1234"}}
+	row := &Row{EventID: "event-1", EventTS: time.Now(), EventName: "session_start", GA4ClientID: "client-1"}
+
+	err := sender.Send(t.Context(), app, []*Row{row})
+	if platformerr.CodeOf(err) != platformerr.CodeConfigUnavailable {
+		t.Fatalf("transport 오류 code = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "api_secret") {
+		t.Fatalf("transport 오류에 비밀 query가 노출됐다: %v", err)
 	}
 }

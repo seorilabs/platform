@@ -85,7 +85,9 @@ GA4는 앱별 속성이 분리되어 있어 절대 줄 수 없는 것이다.
 allowlist 밖 이벤트는 **조용히 버린다.** 기존 dual-sink 앱은 클라이언트 GA4 경로가 계속 가지만,
 Platform의 서버 중계를 쓰는 앱은 허용된 이벤트만 GA4에도 전달한다. 이 차이는 앱 registry의
 `ga4.measurement_id` 존재 여부로 명시한다. Measurement Protocol `api_secret`은 registry나 앱
-산출물에 두지 않고 ingest role 전용 secret으로 주입한다.
+산출물에 두지 않고 ingest role 전용 secret으로 주입한다. BigQuery 원장 적재가 성공한 뒤 GA4
+중계가 실패해도 앱에는 수락을 반환한다. GA4 장애를 앱 재시도로 전파하면 이미 적재된 BigQuery
+행만 중복되기 때문이다. 중계 실패는 secret 없는 운영 경고로 관측한다.
 
 ## PII
 

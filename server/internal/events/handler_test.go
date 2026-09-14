@@ -62,6 +62,22 @@ func TestBuildRowsUsesTransportSessionParameter(t *testing.T) {
 	}
 }
 
+type failingGA4Sender struct{ calls int }
+
+func (s *failingGA4Sender) Send(context.Context, registry.App, []*Row) error {
+	s.calls++
+	return platformerr.New(platformerr.CodeConfigUnavailable, "upstream unavailable")
+}
+
+func TestForwardGA4IsBestEffort(t *testing.T) {
+	sender := &failingGA4Sender{}
+	h := &Handler{ga4: sender}
+	h.forwardGA4(t.Context(), registry.App{AppID: "jomul"}, []*Row{{EventID: "event-1"}})
+	if sender.calls != 1 {
+		t.Fatalf("GA4 sender 호출 횟수 = %d", sender.calls)
+	}
+}
+
 type deletionAppSource struct{ app registry.App }
 
 func (s deletionAppSource) LoadApps(context.Context) ([]registry.App, error) {

@@ -135,15 +135,26 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 		if err := h.collector.Insert(r.Context(), rows); err != nil {
 			return err
 		}
-		if h.ga4 != nil {
-			if err := h.ga4.Send(r.Context(), app, rows); err != nil {
-				return err
-			}
-		}
+		h.forwardGA4(r.Context(), app, rows)
 	}
 
 	httpx.WriteOK(w, http.StatusOK, ingestResponse{Accepted: len(rows), Dropped: dropped})
 	return nil
+}
+
+// forwardGA4는 BigQuery 원장 적재와 앱 응답을 GA4 가용성에서 분리한다. 여기서 실패를
+// 앱 재시도로 돌리면 이미 적재된 행이 중복되므로 운영 경고만 남기고 수락을 유지한다.
+func (h *Handler) forwardGA4(ctx context.Context, app registry.App, rows []*Row) {
+	if h.ga4 == nil {
+		return
+	}
+	if err := h.ga4.Send(ctx, app, rows); err != nil {
+		slog.WarnContext(ctx, "GA4 이벤트 중계 실패",
+			"app_id", app.AppID,
+			"event_count", len(rows),
+			"code", platformerr.CodeOf(err),
+		)
+	}
 }
 
 func (h *Handler) buildRows(

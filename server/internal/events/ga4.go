@@ -135,7 +135,9 @@ func (m *MeasurementProtocol) Send(ctx context.Context, app registry.App, rows [
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return platformerr.Wrap(err, platformerr.CodeConfigUnavailable, "GA4에 이벤트를 보내지 못했어요")
+		// *url.Error는 요청 URL 전체를 문자열에 넣는다. query에는 api_secret이 있으므로
+		// 원본 오류를 감싸거나 로그에 넘기지 않는다.
+		return platformerr.New(platformerr.CodeConfigUnavailable, "GA4에 이벤트를 보내지 못했어요")
 	}
 	defer func() {
 		_ = resp.Body.Close()
