@@ -14,7 +14,8 @@
   },
   "ads": {
     "providers": [
-      "admob"
+      "admob",
+      "apps_in_toss"
     ],
     "placements": [
       {
@@ -24,6 +25,9 @@
           "admob": {
             "android_ad_unit_id": "ca-app-pub-2444587584524186/1396162476",
             "ios_ad_unit_id": "ca-app-pub-2444587584524186/4203846143"
+          },
+          "apps_in_toss": {
+            "ad_group_id": "ait.v2.live.d6bba0043afa4672"
           }
         },
         "reward": {
@@ -41,5 +45,10 @@
     "event_prefix": "jomul_"
   },
   "platform_event_allowlist": [],
-  "cors_origins": []
+  "cors_origins": [
+    "https://jomul-game.apps.tossmini.com",
+    "https://jomul-game.private-apps.tossmini.com",
+    "https://jomul-game.web.tossmini.com",
+    "https://jomul-game.private-web.tossmini.com"
+  ]
 }

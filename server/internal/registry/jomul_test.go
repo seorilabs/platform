@@ -7,9 +7,9 @@ import (
 )
 
 // 조물조물의 클라이언트는 힌트 보상 지면 하나만 요청한다. placement id, 보상 key, 보상량,
-// 하루 한도는 게임 코드의 상수와 짝을 이룬다 — JmGodotAdMobAds.PLACEMENT/REWARD_KEY 와
-// JmHintEconomy.REWARDED_AD_GRANT/REWARDED_AD_DAILY_CAP. 레지스트리만 움직이면 이미 마켓에
-// 나간 빌드에서 claim 이 전부 거부되므로 여기서 짝을 고정한다.
+// 하루 한도는 게임 코드의 상수와 짝을 이룬다 — JmGodotAdMobAds 및 JmAitRewardedAds 의
+// PLACEMENT/REWARD_KEY 와 JmHintEconomy.REWARDED_AD_GRANT/REWARDED_AD_DAILY_CAP.
+// 레지스트리만 움직이면 이미 마켓에 나간 빌드에서 claim 이 전부 거부되므로 여기서 짝을 고정한다.
 func TestJomulAdsRegistryContract(t *testing.T) {
 	source := NewFSSource(os.DirFS("../../../registry"), "apps")
 	apps, err := source.LoadApps(context.Background())
@@ -76,5 +76,68 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	if provider.RewardItem != "" || provider.RewardAmount != 0 {
 		t.Fatalf("AdMob 콘솔 보상 계약이 registry에 박혔다: item=%q amount=%d",
 			provider.RewardItem, provider.RewardAmount)
+	}
+
+	// AIT는 서버형 SSV가 없어 광고 SDK의 userEarnedReward를 받은 뒤 Platform이
+	// client_confirmed claim으로 확정한다. provider나 그룹 ID가 빠지면 사용자에게 광고를
+	// 끝까지 보게 하고도 claim 생성 단계에서 막히므로, 콘솔에서 만든 그룹과 함께 고정한다.
+	ait, ok := placement.Providers["apps_in_toss"]
+	if !ok {
+		t.Fatal("AppsInToss provider 설정이 없다")
+	}
+	if ait.AdGroupID != "ait.v2.live.d6bba0043afa4672" {
+		t.Fatalf("AppsInToss ad group=%q", ait.AdGroupID)
+	}
+}
+
+// AppsInToss SDK 2.x와 3.x의 실제·private WebView origin 모두에서 보상형 광고 claim과
+// 토스 로그인 세션 요청이 CORS를 통과해야 한다. app_id `jomul`이 아니라 콘솔 appName
+// `jomul-game`이 호스트 이름이므로, 둘을 혼동하면 preview에서만 전부 실패한다.
+func TestJomulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
+	source := NewFSSource(os.DirFS("../../../registry"), "apps")
+	apps, err := source.LoadApps(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var jomul *App
+	for i := range apps {
+		if apps[i].AppID == "jomul" {
+			jomul = &apps[i]
+			break
+		}
+	}
+	if jomul == nil {
+		t.Fatal("jomul registry가 없다")
+	}
+
+	required := map[string]string{
+		"https://jomul-game.apps.tossmini.com":         "AppsInToss SDK 2.x 실제 서비스",
+		"https://jomul-game.private-apps.tossmini.com": "AppsInToss SDK 2.x 콘솔 preview",
+		"https://jomul-game.web.tossmini.com":          "AppsInToss SDK 3.x 실제 서비스",
+		"https://jomul-game.private-web.tossmini.com":  "AppsInToss SDK 3.x 콘솔 preview",
+	}
+	present := make(map[string]bool, len(jomul.CORSOrigins))
+	for _, origin := range jomul.CORSOrigins {
+		if present[origin] {
+			t.Errorf("cors_origins 에 %q 가 중복이다", origin)
+		}
+		present[origin] = true
+	}
+	for origin, why := range required {
+		if !present[origin] {
+			t.Errorf("cors_origins 에 %q 가 없다 — %s 번들이 막힌다", origin, why)
+		}
+	}
+
+	r := New(staticRegistrySource{apps: []App{*jomul}})
+	for origin := range required {
+		allowed, err := r.AllowsCORSOrigin(context.Background(), origin)
+		if err != nil {
+			t.Fatalf("AllowsCORSOrigin(%q) error = %v", origin, err)
+		}
+		if !allowed {
+			t.Errorf("등록된 origin 인데 거부됐다: %s", origin)
+		}
 	}
 }
