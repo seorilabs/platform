@@ -44,7 +44,7 @@ flowchart LR
       "apple": { "audience": "com.seorilabs.lizardtycoon" }
     }
   },
-  "ga4": { "event_prefix": "" },
+  "ga4": { "event_prefix": "", "measurement_id": "G-XXXXXXXXXX" },
   "platform_event_allowlist": ["purchase_verified", "..."],
   "iap": {
     "ledger_environment": "production",  // sandbox | production
@@ -62,6 +62,10 @@ flowchart LR
   ]
 }
 ```
+
+`ga4.measurement_id`는 Platform ingest가 허용 이벤트를 GA4 Measurement Protocol로 중계하는
+앱에만 둔다. 공개 stream 식별자만 registry에 저장하며 `api_secret`은
+`GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON` Secret Manager 값으로 ingest role에만 주입한다.
 
 `cors_origins`는 경로가 없는 정확한 `http` 또는 `https` origin만 허용한다.
 AppsInToss WebView 앱은 실제 서비스와 콘솔 QR 테스트 origin을 각각 등록한다.
