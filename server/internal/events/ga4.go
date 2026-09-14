@@ -137,7 +137,9 @@ func (m *MeasurementProtocol) Send(ctx context.Context, app registry.App, rows [
 	if err != nil {
 		return platformerr.Wrap(err, platformerr.CodeConfigUnavailable, "GA4에 이벤트를 보내지 못했어요")
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return platformerr.Wrap(
