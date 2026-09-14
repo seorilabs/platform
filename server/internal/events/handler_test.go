@@ -48,6 +48,36 @@ func TestBuildRowsCopiesContextAndDropsUnknownEvent(t *testing.T) {
 	}
 }
 
+func TestBuildRowsUsesTransportSessionParameter(t *testing.T) {
+	now := time.Date(2026, 9, 14, 6, 0, 0, 0, time.UTC)
+	h := &Handler{collector: &Collector{now: func() time.Time { return now }}}
+	app := registry.App{AppID: "jomul", PlatformEventAllowlist: []string{"session_start"}, GA4: registry.GA4Config{EventPrefix: "jomul_"}}
+	req := ingestRequest{Events: []clientEvent{{
+		EventID: "event-1", Name: "jomul_session_start",
+		Params: map[string]any{"session_id": "1726293600", "engagement_time_msec": float64(1)},
+	}}}
+	rows, dropped := h.buildRows(context.Background(), app, req, "")
+	if dropped != 0 || len(rows) != 1 || rows[0].SessionID != "1726293600" {
+		t.Fatalf("전송 전용 session_id를 행에 보존하지 못했다: rows=%#v dropped=%d", rows, dropped)
+	}
+}
+
+type failingGA4Sender struct{ calls int }
+
+func (s *failingGA4Sender) Send(context.Context, registry.App, []*Row) error {
+	s.calls++
+	return platformerr.New(platformerr.CodeConfigUnavailable, "upstream unavailable")
+}
+
+func TestForwardGA4IsBestEffort(t *testing.T) {
+	sender := &failingGA4Sender{}
+	h := &Handler{ga4: sender}
+	h.forwardGA4(t.Context(), registry.App{AppID: "jomul"}, []*Row{{EventID: "event-1"}})
+	if sender.calls != 1 {
+		t.Fatalf("GA4 sender 호출 횟수 = %d", sender.calls)
+	}
+}
+
 type deletionAppSource struct{ app registry.App }
 
 func (s deletionAppSource) LoadApps(context.Context) ([]registry.App, error) {

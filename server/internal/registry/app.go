@@ -93,6 +93,9 @@ type GA4Config struct {
 	// GA4로는 기존 이름 그대로 보내 시계열을 끊지 않는다.
 	EventPrefix string `json:"event_prefix" firestore:"event_prefix"`
 	PropertyID  string `json:"property_id,omitempty" firestore:"property_id,omitempty"`
+	// MeasurementID는 Measurement Protocol을 보낼 공개 Web stream 식별자다.
+	// api_secret은 레지스트리가 아니라 ingest role 전용 Secret Manager에 둔다.
+	MeasurementID string `json:"measurement_id,omitempty" firestore:"measurement_id,omitempty"`
 }
 
 type IAPConfig struct {
@@ -213,6 +216,7 @@ var admobUnitPattern = regexp.MustCompile(`^ca-app-pub-[0-9]{16}/[0-9]{10}$`)
 var gcsBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
 var contentPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9/_-]{0,127}$`)
 var authProviderAudiencePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,256}$`)
+var ga4MeasurementIDPattern = regexp.MustCompile(`^G-[A-Z0-9]{4,20}$`)
 
 // 추적 파라미터를 허용하지 않는다. &hl=ko나 &utm_source=가 붙은 채 굳으면
 // 나중에 아무도 걷어내지 못한다.
@@ -251,6 +255,14 @@ func (a App) Validate() error {
 		}
 		if _, err := strconv.ParseUint(a.GA4.PropertyID, 10, 64); err != nil || a.GA4.PropertyID == "0" {
 			return fmt.Errorf("%s: account deletion needs a GA4 property", a.AppID)
+		}
+	}
+	if a.GA4.MeasurementID != "" {
+		if !a.FeatureEnabled("events") {
+			return fmt.Errorf("%s: GA4 measurement에는 events 기능이 필요하다", a.AppID)
+		}
+		if !ga4MeasurementIDPattern.MatchString(a.GA4.MeasurementID) {
+			return fmt.Errorf("%s: GA4 measurement_id가 올바르지 않다", a.AppID)
 		}
 	}
 	switch a.Status {

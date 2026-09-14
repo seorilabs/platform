@@ -223,7 +223,7 @@ jobs:
             --image="${{ needs.build.outputs.image }}" \
             --service-account="$INGEST_RUNTIME_SA" \
             --update-env-vars="PLATFORM_PRESENCE_EDGE_URL=${PLATFORM_PRESENCE_EDGE_URL}" \
-            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,PLATFORM_PRESENCE_PRIVATE_KEY=platform-presence-private-key:latest" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,PLATFORM_PRESENCE_PRIVATE_KEY=platform-presence-private-key:latest,GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=ga4-measurement-protocol-secrets:latest" \
             --quiet
 
           gcloud run deploy platform-iap \
@@ -319,6 +319,39 @@ jobs:
           [ -z "$actual" ] || fail=1
 
           [ "$fail" -eq 0 ] || { echo "세션 secret role 경계가 올바르지 않다." >&2; exit 1; }
+
+      # Measurement Protocol api_secret은 GA4로 fan-out하는 ingest role에만 둔다.
+      # registry에는 공개 measurement ID만 있고, 앱 산출물에는 secret을 넣지 않는다.
+      - name: Assert GA4 secret boundary
+        run: |
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r '[.spec.template.spec.containers[0].env[]?
+                | select(.name == "GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON")
+                | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          fail=0
+          actual=$(service_secret platform-ingest)
+          printf '%-18s GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=%s\n' platform-ingest "${actual:-<absent>}"
+          [ "$actual" = "ga4-measurement-protocol-secrets" ] || fail=1
+
+          for target in platform-api platform-iap platform-admin platform-ads; do
+            actual=$(service_secret "$target")
+            printf '%-18s GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=%s\n' "$target" "${actual:-<absent>}"
+            [ -z "$actual" ] || fail=1
+          done
+
+          actual=$(gcloud run jobs describe platform-worker \
+            --project="$PROJECT_ID" --region="$REGION" --format=json \
+            | jq -r '[.spec.template.spec.template.spec.containers[0].env[]?
+              | select(.name == "GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON")
+              | .valueFrom.secretKeyRef.name] | first // ""')
+          printf '%-18s GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=%s\n' platform-worker "${actual:-<absent>}"
+          [ -z "$actual" ] || fail=1
+
+          [ "$fail" -eq 0 ] || { echo "GA4 secret role 경계가 올바르지 않다." >&2; exit 1; }
 
       # 카카오 Admin Key는 운글 연결 해제 callback을 검증하는 API role에만 둔다.
       # 값은 읽지 않고 앱 ID와 Secret Manager 참조 이름만 확인한다.

@@ -51,6 +51,40 @@ func TestIngestRequiresPlatformSessionSecret(t *testing.T) {
 	}
 }
 
+func TestGA4MeasurementProtocolSecretsAreIngestOnlyAndStrict(t *testing.T) {
+	t.Setenv("PLATFORM_ROLE", string(RoleIngest))
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
+	t.Setenv("PLATFORM_SESSION_SECRET", strings.Repeat("s", 64))
+	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `{"jomul":"secret-value"}`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("ingest GA4 config load 실패: %v", err)
+	}
+	if cfg.GA4MeasurementProtocolSecrets["jomul"] != "secret-value" {
+		t.Fatal("ingest가 앱 범위 GA4 secret을 읽지 않았다")
+	}
+
+	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `{}`)
+	if _, err := Load(); err == nil {
+		t.Fatal("빈 GA4 secret map을 허용했다")
+	}
+	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `{"Jomul":"secret-value"}`)
+	if _, err := Load(); err == nil {
+		t.Fatal("유효하지 않은 app_id의 GA4 secret을 허용했다")
+	}
+
+	setAPIConfigEnv(t)
+	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `not-json`)
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("API role이 ingest 전용 GA4 secret을 읽었다: %v", err)
+	}
+	if len(cfg.GA4MeasurementProtocolSecrets) != 0 {
+		t.Fatal("API role에 GA4 secret이 조립됐다")
+	}
+}
+
 func TestOperationalConfigRequiresPairAndPreservesSharedSecret(t *testing.T) {
 	t.Setenv("PLATFORM_ROLE", string(RoleAPI))
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")

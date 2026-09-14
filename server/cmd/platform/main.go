@@ -98,6 +98,7 @@ type deps struct {
 	blocklist       *blocklist.Service
 	keys            *identity.KeyCache
 	events          *events.Collector
+	ga4             *events.MeasurementProtocol
 	config          *remoteconfig.Service
 	iap             *iapParts
 	ads             *adsParts
@@ -132,6 +133,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		blocklist: blocklist.NewService(blocklist.NewStoreSource(st)),
 	}
 	if cfg.Role == config.RoleIngest {
+		d.ga4 = events.NewMeasurementProtocol(cfg.GA4MeasurementProtocolSecrets, nil)
 		var issuer presence.TokenIssuer
 		if cfg.Presence.Enabled() {
 			privateKey, err := presence.ParsePrivateKey(cfg.Presence.PrivateKeyRaw)
@@ -451,7 +453,7 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		if d.identity != nil {
 			sessions = d.identity
 		}
-		events.NewHandler(d.events, d.registry, sessions).Register(mux)
+		events.NewHandler(d.events, d.registry, sessions).WithGA4(d.ga4).Register(mux)
 		if d.presence == nil {
 			return nil, errors.New("ingest role에 presence handler가 필요하다")
 		}

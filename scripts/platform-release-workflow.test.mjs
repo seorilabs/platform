@@ -176,4 +176,14 @@ describe('Platform release workflow 계약', () => {
       /\$\{\{ env\.REGISTRY \}\}\/\$\{\{ env\.IMAGE_PATH \}\}:buildcache/u,
     );
   });
+
+  it('GA4 Measurement Protocol secret은 ingest role에만 마운트한다', async () => {
+    const source = await workflow('deploy.yml');
+    assert.match(
+      source,
+      /platform-ingest[\s\S]*GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=ga4-measurement-protocol-secrets:latest/u,
+    );
+    assert.match(source, /name: Assert GA4 secret boundary/u);
+    assert.match(source, /\[ "\$actual" = "ga4-measurement-protocol-secrets" \]/u);
+  });
 });

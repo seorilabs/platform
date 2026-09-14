@@ -3,8 +3,46 @@ package registry
 import (
 	"context"
 	"os"
+	"reflect"
 	"testing"
 )
+
+func TestJomulAnalyticsRegistryContract(t *testing.T) {
+	source := NewFSSource(os.DirFS("../../../registry"), "apps")
+	apps, err := source.LoadApps(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jomul *App
+	for i := range apps {
+		if apps[i].AppID == "jomul" {
+			jomul = &apps[i]
+			break
+		}
+	}
+	if jomul == nil {
+		t.Fatal("jomul registry가 없다")
+	}
+	if !jomul.FeatureEnabled("events") {
+		t.Fatal("조물조물 events 기능이 비활성이다")
+	}
+	if jomul.GA4.EventPrefix != "jomul_" || jomul.GA4.MeasurementID != "G-6PXDPK349G" {
+		t.Fatalf("조물조물 GA4 계약이 다르다: %#v", jomul.GA4)
+	}
+	want := []string{
+		"session_start", "clock_rollback_detected", "merge_attempt", "element_discovered",
+		"recipe_discovered", "chapter_cleared", "chapter_complete", "chapter_unlocked",
+		"save_migrated", "hint_used", "hint_earned", "onboarding_start",
+		"onboarding_complete", "onboarding_skip", "rewarded_complete", "element_read",
+		"easter_egg_found", "rewarded_start", "dictionary_open", "stuck", "save_failed",
+	}
+	if !reflect.DeepEqual(jomul.PlatformEventAllowlist, want) {
+		t.Fatalf("조물조물 이벤트 allowlist가 다르다\n got: %#v\nwant: %#v", jomul.PlatformEventAllowlist, want)
+	}
+	if jomul.EventAllowed("email") || jomul.EventAllowed("screen_view") {
+		t.Fatal("등록하지 않은 이벤트가 허용됐다")
+	}
+}
 
 // 조물조물의 클라이언트는 힌트 보상 지면 하나만 요청한다. placement id, 보상 key, 보상량,
 // 하루 한도는 게임 코드의 상수와 짝을 이룬다 — JmGodotAdMobAds 및 JmAitRewardedAds 의
@@ -16,7 +54,6 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	var jomul *App
 	for i := range apps {
 		if apps[i].AppID == "jomul" {
@@ -78,9 +115,8 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 			provider.RewardItem, provider.RewardAmount)
 	}
 
-	// AIT는 서버형 SSV가 없어 광고 SDK의 userEarnedReward를 받은 뒤 Platform이
-	// client_confirmed claim으로 확정한다. provider나 그룹 ID가 빠지면 사용자에게 광고를
-	// 끝까지 보게 하고도 claim 생성 단계에서 막히므로, 콘솔에서 만든 그룹과 함께 고정한다.
+	// AIT는 서버형 SSV가 없어 광고 SDK의 userEarnedReward를 받은 뒤 로컬 exactly-once 원장으로
+	// 확정한다. provider나 그룹 ID가 빠지면 광고 자체가 로드되지 않으므로 콘솔 그룹을 고정한다.
 	ait, ok := placement.Providers["apps_in_toss"]
 	if !ok {
 		t.Fatal("AppsInToss provider 설정이 없다")
@@ -90,16 +126,14 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	}
 }
 
-// AppsInToss SDK 2.x와 3.x의 실제·private WebView origin 모두에서 보상형 광고 claim과
-// 토스 로그인 세션 요청이 CORS를 통과해야 한다. app_id `jomul`이 아니라 콘솔 appName
-// `jomul-game`이 호스트 이름이므로, 둘을 혼동하면 preview에서만 전부 실패한다.
+// AppsInToss SDK 2.x와 3.x의 실제·private WebView origin 모두에서 익명 이벤트와
+// 광고 요청이 CORS를 통과해야 한다. app_id와 콘솔 appName을 혼동하면 preview에서만 실패한다.
 func TestJomulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
 	source := NewFSSource(os.DirFS("../../../registry"), "apps")
 	apps, err := source.LoadApps(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	var jomul *App
 	for i := range apps {
 		if apps[i].AppID == "jomul" {
