@@ -82,7 +82,10 @@ GA4는 앱별 속성이 분리되어 있어 절대 줄 수 없는 것이다.
 
 이유는 비용이다. happy-farm이 **유저당 862 이벤트/일**을 보내고 있는데(다른 앱의 15~25배), 이런 걸 전부 받으면 BigQuery 비용과 ingest QPS가 규모에 비례해 늘어난다. allowlist가 이를 **상수로 묶는다.**
 
-allowlist 밖 이벤트는 **조용히 버린다.** GA4로는 여전히 간다.
+allowlist 밖 이벤트는 **조용히 버린다.** 기존 dual-sink 앱은 클라이언트 GA4 경로가 계속 가지만,
+Platform의 서버 중계를 쓰는 앱은 허용된 이벤트만 GA4에도 전달한다. 이 차이는 앱 registry의
+`ga4.measurement_id` 존재 여부로 명시한다. Measurement Protocol `api_secret`은 registry나 앱
+산출물에 두지 않고 ingest role 전용 secret으로 주입한다.
 
 ## PII
 

@@ -6,6 +6,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -52,6 +53,8 @@ type Config struct {
 	Operational OperationalConfig
 	KakaoUnlink KakaoUnlinkConfig
 	Presence    PresenceConfig
+	// Measurement Protocol api_secret은 ingest role에만 주입한다.
+	GA4MeasurementProtocolSecrets map[string]string
 }
 
 // OperationalConfig는 확정 이벤트를 Backoffice에 서명해 전달하는 설정이다.
@@ -166,9 +169,34 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		c.Presence = presence
+		ga4Secrets, err := loadGA4MeasurementProtocolSecrets()
+		if err != nil {
+			return Config{}, err
+		}
+		c.GA4MeasurementProtocolSecrets = ga4Secrets
 	}
 
 	return c, nil
+}
+
+func loadGA4MeasurementProtocolSecrets() (map[string]string, error) {
+	raw := strings.TrimSpace(os.Getenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON"))
+	if raw == "" {
+		return map[string]string{}, nil
+	}
+	var secrets map[string]string
+	if err := json.Unmarshal([]byte(raw), &secrets); err != nil {
+		return nil, errors.New("config: GA4 Measurement Protocol secret JSON이 올바르지 않다")
+	}
+	if len(secrets) == 0 {
+		return nil, errors.New("config: GA4 Measurement Protocol secret JSON이 비어 있다")
+	}
+	for appID, secret := range secrets {
+		if !isLowerKebabID(appID) || strings.TrimSpace(secret) == "" || len(secret) > 256 {
+			return nil, fmt.Errorf("config: %q 앱의 GA4 Measurement Protocol secret 설정이 올바르지 않다", appID)
+		}
+	}
+	return secrets, nil
 }
 
 func loadKakaoUnlink() (KakaoUnlinkConfig, error) {

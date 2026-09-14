@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
@@ -20,15 +21,27 @@ type SessionResolver interface {
 	Authenticate(r *http.Request) (identity.Session, error)
 }
 
+// GA4Sender는 Handler가 허용·정규화한 이벤트를 외부 GA4 sink로 전달한다.
+// 인터페이스는 소비자인 Handler 쪽에 둔다.
+type GA4Sender interface {
+	Send(ctx context.Context, app registry.App, rows []*Row) error
+}
+
 // Handler는 이벤트 수집 HTTP 핸들러다.
 type Handler struct {
 	collector *Collector
 	registry  *registry.Registry
 	sessions  SessionResolver
+	ga4       GA4Sender
 }
 
 func NewHandler(c *Collector, reg *registry.Registry, sessions SessionResolver) *Handler {
 	return &Handler{collector: c, registry: reg, sessions: sessions}
+}
+
+func (h *Handler) WithGA4(sender GA4Sender) *Handler {
+	h.ga4 = sender
+	return h
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -122,6 +135,11 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 		if err := h.collector.Insert(r.Context(), rows); err != nil {
 			return err
 		}
+		if h.ga4 != nil {
+			if err := h.ga4.Send(r.Context(), app, rows); err != nil {
+				return err
+			}
+		}
 	}
 
 	httpx.WriteOK(w, http.StatusOK, ingestResponse{Accepted: len(rows), Dropped: dropped})
@@ -150,8 +168,8 @@ func (h *Handler) buildRows(
 		// 벗겨야 앱을 가로지르는 쿼리가 가능해진다.
 		stripped := app.StripEventPrefix(name)
 
-		// allowlist 밖은 조용히 버린다. GA4로는 여전히 간다.
-		// 비용과 QPS를 규모와 무관한 상수로 묶는 장치다.
+		// allowlist 밖은 조용히 버린다. 서버 GA4 중계를 쓰는 앱도 같은
+		// allowlist를 따르므로 비용과 QPS가 규모와 무관한 상수로 묶인다.
 		if !app.EventAllowed(stripped) && !app.EventAllowed(name) {
 			dropped++
 			continue
@@ -167,6 +185,17 @@ func (h *Handler) buildRows(
 			eventTS = h.collector.ClampEventTime(time.UnixMilli(e.TSUnixMS))
 		}
 
+		params := NormalizeParams(e.Params)
+		sessionID := truncateRunes(e.SessionID, 64)
+		if sessionID == "" {
+			switch value := params["session_id"].(type) {
+			case string:
+				sessionID = truncateRunes(value, 64)
+			case int64:
+				sessionID = strconv.FormatInt(value, 10)
+			}
+		}
+
 		rows = append(rows, &Row{
 			EventID:        truncateRunes(e.EventID, 64),
 			ReceivedAt:     now,
@@ -174,12 +203,12 @@ func (h *Handler) buildRows(
 			AppID:          app.AppID,
 			PlatformUserID: puid,
 			GA4ClientID:    truncateRunes(req.Context.GA4ClientID, 64),
-			SessionID:      truncateRunes(e.SessionID, 64),
+			SessionID:      sessionID,
 			EventName:      stripped,
 			Platform:       truncateRunes(req.Context.Platform, 16),
 			AppVersion:     truncateRunes(req.Context.AppVersion, 32),
 			Locale:         truncateRunes(req.Context.Locale, 16),
-			Params:         NormalizeParams(e.Params),
+			Params:         params,
 			SDKVersion:     truncateRunes(req.Context.SDKVersion, 32),
 		})
 	}

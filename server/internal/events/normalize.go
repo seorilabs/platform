@@ -1,7 +1,7 @@
 // Package events는 이벤트를 수집해 BigQuery에 적재한다.
 //
-// GA4를 대체하지 않는다. SDK가 단일 진입점이 되어 GA4와 플랫폼 양쪽으로
-// 팬아웃하고, 플랫폼은 allowlist에 있는 것만 받는다.
+// GA4를 대체하지 않는다. 기존 dual-sink 앱은 SDK가 팬아웃하고, Jomul처럼
+// client secret을 둘 수 없는 앱은 Platform ingest가 허용 이벤트를 GA4로 중계한다.
 // Obsidian 프로젝트/platform/03-architecture/events.md 참고.
 package events
 
