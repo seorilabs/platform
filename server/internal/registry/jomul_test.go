@@ -34,7 +34,8 @@ func TestJomulAnalyticsRegistryContract(t *testing.T) {
 		"recipe_discovered", "chapter_cleared", "chapter_complete", "chapter_unlocked",
 		"save_migrated", "hint_used", "hint_earned", "onboarding_start",
 		"onboarding_complete", "onboarding_skip", "rewarded_complete", "element_read",
-		"easter_egg_found", "rewarded_start", "dictionary_open", "stuck", "save_failed",
+		"easter_egg_found", "rewarded_start", "rewarded_failed", "dictionary_open", "stuck",
+		"save_failed",
 	}
 	if !reflect.DeepEqual(jomul.PlatformEventAllowlist, want) {
 		t.Fatalf("조물조물 이벤트 allowlist가 다르다\n got: %#v\nwant: %#v", jomul.PlatformEventAllowlist, want)

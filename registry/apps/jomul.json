@@ -64,6 +64,7 @@
     "element_read",
     "easter_egg_found",
     "rewarded_start",
+    "rewarded_failed",
     "dictionary_open",
     "stuck",
     "save_failed"
