@@ -25,6 +25,14 @@ func TestAlleyMarketMatchAdsRegistryContract(t *testing.T) {
 	if alley == nil {
 		t.Fatal("Alley Market Match registry가 없다")
 	}
+	if err := alley.Validate(); err != nil {
+		t.Fatalf("레지스트리 항목이 유효하지 않다: %v", err)
+	}
+	if alley.FirebaseProjectID != "alley-market-match" ||
+		alley.FirebaseCustomTokenServiceAccount != "platform-auth@alley-market-match.iam.gserviceaccount.com" {
+		t.Fatalf("Firebase 인증 계약이 다르다: project=%q service_account=%q",
+			alley.FirebaseProjectID, alley.FirebaseCustomTokenServiceAccount)
+	}
 	if !alley.FeatureEnabled("firebase_custom_token_bridge") || !alley.FeatureEnabled("ads") {
 		t.Fatal("Firebase custom token bridge와 광고 feature가 모두 활성이어야 한다")
 	}
