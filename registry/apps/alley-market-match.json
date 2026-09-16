@@ -1,0 +1,43 @@
+{
+  "app_id": "alley-market-match",
+  "display_name": "Alley Market Match",
+  "firebase_project_id": "alley-market-match",
+  "firebase_custom_token_service_account": "platform-auth@alley-market-match.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "ads": true,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ads": {
+    "providers": [
+      "admob"
+    ],
+    "placements": [
+      {
+        "id": "stage_retry_boost",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/3020251241",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/6934998415",
+            "reward_item": "moves",
+            "reward_amount": 5
+          }
+        },
+        "reward": {
+          "key": "moves",
+          "min_amount": 5,
+          "max_amount": 5
+        },
+        "daily_limit": 20,
+        "cooldown_seconds": 30
+      }
+    ]
+  },
+  "platform_event_allowlist": [],
+  "cors_origins": []
+}

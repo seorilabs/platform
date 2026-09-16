@@ -127,6 +127,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 
 | app_id | Auth bridge | 원장 환경 | Events | IAP | Ads | entitlements |
 |---|---|---|---|---|---|---|
+| `alley-market-match` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
 | `babycare` | 활성 | 미사용 | 핵심 퍼널·광고 | 비활성 | 비활성 | — |
 | `crossword-puzzle` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `cycle-pair` | 활성 | production | 비활성 | 비활성 | 비활성 | — |
