@@ -546,15 +546,29 @@ func (l *Ledger) grant(
 			TransferredFrom: transferredFrom,
 		}
 		if result.Granted && l.operational != nil && l.appID != "" {
+			attributes := map[string]any{
+				"platform": string(in.Purchase.Platform), "entitlementId": in.EntitlementID,
+			}
+			// 미확인(nil)은 키를 싣지 않는다. 없는 사실을 false로 만들면 AppsInToss
+			// 주문이 전부 실거래로 보인다(providers/toss는 이 값을 세팅하지 않는다).
+			//
+			// 반드시 역참조한다. safeScalar의 type switch에는 포인터 case가 없어
+			// *bool은 nil이든 아니든 default로 떨어져 false를 돌려준다. 포인터를 그대로
+			// 넣으면 validateEvent가 계약 위반으로 막고, 이 enqueue는 지급과 같은
+			// transaction이라 지급이 통째로 롤백된다.
+			//
+			// in.Purchase가 아니라 order 문서에 실제로 쓰이는 값을 쓴다.
+			// preserveLatestOnTransfer 경로에서 둘이 갈라진다.
+			if storedIsTestPurchase != nil {
+				attributes["isTestPurchase"] = *storedIsTestPurchase
+			}
 			if err := l.operational.EnqueueTx(tx, operational.Event{
 				EventID: operational.StableEventID(
 					"iap", l.appID, orderKey, in.PlatformUserID,
 					in.Purchase.ObservedAt.UTC().Format(time.RFC3339Nano),
 				),
 				OccurredAt: now, Type: "iap.granted", AppID: l.appID, Outcome: "granted",
-				Attributes: map[string]any{
-					"platform": string(in.Purchase.Platform), "entitlementId": in.EntitlementID,
-				},
+				Attributes: attributes,
 			}); err != nil {
 				return err
 			}
