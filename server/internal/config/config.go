@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,6 +56,9 @@ type Config struct {
 	Presence    PresenceConfig
 	// Measurement Protocol api_secret은 ingest role에만 주입한다.
 	GA4MeasurementProtocolSecrets map[string]string
+	// GA4TrustedIngressProxyHops는 X-Forwarded-For의 오른쪽에서 신뢰할
+	// ingress hop 수다. 0이면 요청 주소를 GA4에 전달하지 않는다.
+	GA4TrustedIngressProxyHops int
 }
 
 // OperationalConfig는 확정 이벤트를 Backoffice에 서명해 전달하는 설정이다.
@@ -174,9 +178,26 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		c.GA4MeasurementProtocolSecrets = ga4Secrets
+		trustedProxyHops, err := loadGA4TrustedIngressProxyHops()
+		if err != nil {
+			return Config{}, err
+		}
+		c.GA4TrustedIngressProxyHops = trustedProxyHops
 	}
 
 	return c, nil
+}
+
+func loadGA4TrustedIngressProxyHops() (int, error) {
+	raw := strings.TrimSpace(os.Getenv("GA4_TRUSTED_INGRESS_PROXY_HOPS"))
+	if raw == "" {
+		return 0, nil
+	}
+	hops, err := strconv.Atoi(raw)
+	if err != nil || hops < 1 || hops > 5 {
+		return 0, errors.New("config: GA4 trusted ingress proxy hops는 1 이상 5 이하여야 한다")
+	}
+	return hops, nil
 }
 
 func loadGA4MeasurementProtocolSecrets() (map[string]string, error) {

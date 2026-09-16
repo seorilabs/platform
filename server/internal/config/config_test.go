@@ -64,6 +64,20 @@ func TestGA4MeasurementProtocolSecretsAreIngestOnlyAndStrict(t *testing.T) {
 	if cfg.GA4MeasurementProtocolSecrets["jomul"] != "secret-value" {
 		t.Fatal("ingest가 앱 범위 GA4 secret을 읽지 않았다")
 	}
+	if cfg.GA4TrustedIngressProxyHops != 0 {
+		t.Fatal("명시하지 않은 trusted ingress가 활성화됐다")
+	}
+
+	t.Setenv("GA4_TRUSTED_INGRESS_PROXY_HOPS", "1")
+	cfg, err = Load()
+	if err != nil || cfg.GA4TrustedIngressProxyHops != 1 {
+		t.Fatalf("trusted ingress hop config = %d, err=%v", cfg.GA4TrustedIngressProxyHops, err)
+	}
+	t.Setenv("GA4_TRUSTED_INGRESS_PROXY_HOPS", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("0 hop을 명시적으로 활성화했다")
+	}
+	t.Setenv("GA4_TRUSTED_INGRESS_PROXY_HOPS", "")
 
 	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `{}`)
 	if _, err := Load(); err == nil {
@@ -76,6 +90,7 @@ func TestGA4MeasurementProtocolSecretsAreIngestOnlyAndStrict(t *testing.T) {
 
 	setAPIConfigEnv(t)
 	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `not-json`)
+	t.Setenv("GA4_TRUSTED_INGRESS_PROXY_HOPS", `not-a-number`)
 	cfg, err = Load()
 	if err != nil {
 		t.Fatalf("API role이 ingest 전용 GA4 secret을 읽었다: %v", err)

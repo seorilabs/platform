@@ -4,7 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
@@ -24,15 +26,22 @@ type SessionResolver interface {
 // GA4Sender는 Handler가 허용·정규화한 이벤트를 외부 GA4 sink로 전달한다.
 // 인터페이스는 소비자인 Handler 쪽에 둔다.
 type GA4Sender interface {
-	Send(ctx context.Context, app registry.App, rows []*Row) error
+	Send(ctx context.Context, app registry.App, rows []*Row, relay ga4RelayContext) error
+}
+
+// ga4RelayContext는 한 요청 동안만 GA4 sink에 전달하는 정보다. Row에
+// 넣지 않으므로 Platform BigQuery, outbox, 로그에 원 요청 IP가 남지 않는다.
+type ga4RelayContext struct {
+	IPOverride string
 }
 
 // Handler는 이벤트 수집 HTTP 핸들러다.
 type Handler struct {
-	collector *Collector
-	registry  *registry.Registry
-	sessions  SessionResolver
-	ga4       GA4Sender
+	collector               *Collector
+	registry                *registry.Registry
+	sessions                SessionResolver
+	ga4                     GA4Sender
+	trustedIngressProxyHops int
 }
 
 func NewHandler(c *Collector, reg *registry.Registry, sessions SessionResolver) *Handler {
@@ -41,6 +50,15 @@ func NewHandler(c *Collector, reg *registry.Registry, sessions SessionResolver) 
 
 func (h *Handler) WithGA4(sender GA4Sender) *Handler {
 	h.ga4 = sender
+	return h
+}
+
+// WithTrustedIngressProxyHops는 운영 ingress가 끝에 추가하는 hop 수를 exact하게
+// 확인한 경우에만 켠다. 0 또는 미설정은 fail-closed로 주소 전달을 생략한다.
+func (h *Handler) WithTrustedIngressProxyHops(hops int) *Handler {
+	if hops > 0 {
+		h.trustedIngressProxyHops = hops
+	}
 	return h
 }
 
@@ -65,7 +83,10 @@ type ingestRequest struct {
 		AppVersion  string `json:"appVersion"`
 		Locale      string `json:"locale"`
 		GA4ClientID string `json:"ga4ClientId"`
-		SDKVersion  string `json:"sdkVersion"`
+		// AnalyticsConsent는 제품 분석에 대한 명시적 동의다. 생략과 false는
+		// 동일하며, 원본 요청 주소를 GA4 위치 파생에 쓰지 않는다.
+		AnalyticsConsent bool   `json:"analyticsConsent"`
+		SDKVersion       string `json:"sdkVersion"`
 	} `json:"context"`
 }
 
@@ -135,26 +156,77 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 		if err := h.collector.Insert(r.Context(), rows); err != nil {
 			return err
 		}
-		h.forwardGA4(r.Context(), app, rows)
+		h.forwardGA4(
+			r.Context(),
+			app,
+			rows,
+			h.ga4RelayContext(r, req.Context.AnalyticsConsent),
+		)
 	}
 
 	httpx.WriteOK(w, http.StatusOK, ingestResponse{Accepted: len(rows), Dropped: dropped})
 	return nil
 }
 
+func (h *Handler) ga4RelayContext(r *http.Request, analyticsConsent bool) ga4RelayContext {
+	if !analyticsConsent {
+		return ga4RelayContext{}
+	}
+	return ga4RelayContext{IPOverride: trustedClientIP(r, h.trustedIngressProxyHops)}
+}
+
 // forwardGA4는 BigQuery 원장 적재와 앱 응답을 GA4 가용성에서 분리한다. 여기서 실패를
 // 앱 재시도로 돌리면 이미 적재된 행이 중복되므로 운영 경고만 남기고 수락을 유지한다.
-func (h *Handler) forwardGA4(ctx context.Context, app registry.App, rows []*Row) {
+func (h *Handler) forwardGA4(
+	ctx context.Context,
+	app registry.App,
+	rows []*Row,
+	relay ga4RelayContext,
+) {
 	if h.ga4 == nil {
 		return
 	}
-	if err := h.ga4.Send(ctx, app, rows); err != nil {
+	if err := h.ga4.Send(ctx, app, rows, relay); err != nil {
 		slog.WarnContext(ctx, "GA4 이벤트 중계 실패",
 			"app_id", app.AppID,
 			"event_count", len(rows),
 			"code", platformerr.CodeOf(err),
 		)
 	}
+}
+
+// trustedClientIP는 신뢰 ingress가 X-Forwarded-For 오른쪽에 추가한 hop만
+// 기준으로 원 요청 주소를 고른다. 클라이언트가 앞에 붙인 값은 읽지 않는다.
+func trustedClientIP(r *http.Request, trustedProxyHops int) string {
+	if trustedProxyHops <= 0 {
+		return ""
+	}
+	forwardedFor := r.Header.Values("X-Forwarded-For")
+	if len(forwardedFor) != 1 {
+		return ""
+	}
+	parts := strings.Split(forwardedFor[0], ",")
+	clientIndex := len(parts) - trustedProxyHops - 1
+	if clientIndex < 0 {
+		return ""
+	}
+	// 설정한 ingress hop이 실제 주소 형태인지 확인한다. 하나라도 다르면
+	// topology를 신뢰할 수 없으므로 원 요청 주소도 전달하지 않는다.
+	for _, raw := range parts[clientIndex+1:] {
+		if _, err := netip.ParseAddr(strings.TrimSpace(raw)); err != nil {
+			return ""
+		}
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(parts[clientIndex]))
+	if err != nil {
+		return ""
+	}
+	address = address.Unmap()
+	if !address.IsGlobalUnicast() || address.IsPrivate() || address.IsLoopback() ||
+		address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsUnspecified() {
+		return ""
+	}
+	return address.String()
 }
 
 func (h *Handler) buildRows(

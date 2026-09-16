@@ -520,6 +520,7 @@ describe("Platform routing", () => {
         platform: "ait",
         appVersion: "1.2.3",
         locale: "ko-KR",
+        analyticsConsent: true,
       },
     });
 
@@ -533,7 +534,7 @@ describe("Platform routing", () => {
     assert.equal(f.calls[1]!.url, "https://ingest.platform.test/v1/events");
     const body = f.calls[1]!.body as {
       events: Array<{ name: string; sessionId: string }>;
-      context: Record<string, string>;
+      context: Record<string, unknown>;
     };
     assert.deepEqual(body.events.map((event) => event.name), ["seori_session_start", "game_start"]);
     assert.equal(new Set(body.events.map((event) => event.sessionId)).size, 1);
@@ -541,6 +542,7 @@ describe("Platform routing", () => {
       platform: "ait",
       appVersion: "1.2.3",
       locale: "ko-KR",
+      analyticsConsent: true,
       sdkVersion: SDK_VERSION,
     });
     // 앱이 이미 준 버전을 헤더에도 그대로 쓴다. 같은 사실을 두 번 설정하게 하지 않는다.

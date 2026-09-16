@@ -38,10 +38,15 @@ func TestMeasurementProtocolSendsAcceptedRowsWithoutAdConsent(t *testing.T) {
 	rows := []*Row{{
 		EventID: "event-1", EventTS: eventTime, AppID: "jomul", GA4ClientID: "client-1",
 		SessionID: "1726293600", EventName: "session_start", Platform: "ait",
-		AppVersion: "1.0.14", Locale: "ko", Params: map[string]any{"discovered_count": int64(5)},
+		AppVersion: "1.0.14", Locale: "ko", Params: map[string]any{
+			"discovered_count": int64(5),
+			"app_market":       "apps_in_toss",
+			"runtime_platform": "web",
+			"release_version":  "1.0.14",
+		},
 	}}
 	app := registry.App{AppID: "jomul", GA4: registry.GA4Config{EventPrefix: "jomul_", MeasurementID: "G-TEST1234"}}
-	if err := sender.Send(t.Context(), app, rows); err != nil {
+	if err := sender.Send(t.Context(), app, rows, ga4RelayContext{IPOverride: "8.8.8.8"}); err != nil {
 		t.Fatalf("GA4 전송 실패: %v", err)
 	}
 	if received.ClientID != "client-1" || received.TimestampMicros != eventTime.UnixMicro() {
@@ -50,13 +55,17 @@ func TestMeasurementProtocolSendsAcceptedRowsWithoutAdConsent(t *testing.T) {
 	if received.Consent.AdUserData != "DENIED" || received.Consent.AdPersonalization != "DENIED" {
 		t.Fatalf("광고 consent가 차단되지 않았다: %#v", received.Consent)
 	}
+	if received.IPOverride != "8.8.8.8" {
+		t.Fatalf("동의된 원 요청 주소가 GA4 최상위 필드에 없다: %#v", received)
+	}
 	if len(received.Events) != 1 || received.Events[0].Name != "jomul_session_start" {
 		t.Fatalf("GA4 이벤트가 다르다: %#v", received.Events)
 	}
 	params := received.Events[0].Params
 	if params["platform"] != "ait" || params["app_version"] != "1.0.14" || params["locale"] != "ko" ||
 		params["seori_event_id"] != "event-1" || params["session_id"] != float64(1726293600) ||
-		params["engagement_time_msec"] != float64(1) {
+		params["engagement_time_msec"] != float64(1) || params["app_market"] != "apps_in_toss" ||
+		params["runtime_platform"] != "web" || params["release_version"] != "1.0.14" {
 		t.Fatalf("GA4 파라미터가 다르다: %#v", params)
 	}
 }
@@ -73,7 +82,7 @@ func TestMeasurementProtocolSkipsLegacyClientAndRetriesConfigurationFailures(t *
 
 	missing := NewMeasurementProtocol(nil, server.Client())
 	missing.endpoint = server.URL
-	if err := missing.Send(t.Context(), app, []*Row{row}); platformerr.CodeOf(err) != platformerr.CodeConfigUnavailable {
+	if err := missing.Send(t.Context(), app, []*Row{row}, ga4RelayContext{}); platformerr.CodeOf(err) != platformerr.CodeConfigUnavailable {
 		t.Fatalf("secret 누락 오류 = %v", err)
 	} else if strings.Contains(err.Error(), "test-secret") {
 		t.Fatal("오류에 GA4 secret이 노출됐다")
@@ -83,11 +92,11 @@ func TestMeasurementProtocolSkipsLegacyClientAndRetriesConfigurationFailures(t *
 	legacy.endpoint = server.URL
 	legacyRow := *row
 	legacyRow.GA4ClientID = ""
-	if err := legacy.Send(t.Context(), app, []*Row{&legacyRow}); err != nil || requests != 0 {
+	if err := legacy.Send(t.Context(), app, []*Row{&legacyRow}, ga4RelayContext{}); err != nil || requests != 0 {
 		t.Fatalf("구버전 client는 GA4 전송 없이 Platform 적재를 유지해야 한다: err=%v requests=%d", err, requests)
 	}
 
-	if err := legacy.Send(t.Context(), app, []*Row{row}); platformerr.CodeOf(err) != platformerr.CodeConfigUnavailable || requests != 1 {
+	if err := legacy.Send(t.Context(), app, []*Row{row}, ga4RelayContext{}); platformerr.CodeOf(err) != platformerr.CodeConfigUnavailable || requests != 1 {
 		t.Fatalf("GA4 upstream 실패가 재시도 오류로 보존되지 않았다: err=%v requests=%d", err, requests)
 	}
 }
@@ -101,7 +110,7 @@ func TestMeasurementProtocolDoesNotExposeSecretInTransportError(t *testing.T) {
 	app := registry.App{AppID: "jomul", GA4: registry.GA4Config{EventPrefix: "jomul_", MeasurementID: "G-TEST1234"}}
 	row := &Row{EventID: "event-1", EventTS: time.Now(), EventName: "session_start", GA4ClientID: "client-1"}
 
-	err := sender.Send(t.Context(), app, []*Row{row})
+	err := sender.Send(t.Context(), app, []*Row{row}, ga4RelayContext{})
 	if platformerr.CodeOf(err) != platformerr.CodeConfigUnavailable {
 		t.Fatalf("transport 오류 code = %v", err)
 	}

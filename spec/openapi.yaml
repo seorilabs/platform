@@ -3323,6 +3323,11 @@ components:
         ga4ClientId:
           type: string
           maxLength: 64
+        analyticsConsent:
+          type: boolean
+          description: |
+            사용자가 제품 분석 전송에 명시적으로 동의했을 때만 true다.
+            생략 또는 false이면 ingress 주소를 GA4 위치 파생에 전달하지 않는다.
         sdkVersion:
           type: string
           maxLength: 32

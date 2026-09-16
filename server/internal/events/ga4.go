@@ -40,6 +40,7 @@ func NewMeasurementProtocol(secrets map[string]string, client *http.Client) *Mea
 type ga4Request struct {
 	ClientID        string     `json:"client_id"`
 	TimestampMicros int64      `json:"timestamp_micros,omitempty"`
+	IPOverride      string     `json:"ip_override,omitempty"`
 	Consent         ga4Consent `json:"consent"`
 	Events          []ga4Event `json:"events"`
 }
@@ -54,7 +55,12 @@ type ga4Event struct {
 	Params map[string]any `json:"params"`
 }
 
-func (m *MeasurementProtocol) Send(ctx context.Context, app registry.App, rows []*Row) error {
+func (m *MeasurementProtocol) Send(
+	ctx context.Context,
+	app registry.App,
+	rows []*Row,
+	relay ga4RelayContext,
+) error {
 	if app.GA4.MeasurementID == "" || len(rows) == 0 {
 		return nil
 	}
@@ -108,6 +114,7 @@ func (m *MeasurementProtocol) Send(ctx context.Context, app registry.App, rows [
 	payload := ga4Request{
 		ClientID:        clientID,
 		TimestampMicros: latest.UnixMicro(),
+		IPOverride:      relay.IPOverride,
 		Consent: ga4Consent{
 			AdUserData:        "DENIED",
 			AdPersonalization: "DENIED",
