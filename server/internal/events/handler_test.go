@@ -62,19 +62,90 @@ func TestBuildRowsUsesTransportSessionParameter(t *testing.T) {
 	}
 }
 
-type failingGA4Sender struct{ calls int }
+type failingGA4Sender struct {
+	calls int
+	relay ga4RelayContext
+}
 
-func (s *failingGA4Sender) Send(context.Context, registry.App, []*Row) error {
+func (s *failingGA4Sender) Send(
+	_ context.Context,
+	_ registry.App,
+	_ []*Row,
+	relay ga4RelayContext,
+) error {
 	s.calls++
+	s.relay = relay
 	return platformerr.New(platformerr.CodeConfigUnavailable, "upstream unavailable")
 }
 
 func TestForwardGA4IsBestEffort(t *testing.T) {
 	sender := &failingGA4Sender{}
 	h := &Handler{ga4: sender}
-	h.forwardGA4(t.Context(), registry.App{AppID: "jomul"}, []*Row{{EventID: "event-1"}})
+	h.forwardGA4(
+		t.Context(),
+		registry.App{AppID: "jomul"},
+		[]*Row{{EventID: "event-1"}},
+		ga4RelayContext{IPOverride: "8.8.8.8"},
+	)
 	if sender.calls != 1 {
 		t.Fatalf("GA4 sender 호출 횟수 = %d", sender.calls)
+	}
+	if sender.relay.IPOverride != "8.8.8.8" {
+		t.Fatalf("GA4 relay context가 유실됐다: %#v", sender.relay)
+	}
+}
+
+func TestGA4RelayContextRequiresConsentAndTrustedIngress(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+	// 앞의 1.1.1.1은 클라이언트가 조작한 값이다. 신뢰 ingress가 오른쪽에
+	// 추가한 client, proxy 두 값만 기준으로 8.8.8.8을 선택한다.
+	req.Header.Set("X-Forwarded-For", "1.1.1.1, 8.8.8.8, 34.1.2.3")
+	h := (&Handler{}).WithTrustedIngressProxyHops(1)
+
+	if relay := h.ga4RelayContext(req, false); relay.IPOverride != "" {
+		t.Fatalf("동의 없는 요청 주소가 전달됐다: %#v", relay)
+	}
+	if relay := (&Handler{}).ga4RelayContext(req, true); relay.IPOverride != "" {
+		t.Fatalf("신뢰 ingress 설정 없이 요청 주소가 전달됐다: %#v", relay)
+	}
+	if relay := h.ga4RelayContext(req, true); relay.IPOverride != "8.8.8.8" {
+		t.Fatalf("검증된 원 요청 주소 = %q", relay.IPOverride)
+	}
+	stored, _, err := (&Row{EventID: "event-1"}).Save()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := stored["ip_override"]; exists {
+		t.Fatal("원 요청 주소가 Platform 이벤트 행에 저장됐다")
+	}
+}
+
+func TestTrustedClientIPRejectsUnverifiableHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header string
+		hops   int
+	}{
+		{name: "disabled", header: "8.8.8.8, 34.1.2.3", hops: 0},
+		{name: "missing trusted hop", header: "8.8.8.8", hops: 1},
+		{name: "invalid trusted hop", header: "8.8.8.8, forged", hops: 1},
+		{name: "private client", header: "10.0.0.8, 34.1.2.3", hops: 1},
+		{name: "forged only", header: "1.1.1.1", hops: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+			req.Header.Set("X-Forwarded-For", tc.header)
+			if got := trustedClientIP(req, tc.hops); got != "" {
+				t.Fatalf("검증할 수 없는 주소를 신뢰했다: %q", got)
+			}
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+	req.Header.Add("X-Forwarded-For", "1.1.1.1, 34.1.2.3")
+	req.Header.Add("X-Forwarded-For", "8.8.8.8, 34.1.2.3")
+	if got := trustedClientIP(req, 1); got != "" {
+		t.Fatalf("중복 X-Forwarded-For를 신뢰했다: %q", got)
 	}
 }
 

@@ -453,7 +453,10 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		if d.identity != nil {
 			sessions = d.identity
 		}
-		events.NewHandler(d.events, d.registry, sessions).WithGA4(d.ga4).Register(mux)
+		events.NewHandler(d.events, d.registry, sessions).
+			WithGA4(d.ga4).
+			WithTrustedIngressProxyHops(cfg.GA4TrustedIngressProxyHops).
+			Register(mux)
 		if d.presence == nil {
 			return nil, errors.New("ingest role에 presence handler가 필요하다")
 		}

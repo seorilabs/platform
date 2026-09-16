@@ -89,9 +89,25 @@ Platform의 서버 중계를 쓰는 앱은 허용된 이벤트만 GA4에도 전�
 중계가 실패해도 앱에는 수락을 반환한다. GA4 장애를 앱 재시도로 전파하면 이미 적재된 BigQuery
 행만 중복되기 때문이다. 중계 실패는 secret 없는 운영 경고로 관측한다.
 
+앱 Analytics 어댑터는 custom event에 `app_market`, `runtime_platform`, `release_version`을
+붙인다. Platform relay는 이 값을 바꾸지 않고 GA4 event parameter로 전달한다. 기존
+`platform`, `market`, `app_market`, `app_version` 호환은 GA4 BigQuery 정규화 view에서만
+처리한다.
+
+`context.analyticsConsent=true`인 요청에 한해, 운영에서 exact하게 확인한 ingress hop 뒤의
+원 요청 IP를 GA4 요청 최상위 `ip_override`로 전달할 수 있다. 이 기능은
+`GA4_TRUSTED_INGRESS_PROXY_HOPS`가 없으면 꺼져 있으며 임의 `X-Forwarded-For` 선두 값이나
+검증할 수 없는 주소는 무시한다. 주소는 GA4 전송 payload를 만드는 동안만 메모리에 존재하고
+Platform 이벤트 행·BigQuery·outbox·로그·오류에는 저장하지 않는다. 동의가 없으면 항상
+생략한다. GA4 HTTP 2xx는 요청 접수일 뿐 실제 처리 완료 증거가 아니므로 DebugView 또는
+BigQuery readback을 별도로 확인한다.
+
 ## PII
 
 키 이름이 PII 목록에 해당하면 **SDK가 drop**한다. 목록은 `conformance/param-normalization.json`의 `pii_keys`가 정본이다.
+
+위치 파생용 원 요청 IP는 event parameter나 Platform 원장에 넣지 않는 일시적 전송 값이다.
+앱은 제품 분석 동의 상태를 확인한 뒤에만 `analyticsConsent=true`를 보낸다.
 
 개발자가 무심코 `log_event("login", {email: ...})` 하는 게 실제로 가장 흔한 사고다.
 
