@@ -51,7 +51,7 @@ jobs:
 
   sdk:
     name: GDScript SDK
-    uses: seorilabs/.github/.github/workflows/godot-checks.yml@565fba53aa5053785c63c9b732b93a3fbd7be847
+    uses: seorilabs/.github/.github/workflows/godot-checks.yml@main
     with:
       runs_on: ubuntu-latest
       project_dir: sdk-gdscript
