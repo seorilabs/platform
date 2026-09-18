@@ -23,8 +23,8 @@
         "format": "rewarded",
         "providers": {
           "admob": {
-            "android_ad_unit_id": "ca-app-pub-2444587584524186/1396162476",
-            "ios_ad_unit_id": "ca-app-pub-2444587584524186/4203846143"
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/5497048802",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/7057542480"
           },
           "apps_in_toss": {
             "ad_group_id": "ait.v2.live.d6bba0043afa4672"
