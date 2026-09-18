@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,25 +79,38 @@ func TestSlotmachineGameAdsRegistryContract(t *testing.T) {
 	}
 
 	// 네 지면 모두 rewarded 다. 지면이 빠지면 해당 보상 흐름만 조용히 죽는다.
+	// 은퇴 unit은 이미 공개된 v1.2.0 빌드에 박힌 값이다. 이 목록이 비면 그 빌드를
+	// 쓰는 사용자는 광고를 끝까지 보고도 ad_unit_mismatch 로 보상을 받지 못한다.
+	// 구버전 소진을 확인한 뒤 registry/apps/README.md 4단계로 지운다.
 	wantUnits := map[string]struct {
-		android string
-		ios     string
+		android        string
+		ios            string
+		retiredAndroid string
+		retiredIOS     string
 	}{
 		"ad_win": {
-			android: "ca-app-pub-9932778305312246/6892047646",
-			ios:     "ca-app-pub-9932778305312246/7386037517",
+			android:        "ca-app-pub-9932778305312246/6892047646",
+			ios:            "ca-app-pub-9932778305312246/7386037517",
+			retiredAndroid: "ca-app-pub-2444587584524186/2032813100",
+			retiredIOS:     "ca-app-pub-2444587584524186/9581678799",
 		},
 		"credit_refill": {
-			android: "ca-app-pub-9932778305312246/4265884309",
-			ios:     "ca-app-pub-9932778305312246/8013557626",
+			android:        "ca-app-pub-9932778305312246/4265884309",
+			ios:            "ca-app-pub-9932778305312246/8013557626",
+			retiredAndroid: "ca-app-pub-2444587584524186/6784125068",
+			retiredIOS:     "ca-app-pub-2444587584524186/2419825919",
 		},
 		"daily_bonus_double": {
-			android: "ca-app-pub-9932778305312246/6724526684",
-			ios:     "ca-app-pub-9932778305312246/8967546644",
+			android:        "ca-app-pub-9932778305312246/6724526684",
+			ios:            "ca-app-pub-9932778305312246/8967546644",
+			retiredAndroid: "ca-app-pub-2444587584524186/3207842138",
+			retiredIOS:     "ca-app-pub-2444587584524186/7887775015",
 		},
 		"piggy_bank": {
-			android: "ca-app-pub-9932778305312246/6452229793",
-			ios:     "ca-app-pub-9932778305312246/3665092388",
+			android:        "ca-app-pub-9932778305312246/6452229793",
+			ios:            "ca-app-pub-9932778305312246/3665092388",
+			retiredAndroid: "ca-app-pub-2444587584524186/1426308448",
+			retiredIOS:     "ca-app-pub-2444587584524186/1106744246",
 		},
 	}
 
@@ -120,6 +134,17 @@ func TestSlotmachineGameAdsRegistryContract(t *testing.T) {
 			t.Fatalf("%s iOS unit=%q, want %q", id, provider.IOSAdUnitID, want.ios)
 		}
 
+		// ConfirmAdMob 은 이 순서대로 수용한다. 현재 unit 이 첫 항목이어야 하고
+		// 은퇴 unit 이 빠지면 구버전 보상이 끊긴다.
+		wantAndroidAccepted := []string{want.android, want.retiredAndroid}
+		if got := provider.AcceptedAdMobUnits("android"); !slices.Equal(got, wantAndroidAccepted) {
+			t.Fatalf("%s Android 수용 unit=%v, want %v", id, got, wantAndroidAccepted)
+		}
+		wantIOSAccepted := []string{want.ios, want.retiredIOS}
+		if got := provider.AcceptedAdMobUnits("ios"); !slices.Equal(got, wantIOSAccepted) {
+			t.Fatalf("%s iOS 수용 unit=%v, want %v", id, got, wantIOSAccepted)
+		}
+
 		// ConfirmAdMob 은 SSV 의 reward_item·reward_amount 를 이 값과 대조한다. AdMob
 		// 콘솔의 단위별 보상 설정이 credit/1 이 아니면 CodeAdRewardInvalid 로 거부된다.
 		// 게시자를 옮기면서 새로 만든 단위에도 같은 보상 설정이 필요하다.
@@ -129,10 +154,17 @@ func TestSlotmachineGameAdsRegistryContract(t *testing.T) {
 		}
 	}
 
-	// 레거시 publisher 잔재를 막는다. 한 지면만 남아도 그 지면의 SSV 가 전건 거부된다.
-	for _, unit := range slotmachine.AdMobUnits() {
-		if strings.Contains(unit, "ca-app-pub-2444587584524186") {
-			t.Fatalf("레거시 publisher unit 이 남아 있다: %s", unit)
+	// 레거시 publisher 는 은퇴 목록에만 남아야 한다. 현재 unit 으로 되돌아오면
+	// 새 publisher 로 옮긴 수익 귀속이 조용히 깨진다.
+	for _, placement := range slotmachine.Ads.Placements {
+		provider, ok := placement.Providers["admob"]
+		if !ok {
+			continue
+		}
+		for _, unit := range []string{provider.AndroidAdUnitID, provider.IOSAdUnitID} {
+			if strings.Contains(unit, "ca-app-pub-2444587584524186") {
+				t.Fatalf("%s 현재 unit 이 레거시 publisher 다: %s", placement.ID, unit)
+			}
 		}
 	}
 }
