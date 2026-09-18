@@ -267,3 +267,88 @@ func TestAdMobHandlerSeparatesProbeAndCallbackPerApp(t *testing.T) {
 		t.Fatalf("unknown app reached verifier: calls=%d", callbackVerifier.calls)
 	}
 }
+
+// unit 교체는 서버와 설치된 바이너리가 동시에 바뀌지 않는다. 구버전은 계속 옛 unit으로
+// 광고를 재생하고, SSV 콜백의 ad_unit도 그 값으로 온다. 은퇴 unit을 수용하지 않으면
+// 교체 시점에 구버전 전체가 광고를 끝까지 보고도 보상을 못 받는다.
+func TestAdMobAcceptsRetiredUnitDuringTransition(t *testing.T) {
+	app := rewardedApp()
+	provider := app.Ads.Placements[0].Providers["admob"]
+	provider.AndroidAdUnitID = "ca-app-pub-1111111111111111/1111111111"
+	provider.RetiredAndroidAdUnitIDs = []string{"ca-app-pub-0000000000000000/1234567890"}
+	provider.IOSAdUnitID = "ca-app-pub-1111111111111111/2222222222"
+	provider.RetiredIOSAdUnitIDs = []string{"ca-app-pub-0000000000000000/7777777777"}
+	app.Ads.Placements[0].Providers["admob"] = provider
+
+	for _, tc := range []struct {
+		name     string
+		platform string
+		adUnitID string
+		code     platformerr.Code
+	}{
+		{name: "android 신규", platform: "android", adUnitID: "1111111111"},
+		{name: "android 은퇴", platform: "android", adUnitID: "1234567890"},
+		{name: "ios 신규", platform: "ios", adUnitID: "2222222222"},
+		{name: "ios 은퇴", platform: "ios", adUnitID: "7777777777"},
+		// 플랫폼을 넘지 않는다. iOS claim이 Android 은퇴 unit으로 확정되면
+		// 한쪽 스토어의 구버전이 다른 쪽 원장으로 보상을 받는다.
+		{name: "ios claim에 android 은퇴 unit", platform: "ios", adUnitID: "1234567890", code: platformerr.CodeAdUnitMismatch},
+		{name: "목록에 없는 unit", platform: "android", adUnitID: "9999999999", code: platformerr.CodeAdUnitMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeRepo{claims: map[string]Claim{
+				"cl_1": {
+					ClaimID: "cl_1", AppID: app.AppID, PlatformUserID: "pu_1",
+					PlacementID: "harvest_boost", Provider: "admob",
+					ClientPlatform: tc.platform, State: StateAccepted,
+					ExpiresAt: time.Now().Add(time.Hour),
+				},
+			}}
+			svc, err := NewService(repo, fakeApps{app.AppID: app}, fakeEntitlements{}, fakeUsers{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			claim, err := svc.ConfirmAdMob(context.Background(), app.AppID, SSVResult{
+				ClaimID: "cl_1", PlatformUserID: "pu_1", AdUnitID: tc.adUnitID,
+				TransactionID: "tx", RewardItem: "harvest_boost", RewardAmount: 1,
+			})
+			if platformerr.CodeOf(err) != tc.code {
+				t.Fatalf("code = %q, want %q", platformerr.CodeOf(err), tc.code)
+			}
+			// 통과해야 하는 경우는 실제로 확정까지 가야 의미가 있다. unit 대조만
+			// 지나고 뒤에서 막히면 사용자에게는 여전히 보상이 없다.
+			if tc.code == "" && claim.State != StateConfirmed {
+				t.Fatalf("state = %q, want %q", claim.State, StateConfirmed)
+			}
+		})
+	}
+}
+
+// 은퇴 unit만 있고 현재 unit이 없는 플랫폼은 광고를 서비스하지 않는다는 뜻이다.
+// 목록만 보고 통과시키면 지면을 내린 플랫폼에서 보상이 계속 나간다.
+func TestAdMobRejectsRetiredUnitWithoutCurrentUnit(t *testing.T) {
+	app := rewardedApp()
+	provider := app.Ads.Placements[0].Providers["admob"]
+	provider.IOSAdUnitID = ""
+	provider.RetiredIOSAdUnitIDs = []string{"ca-app-pub-0000000000000000/7777777777"}
+	app.Ads.Placements[0].Providers["admob"] = provider
+
+	repo := &fakeRepo{claims: map[string]Claim{
+		"cl_1": {
+			ClaimID: "cl_1", AppID: app.AppID, PlatformUserID: "pu_1",
+			PlacementID: "harvest_boost", Provider: "admob",
+			ClientPlatform: "ios", State: StateAccepted,
+		},
+	}}
+	svc, err := NewService(repo, fakeApps{app.AppID: app}, fakeEntitlements{}, fakeUsers{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ConfirmAdMob(context.Background(), app.AppID, SSVResult{
+		ClaimID: "cl_1", PlatformUserID: "pu_1", AdUnitID: "7777777777",
+		TransactionID: "tx", RewardItem: "harvest_boost", RewardAmount: 1,
+	})
+	if platformerr.CodeOf(err) != platformerr.CodeAdUnitMismatch {
+		t.Fatalf("code = %q, want %q", platformerr.CodeOf(err), platformerr.CodeAdUnitMismatch)
+	}
+}

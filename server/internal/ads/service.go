@@ -243,11 +243,11 @@ func (s *Service) ConfirmAdMob(ctx context.Context, appID string, result SSVResu
 	if !ok {
 		return Claim{}, platformerr.New(platformerr.CodeProviderConfigInvalid, "AdMob 지면 설정을 찾을 수 없어요")
 	}
-	wantUnit := provider.AndroidAdUnitID
-	if claim.ClientPlatform == "ios" {
-		wantUnit = provider.IOSAdUnitID
-	}
-	if wantUnit == "" || adUnitSuffix(wantUnit) != result.AdUnitID {
+	// result.AdUnitID는 SSV 콜백의 ad_unit, 즉 설치된 바이너리에 박힌 unit이다.
+	// unit을 교체해도 구버전은 계속 옛 unit으로 재생하므로 전환 기간에는 은퇴
+	// unit도 통과시킨다. 그러지 않으면 광고는 끝까지 재생되고 확정만 거부되어,
+	// 구버전 사용자 전체가 보상을 못 받는다.
+	if !acceptsAdUnit(provider.AcceptedAdMobUnits(claim.ClientPlatform), result.AdUnitID) {
 		return Claim{}, platformerr.New(platformerr.CodeAdUnitMismatch, "광고 unit이 claim과 일치하지 않아요")
 	}
 	if result.RewardAmount <= 0 || provider.RewardItem != "" && result.RewardItem != provider.RewardItem || provider.RewardAmount > 0 && result.RewardAmount != provider.RewardAmount {
@@ -367,4 +367,18 @@ func adUnitSuffix(value string) string {
 		return value[i+1:]
 	}
 	return value
+}
+
+// acceptsAdUnit은 SSV 콜백의 ad_unit이 허용된 unit 중 하나인지 본다.
+// 콜백은 publisher 접두사 없이 suffix만 싣기 때문에 suffix로 비교한다.
+func acceptsAdUnit(accepted []string, adUnitID string) bool {
+	if adUnitID == "" {
+		return false
+	}
+	for _, unit := range accepted {
+		if adUnitSuffix(unit) == adUnitID {
+			return true
+		}
+	}
+	return false
 }

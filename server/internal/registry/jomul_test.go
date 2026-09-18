@@ -112,6 +112,20 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	if provider.IOSAdUnitID != wantIOSUnit {
 		t.Fatalf("iOS unit=%q, want %q", provider.IOSAdUnitID, wantIOSUnit)
 	}
+	// 조물조물은 두 스토어에 이미 공개돼 있고(App Store v1.0.15, 2026-09-15), 설치된
+	// 빌드는 전부 레거시 unit 으로 광고를 재생한다. 유지 publisher 로 옮긴 신규 unit 을
+	// 싣는 산출물은 아직 출시되지 않았다. 이 목록을 지우면 구버전 사용자가 광고를 끝까지
+	// 보고도 ad_unit_mismatch 로 보상을 못 받는다. 구버전 소진을 확인한 뒤에 지운다.
+	wantRetired := map[string][]string{
+		"android": {"ca-app-pub-2444587584524186/1396162476"},
+		"ios":     {"ca-app-pub-2444587584524186/4203846143"},
+	}
+	if !reflect.DeepEqual(provider.RetiredAndroidAdUnitIDs, wantRetired["android"]) {
+		t.Fatalf("Android 은퇴 unit=%v, want %v", provider.RetiredAndroidAdUnitIDs, wantRetired["android"])
+	}
+	if !reflect.DeepEqual(provider.RetiredIOSAdUnitIDs, wantRetired["ios"]) {
+		t.Fatalf("iOS 은퇴 unit=%v, want %v", provider.RetiredIOSAdUnitIDs, wantRetired["ios"])
+	}
 	// 콘솔 값과 한 글자라도 다르면 SSV가 전건 거부되므로 보상 항목·수량은 registry에 적지 않는다.
 	if provider.RewardItem != "" || provider.RewardAmount != 0 {
 		t.Fatalf("AdMob 콘솔 보상 계약이 registry에 박혔다: item=%q amount=%d",

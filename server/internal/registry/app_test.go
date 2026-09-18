@@ -520,3 +520,111 @@ func TestUpdateURL(t *testing.T) {
 		}
 	}
 }
+
+// 은퇴 unit은 SSV 대조를 일부러 느슨하게 만드는 값이다. 느슨해지는 것은 의도지만
+// 모호해지면 안 된다. 잘못된 목록이 파일 단계에서 걸리는지 본다.
+func TestValidateRetiredAdMobUnits(t *testing.T) {
+	const current = "ca-app-pub-1111111111111111/1111111111"
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*AdsProviderConfig)
+		wantErr string
+	}{
+		{
+			name: "정상 전환",
+			mutate: func(c *AdsProviderConfig) {
+				c.RetiredAndroidAdUnitIDs = []string{"ca-app-pub-0000000000000000/1234567890"}
+			},
+		},
+		{
+			name:    "형식 오류",
+			mutate:  func(c *AdsProviderConfig) { c.RetiredAndroidAdUnitIDs = []string{"1234567890"} },
+			wantErr: "은퇴 AdMob unit이 올바르지 않다",
+		},
+		{
+			name:    "현재 unit과 중복",
+			mutate:  func(c *AdsProviderConfig) { c.RetiredAndroidAdUnitIDs = []string{current} },
+			wantErr: "겹친다",
+		},
+		{
+			name: "목록 안 중복",
+			mutate: func(c *AdsProviderConfig) {
+				c.RetiredAndroidAdUnitIDs = []string{
+					"ca-app-pub-0000000000000000/1234567890",
+					"ca-app-pub-2222222222222222/1234567890",
+				}
+			},
+			wantErr: "겹친다",
+		},
+		{
+			name: "현재 unit 없이 은퇴 unit만",
+			mutate: func(c *AdsProviderConfig) {
+				c.AndroidAdUnitID = ""
+				c.IOSAdUnitID = "ca-app-pub-1111111111111111/2222222222"
+				c.RetiredAndroidAdUnitIDs = []string{"ca-app-pub-0000000000000000/1234567890"}
+			},
+			wantErr: "현재 unit이 있을 때만",
+		},
+		{
+			name: "상한 초과",
+			mutate: func(c *AdsProviderConfig) {
+				c.RetiredAndroidAdUnitIDs = []string{
+					"ca-app-pub-0000000000000000/1000000001",
+					"ca-app-pub-0000000000000000/1000000002",
+					"ca-app-pub-0000000000000000/1000000003",
+					"ca-app-pub-0000000000000000/1000000004",
+					"ca-app-pub-0000000000000000/1000000005",
+				}
+			},
+			wantErr: "넘을 수 없다",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := validAppForTest()
+			app.Features["ads"] = true
+			app.Ads = rewardedAdsForTest(current)
+			cfg := app.Ads.Placements[0].Providers["admob"]
+			tc.mutate(&cfg)
+			app.Ads.Placements[0].Providers["admob"] = cfg
+
+			err := app.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Validate() error = %v, want contains %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// 은퇴 unit으로도 실제 콜백이 들어오므로 앱 사이 귀속 경계는 현재 unit과 같아야 한다.
+// 다른 앱이 이 unit을 현재 unit으로 들고 있으면 콜백이 어느 앱 것인지 모호해진다.
+func TestValidateAppSetCountsRetiredAdMobUnits(t *testing.T) {
+	const retired = "ca-app-pub-0000000000000000/1234567890"
+
+	first := validAppForTest()
+	first.AppID = "ads-one"
+	first.FirebaseProjectID = "ads-one"
+	first.Features = map[string]bool{"ads": true}
+	first.IAP = IAPConfig{}
+	first.Ads = rewardedAdsForTest("ca-app-pub-1111111111111111/1111111111")
+	cfg := first.Ads.Placements[0].Providers["admob"]
+	cfg.RetiredAndroidAdUnitIDs = []string{retired}
+	first.Ads.Placements[0].Providers["admob"] = cfg
+
+	second := validAppForTest()
+	second.AppID = "ads-two"
+	second.FirebaseProjectID = "ads-two"
+	second.Features = map[string]bool{"ads": true}
+	second.IAP = IAPConfig{}
+	second.Ads = rewardedAdsForTest(retired)
+
+	err := ValidateAppSet([]App{first, second})
+	if err == nil || !strings.Contains(err.Error(), "앱 사이에 중복") {
+		t.Fatalf("ValidateAppSet() error = %v", err)
+	}
+}
