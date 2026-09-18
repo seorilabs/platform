@@ -106,6 +106,42 @@ AppsInToss ad group, reward 범위, 일일 한도, cooldown은 이 파일만 원
 사용하고 운영툴에서는 읽기만 한다. `regsync`는 각 문서에
 `registry_synced_at`을 기록해 운영툴이 실제 런타임 반영 시각을 표시하게 한다.
 
+## AdMob unit을 교체할 때
+
+**이미 공개된 앱의 unit을 그냥 바꾸면 구버전 사용자 전체의 보상이 끊긴다.**
+
+`ConfirmAdMob`이 대조하는 `ad_unit`은 SSV 콜백이 싣고 오는 값, 즉 **설치된
+바이너리에 박힌 unit**이다. 서버가 바꿀 수 없고 클라이언트 업데이트는 사용자
+속도로 퍼진다. 그래서 registry만 새 unit으로 넘기면 구버전은 광고를 끝까지
+재생하고 확정 단계에서만 `ad_unit_mismatch`로 거부된다. 빌드·업로드·크래시 어디에도
+드러나지 않고 보상만 사라진다.
+
+전환 기간에는 `retired_android_ad_unit_ids`와 `retired_ios_ad_unit_ids`에 옛 unit을
+남긴다. `ConfirmAdMob`은 현재 unit과 이 목록을 함께 수용한다.
+
+```jsonc
+"admob": {
+  "android_ad_unit_id": "ca-app-pub-9932778305312246/5497048802",
+  "ios_ad_unit_id": "ca-app-pub-9932778305312246/7057542480",
+  "retired_android_ad_unit_ids": ["ca-app-pub-2444587584524186/1396162476"],
+  "retired_ios_ad_unit_ids": ["ca-app-pub-2444587584524186/4203846143"]
+}
+```
+
+순서를 지킨다. **서버 배포가 `regsync`보다 먼저다.** 은퇴 unit을 모르는 서버에
+새 registry가 올라가면 그 사이에 정확히 막으려던 사고가 난다. main 병합이 곧
+배포이므로 배포 완료를 확인한 뒤 `regsync`를 돌린다.
+
+1. 은퇴 unit을 포함한 registry 변경을 병합하고 **배포 완료를 확인한다**
+2. `regsync`로 Firestore에 반영한다
+3. 새 unit을 싣는 클라이언트를 출시한다
+4. 구버전 소진을 확인한 뒤 은퇴 목록을 지우고 다시 `regsync`한다
+
+목록은 임시 값이다. 플랫폼·지면당 4개가 상한이고, 넘으면 4단계 정리가 밀렸다는
+뜻이다. 현재 unit이 없는 플랫폼에는 둘 수 없고, 현재 unit이나 다른 항목과 suffix가
+겹치면 검증이 막는다. 앱 사이 중복 금지는 현재 unit과 똑같이 적용된다 — 은퇴
+unit으로도 실제 콜백이 들어오기 때문이다.
+
 활성 IAP 앱의 `markets`에 `google_play`가 있으면
 `iap.google_play_package_name`이 필수이며 앱 사이에 중복될 수 없다. Google Play
 RTDN의 package name은 이 값으로만 app ID에 연결한다. 환경변수나 알림 내용만으로

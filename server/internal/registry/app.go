@@ -161,9 +161,33 @@ type AdsPlacementConfig struct {
 type AdsProviderConfig struct {
 	AndroidAdUnitID string `json:"android_ad_unit_id,omitempty" firestore:"android_ad_unit_id,omitempty"`
 	IOSAdUnitID     string `json:"ios_ad_unit_id,omitempty" firestore:"ios_ad_unit_id,omitempty"`
-	AdGroupID       string `json:"ad_group_id,omitempty" firestore:"ad_group_id,omitempty"`
-	RewardItem      string `json:"reward_item,omitempty" firestore:"reward_item,omitempty"`
-	RewardAmount    int    `json:"reward_amount,omitempty" firestore:"reward_amount,omitempty"`
+	// 은퇴 unit은 새 unit으로 갈아탄 뒤에도 설치된 구버전이 계속 재생하는 unit이다.
+	// SSV 콜백의 ad_unit은 앱 바이너리에 박힌 값이라 서버가 바꿀 수 없고, 클라이언트
+	// 업데이트는 사용자 속도로 퍼진다. 그래서 이 목록이 없으면 unit을 교체하는 순간
+	// 구버전 전체가 광고를 끝까지 보고도 ad_unit_mismatch로 보상을 못 받는다.
+	//
+	// 전환 기간에만 둔다. 구버전 소진을 확인한 뒤 지운다.
+	RetiredAndroidAdUnitIDs []string `json:"retired_android_ad_unit_ids,omitempty" firestore:"retired_android_ad_unit_ids,omitempty"`
+	RetiredIOSAdUnitIDs     []string `json:"retired_ios_ad_unit_ids,omitempty" firestore:"retired_ios_ad_unit_ids,omitempty"`
+	AdGroupID               string   `json:"ad_group_id,omitempty" firestore:"ad_group_id,omitempty"`
+	RewardItem              string   `json:"reward_item,omitempty" firestore:"reward_item,omitempty"`
+	RewardAmount            int      `json:"reward_amount,omitempty" firestore:"reward_amount,omitempty"`
+}
+
+// AcceptedAdMobUnits는 해당 클라이언트 플랫폼에서 SSV 대조를 통과시킬 unit을 돌려준다.
+// 첫 항목이 현재 발급 unit이고 나머지는 전환 기간 동안만 남기는 은퇴 unit이다.
+//
+// 현재 unit이 비어 있으면 그 플랫폼은 광고를 서비스하지 않는다는 뜻이므로 은퇴
+// unit만으로 통과시키지 않는다. Validate가 같은 불변식을 파일 단계에서 먼저 막는다.
+func (c AdsProviderConfig) AcceptedAdMobUnits(clientPlatform string) []string {
+	current, retired := c.AndroidAdUnitID, c.RetiredAndroidAdUnitIDs
+	if clientPlatform == "ios" {
+		current, retired = c.IOSAdUnitID, c.RetiredIOSAdUnitIDs
+	}
+	if current == "" {
+		return nil
+	}
+	return append([]string{current}, retired...)
 }
 
 type AdsRewardConfig struct {
@@ -529,6 +553,14 @@ func (a App) validateAds() error {
 				if cfg.AndroidAdUnitID == "" && cfg.IOSAdUnitID == "" {
 					return fmt.Errorf("%s/%s: AdMob unit이 하나 이상 필요하다", a.AppID, placement.ID)
 				}
+				if err := validateRetiredAdMobUnits(
+					a.AppID, placement.ID, "Android", cfg.AndroidAdUnitID, cfg.RetiredAndroidAdUnitIDs); err != nil {
+					return err
+				}
+				if err := validateRetiredAdMobUnits(
+					a.AppID, placement.ID, "iOS", cfg.IOSAdUnitID, cfg.RetiredIOSAdUnitIDs); err != nil {
+					return err
+				}
 			case "apps_in_toss":
 				if strings.TrimSpace(cfg.AdGroupID) == "" {
 					return fmt.Errorf("%s/%s: AppsInToss ad group id가 필요하다", a.AppID, placement.ID)
@@ -556,11 +588,46 @@ func (a App) AdsPlacement(id string) (AdsPlacementConfig, bool) {
 	return AdsPlacementConfig{}, false
 }
 
+// maxRetiredAdMobUnits는 한 지면·플랫폼이 동시에 들고 갈 수 있는 은퇴 unit 상한이다.
+// 이 목록은 구버전이 소진되면 지워야 하는 임시 값이라, 쌓인다는 것은 정리가 밀렸다는 뜻이다.
+const maxRetiredAdMobUnits = 4
+
+// validateRetiredAdMobUnits는 은퇴 unit 목록이 대조를 느슨하게만 만들고 모호하게는
+// 만들지 않는지 본다. ConfirmAdMob이 suffix로 비교하므로 중복 판정도 suffix로 한다.
+func validateRetiredAdMobUnits(appID, placementID, platform, current string, retired []string) error {
+	if len(retired) == 0 {
+		return nil
+	}
+	if current == "" {
+		return fmt.Errorf("%s/%s: %s 은퇴 AdMob unit은 현재 unit이 있을 때만 둘 수 있다",
+			appID, placementID, platform)
+	}
+	if len(retired) > maxRetiredAdMobUnits {
+		return fmt.Errorf("%s/%s: %s 은퇴 AdMob unit은 %d개를 넘을 수 없다",
+			appID, placementID, platform, maxRetiredAdMobUnits)
+	}
+	seen := map[string]struct{}{unitSuffix(current): {}}
+	for _, unit := range retired {
+		if !admobUnitPattern.MatchString(unit) {
+			return fmt.Errorf("%s/%s: %s 은퇴 AdMob unit이 올바르지 않다", appID, placementID, platform)
+		}
+		if _, exists := seen[unitSuffix(unit)]; exists {
+			return fmt.Errorf("%s/%s: %s 은퇴 AdMob unit이 현재 unit이나 다른 항목과 겹친다",
+				appID, placementID, platform)
+		}
+		seen[unitSuffix(unit)] = struct{}{}
+	}
+	return nil
+}
+
 // AdMobUnits는 앱이 사용하는 AdMob unit을 중복 없이 돌려준다.
 //
 // 한 앱이 여러 placement에서 같은 unit을 공유하는 것은 허용하지만,
 // 서로 다른 앱이 같은 unit을 공유하면 AdMob Console의 단일 SSV callback이
 // 어느 appId로 가야 하는지 모호해진다.
+//
+// 은퇴 unit도 포함한다. 전환 기간에는 그 unit으로도 실제 콜백이 들어오므로
+// 귀속이 모호해지는 위험이 현재 unit과 똑같다.
 func (a App) AdMobUnits() []string {
 	seen := map[string]struct{}{}
 	units := make([]string, 0)
@@ -569,7 +636,10 @@ func (a App) AdMobUnits() []string {
 		if !ok {
 			continue
 		}
-		for _, unit := range []string{provider.AndroidAdUnitID, provider.IOSAdUnitID} {
+		all := []string{provider.AndroidAdUnitID, provider.IOSAdUnitID}
+		all = append(all, provider.RetiredAndroidAdUnitIDs...)
+		all = append(all, provider.RetiredIOSAdUnitIDs...)
+		for _, unit := range all {
 			if unit == "" {
 				continue
 			}
