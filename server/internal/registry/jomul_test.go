@@ -94,11 +94,13 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	if !ok {
 		t.Fatal("AdMob provider 설정이 없다")
 	}
-	// unit 을 고정 비교한다. 반대편 원본은 코드가 아니라 seorilabs/jomul 의 google-play
-	// 환경 변수 ADMOB_REWARDED_AD_UNIT_ID 이고, v0.1.5 signed AAB 가 이 unit 으로 빌드됐다.
-	// 클라이언트가 요청한 unit 과 다르면 광고는 재생되고 SSV 만 CodeAdUnitMismatch 로 거부된다.
-	// 실제로 이 PR 의 첫 커밋이 iOS unit 을 넣었다가 바로잡았다.
-	const wantAndroidUnit = "ca-app-pub-2444587584524186/1396162476"
+	// unit 을 고정 비교한다. 정본은 seorilabs/.github#167 의 중앙 발급 원장이고, 앱 쪽
+	// 주입값(seorilabs/jomul 의 google-play 환경 변수, Xcode Cloud 환경 변수)도 같은 원장을
+	// 본다. 클라이언트가 요청한 unit 과 다르면 광고는 재생되고 SSV 만 CodeAdUnitMismatch 로
+	// 거부되므로, 한쪽만 바뀐 상태를 여기서 막는다.
+	// 2026-09-18 에 레거시 publisher pub-2444587584524186 에서 유지 publisher
+	// pub-9932778305312246 으로 옮겼다. 레거시 unit 은 더 이상 유효한 비교 대상이 아니다.
+	const wantAndroidUnit = "ca-app-pub-9932778305312246/5497048802"
 	if provider.AndroidAdUnitID != wantAndroidUnit {
 		t.Fatalf("Android unit=%q, want %q", provider.AndroidAdUnitID, wantAndroidUnit)
 	}
@@ -106,7 +108,7 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	// 레지스트리에 넣으면 SSV 대조 대상만 늘었기 때문이다. seorilabs/jomul 의 ADR 0017 이 그
 	// 전제를 뒤집어 iOS 를 4+ 일반 카테고리로 옮기고 Android 와 같은 리워드 광고를 붙이기로 했다.
 	// 이 값이 없으면 iOS claim 은 ConfirmAdMob 이 CodeAdUnitMismatch 로 거부한다.
-	const wantIOSUnit = "ca-app-pub-2444587584524186/4203846143"
+	const wantIOSUnit = "ca-app-pub-9932778305312246/7057542480"
 	if provider.IOSAdUnitID != wantIOSUnit {
 		t.Fatalf("iOS unit=%q, want %q", provider.IOSAdUnitID, wantIOSUnit)
 	}
