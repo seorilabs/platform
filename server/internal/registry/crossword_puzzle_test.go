@@ -47,7 +47,7 @@ func TestCrosswordPuzzleRegistryAuthBridgeContract(t *testing.T) {
 		t.Fatalf("config가 비활성이다: %#v", app.Features)
 	}
 	// registry와 앱 opt-in은 둘 다 켜져야 heartbeat가 돈다. registry만 꺼지면 token이
-	// enabled=false 로 돌아가 이미 마켓에 나간 빌드의 동접이 통째로 사라진다.
+	// enabled=false로 돌아가 이미 마켓에 나간 빌드의 동접이 통째로 사라진다.
 	if !app.FeatureEnabled("presence") {
 		t.Fatalf("presence가 비활성이다: %#v", app.Features)
 	}
