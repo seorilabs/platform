@@ -42,9 +42,14 @@ func TestLucidChessRegistryAuthAndEventContract(t *testing.T) {
 		t.Fatalf("인증과 Events 기능 경계가 다르다: %#v", lucidChess.Features)
 	}
 
+	// AppsInToss web-framework 3.x는 미니앱을 *.web.tossmini.com 에서 서빙한다.
+	// 2.x 시절의 apps/private-apps origin만 두면 3.x 번들의 preflight가 거부돼
+	// Platform 세션과 GA4 relay가 통째로 끊긴다.
 	wantOrigins := []string{
 		"https://lucid-chess.apps.tossmini.com",
 		"https://lucid-chess.private-apps.tossmini.com",
+		"https://lucid-chess.web.tossmini.com",
+		"https://lucid-chess.private-web.tossmini.com",
 	}
 	if !reflect.DeepEqual(lucidChess.CORSOrigins, wantOrigins) {
 		t.Fatalf("AIT origin이 다르다\n got: %#v\nwant: %#v", lucidChess.CORSOrigins, wantOrigins)
