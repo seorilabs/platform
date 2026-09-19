@@ -4,6 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
@@ -20,15 +23,43 @@ type SessionResolver interface {
 	Authenticate(r *http.Request) (identity.Session, error)
 }
 
+// GA4Sender는 Handler가 허용·정규화한 이벤트를 외부 GA4 sink로 전달한다.
+// 인터페이스는 소비자인 Handler 쪽에 둔다.
+type GA4Sender interface {
+	Send(ctx context.Context, app registry.App, rows []*Row, relay ga4RelayContext) error
+}
+
+// ga4RelayContext는 한 요청 동안만 GA4 sink에 전달하는 정보다. Row에
+// 넣지 않으므로 Platform BigQuery, outbox, 로그에 원 요청 IP가 남지 않는다.
+type ga4RelayContext struct {
+	IPOverride string
+}
+
 // Handler는 이벤트 수집 HTTP 핸들러다.
 type Handler struct {
-	collector *Collector
-	registry  *registry.Registry
-	sessions  SessionResolver
+	collector               *Collector
+	registry                *registry.Registry
+	sessions                SessionResolver
+	ga4                     GA4Sender
+	trustedIngressProxyHops int
 }
 
 func NewHandler(c *Collector, reg *registry.Registry, sessions SessionResolver) *Handler {
 	return &Handler{collector: c, registry: reg, sessions: sessions}
+}
+
+func (h *Handler) WithGA4(sender GA4Sender) *Handler {
+	h.ga4 = sender
+	return h
+}
+
+// WithTrustedIngressProxyHops는 운영 ingress가 끝에 추가하는 hop 수를 exact하게
+// 확인한 경우에만 켠다. 0 또는 미설정은 fail-closed로 주소 전달을 생략한다.
+func (h *Handler) WithTrustedIngressProxyHops(hops int) *Handler {
+	if hops > 0 {
+		h.trustedIngressProxyHops = hops
+	}
+	return h
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -52,7 +83,10 @@ type ingestRequest struct {
 		AppVersion  string `json:"appVersion"`
 		Locale      string `json:"locale"`
 		GA4ClientID string `json:"ga4ClientId"`
-		SDKVersion  string `json:"sdkVersion"`
+		// AnalyticsConsent는 제품 분석에 대한 명시적 동의다. 생략과 false는
+		// 동일하며, 원본 요청 주소를 GA4 위치 파생에 쓰지 않는다.
+		AnalyticsConsent bool   `json:"analyticsConsent"`
+		SDKVersion       string `json:"sdkVersion"`
 	} `json:"context"`
 }
 
@@ -98,12 +132,22 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	// 세션은 선택이다. 없거나 만료됐어도 익명으로 수집한다.
+	// 삭제를 지원하는 앱은 모든 이벤트를 본인 신원에 연결한다. 차단된
+	// 토큰을 익명으로 낮추면 삭제 대상에서 빠진 식별 데이터가 생긴다.
 	var puid string
 	if h.sessions != nil {
-		if sess, err := h.sessions.Authenticate(r); err == nil {
+		sess, authErr := h.sessions.Authenticate(r)
+		if authErr == nil {
+			if sess.AppID != app.AppID {
+				return platformerr.New(platformerr.CodeAuthForbidden, "앱과 세션이 일치하지 않아요")
+			}
 			puid = sess.PlatformUserID
+		} else if app.FeatureEnabled("account_deletion") || platformerr.CodeOf(authErr) == platformerr.CodeAuthForbidden || platformerr.CodeOf(authErr) == platformerr.CodeUserBlocked {
+			return authErr
 		}
+	}
+	if app.FeatureEnabled("account_deletion") && puid == "" {
+		return platformerr.New(platformerr.CodeAuthRequired, "인증된 계정이 필요해요")
 	}
 
 	rows, dropped := h.buildRows(r.Context(), app, req, puid)
@@ -112,10 +156,77 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 		if err := h.collector.Insert(r.Context(), rows); err != nil {
 			return err
 		}
+		h.forwardGA4(
+			r.Context(),
+			app,
+			rows,
+			h.ga4RelayContext(r, req.Context.AnalyticsConsent),
+		)
 	}
 
 	httpx.WriteOK(w, http.StatusOK, ingestResponse{Accepted: len(rows), Dropped: dropped})
 	return nil
+}
+
+func (h *Handler) ga4RelayContext(r *http.Request, analyticsConsent bool) ga4RelayContext {
+	if !analyticsConsent {
+		return ga4RelayContext{}
+	}
+	return ga4RelayContext{IPOverride: trustedClientIP(r, h.trustedIngressProxyHops)}
+}
+
+// forwardGA4는 BigQuery 원장 적재와 앱 응답을 GA4 가용성에서 분리한다. 여기서 실패를
+// 앱 재시도로 돌리면 이미 적재된 행이 중복되므로 운영 경고만 남기고 수락을 유지한다.
+func (h *Handler) forwardGA4(
+	ctx context.Context,
+	app registry.App,
+	rows []*Row,
+	relay ga4RelayContext,
+) {
+	if h.ga4 == nil {
+		return
+	}
+	if err := h.ga4.Send(ctx, app, rows, relay); err != nil {
+		slog.WarnContext(ctx, "GA4 이벤트 중계 실패",
+			"app_id", app.AppID,
+			"event_count", len(rows),
+			"code", platformerr.CodeOf(err),
+		)
+	}
+}
+
+// trustedClientIP는 신뢰 ingress가 X-Forwarded-For 오른쪽에 추가한 hop만
+// 기준으로 원 요청 주소를 고른다. 클라이언트가 앞에 붙인 값은 읽지 않는다.
+func trustedClientIP(r *http.Request, trustedProxyHops int) string {
+	if trustedProxyHops <= 0 {
+		return ""
+	}
+	forwardedFor := r.Header.Values("X-Forwarded-For")
+	if len(forwardedFor) != 1 {
+		return ""
+	}
+	parts := strings.Split(forwardedFor[0], ",")
+	clientIndex := len(parts) - trustedProxyHops - 1
+	if clientIndex < 0 {
+		return ""
+	}
+	// 설정한 ingress hop이 실제 주소 형태인지 확인한다. 하나라도 다르면
+	// topology를 신뢰할 수 없으므로 원 요청 주소도 전달하지 않는다.
+	for _, raw := range parts[clientIndex+1:] {
+		if _, err := netip.ParseAddr(strings.TrimSpace(raw)); err != nil {
+			return ""
+		}
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(parts[clientIndex]))
+	if err != nil {
+		return ""
+	}
+	address = address.Unmap()
+	if !address.IsGlobalUnicast() || address.IsPrivate() || address.IsLoopback() ||
+		address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsUnspecified() {
+		return ""
+	}
+	return address.String()
 }
 
 func (h *Handler) buildRows(
@@ -140,8 +251,8 @@ func (h *Handler) buildRows(
 		// 벗겨야 앱을 가로지르는 쿼리가 가능해진다.
 		stripped := app.StripEventPrefix(name)
 
-		// allowlist 밖은 조용히 버린다. GA4로는 여전히 간다.
-		// 비용과 QPS를 규모와 무관한 상수로 묶는 장치다.
+		// allowlist 밖은 조용히 버린다. 서버 GA4 중계를 쓰는 앱도 같은
+		// allowlist를 따르므로 비용과 QPS가 규모와 무관한 상수로 묶인다.
 		if !app.EventAllowed(stripped) && !app.EventAllowed(name) {
 			dropped++
 			continue
@@ -157,6 +268,17 @@ func (h *Handler) buildRows(
 			eventTS = h.collector.ClampEventTime(time.UnixMilli(e.TSUnixMS))
 		}
 
+		params := NormalizeParams(e.Params)
+		sessionID := truncateRunes(e.SessionID, 64)
+		if sessionID == "" {
+			switch value := params["session_id"].(type) {
+			case string:
+				sessionID = truncateRunes(value, 64)
+			case int64:
+				sessionID = strconv.FormatInt(value, 10)
+			}
+		}
+
 		rows = append(rows, &Row{
 			EventID:        truncateRunes(e.EventID, 64),
 			ReceivedAt:     now,
@@ -164,12 +286,12 @@ func (h *Handler) buildRows(
 			AppID:          app.AppID,
 			PlatformUserID: puid,
 			GA4ClientID:    truncateRunes(req.Context.GA4ClientID, 64),
-			SessionID:      truncateRunes(e.SessionID, 64),
+			SessionID:      sessionID,
 			EventName:      stripped,
 			Platform:       truncateRunes(req.Context.Platform, 16),
 			AppVersion:     truncateRunes(req.Context.AppVersion, 32),
 			Locale:         truncateRunes(req.Context.Locale, 16),
-			Params:         NormalizeParams(e.Params),
+			Params:         params,
 			SDKVersion:     truncateRunes(req.Context.SDKVersion, 32),
 		})
 	}

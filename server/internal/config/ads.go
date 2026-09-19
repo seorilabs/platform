@@ -1,30 +1,27 @@
 package config
 
 import (
-	"errors"
 	"os"
 )
 
 type AdsConfig struct {
 	AdMobVerifierKeysURL string
-	AITClientCertPEM     []byte
-	AITClientKeyPEM      []byte
+	AITClients           []TossClientCredential
 	AITBaseURL           string
 }
 
 func (c AdsConfig) AITLoginEnabled() bool {
-	return len(c.AITClientCertPEM) > 0 && len(c.AITClientKeyPEM) > 0
+	return len(c.AITClients) > 0
 }
 
 func loadAds() (AdsConfig, error) {
-	cfg := AdsConfig{
+	clients, err := loadTossClients("AIT_LOGIN_CLIENT_CERT", "AIT_LOGIN_CLIENT_KEY")
+	if err != nil {
+		return AdsConfig{}, err
+	}
+	return AdsConfig{
 		AdMobVerifierKeysURL: os.Getenv("ADMOB_SSV_VERIFIER_KEYS_URL"),
-		AITClientCertPEM:     decodeMaybeBase64(os.Getenv("AIT_LOGIN_CLIENT_CERT")),
-		AITClientKeyPEM:      decodeMaybeBase64(os.Getenv("AIT_LOGIN_CLIENT_KEY")),
+		AITClients:           clients,
 		AITBaseURL:           os.Getenv("AIT_LOGIN_BASE_URL"),
-	}
-	if (len(cfg.AITClientCertPEM) == 0) != (len(cfg.AITClientKeyPEM) == 0) {
-		return AdsConfig{}, errors.New("config: AIT Login mTLS cert와 key는 함께 필요하다")
-	}
-	return cfg, nil
+	}, nil
 }

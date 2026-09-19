@@ -44,3 +44,39 @@ func TestChooseContentSourceRejectsExhaustedSources(t *testing.T) {
 		t.Fatalf("code=%q err=%v", platformerr.CodeOf(err), err)
 	}
 }
+
+// 조회는 차감과 같은 규칙으로 세되 0을 에러로 만들지 않는다.
+// 화면에 "0장 남음"을 그리는 것은 정상 상태다.
+func TestContentUnitsRemainingCountsActiveSourcesOnly(t *testing.T) {
+	remaining, err := contentUnitsRemaining(map[string]domain.Source{
+		"source-a": {State: domain.StateActive, ContentUnitsConsumed: 1},
+		"source-b": {State: domain.StateActive},
+		"revoked":  {State: domain.StateRevoked},
+	}, 5)
+	if err != nil || remaining != 9 {
+		t.Fatalf("remaining=%d err=%v", remaining, err)
+	}
+}
+
+func TestContentUnitsRemainingReportsZeroWithoutError(t *testing.T) {
+	remaining, err := contentUnitsRemaining(map[string]domain.Source{
+		"source": {State: domain.StateActive, ContentUnitsConsumed: 5},
+	}, 5)
+	if err != nil || remaining != 0 {
+		t.Fatalf("remaining=%d err=%v", remaining, err)
+	}
+
+	remaining, err = contentUnitsRemaining(nil, 5)
+	if err != nil || remaining != 0 {
+		t.Fatalf("source 없음 remaining=%d err=%v", remaining, err)
+	}
+}
+
+func TestContentUnitsRemainingRejectsInvalidUsage(t *testing.T) {
+	_, err := contentUnitsRemaining(map[string]domain.Source{
+		"source": {State: domain.StateActive, ContentUnitsConsumed: 6},
+	}, 5)
+	if platformerr.CodeOf(err) != platformerr.CodeLedgerStateInvalid {
+		t.Fatalf("code=%q err=%v", platformerr.CodeOf(err), err)
+	}
+}

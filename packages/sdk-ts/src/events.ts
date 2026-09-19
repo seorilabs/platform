@@ -21,6 +21,8 @@ export interface EventContext {
   appVersion?: string;
   locale?: string;
   ga4ClientId?: string;
+  /** 제품 분석 전송에 대한 명시적 동의. 생략과 false는 동일하다. */
+  analyticsConsent?: boolean;
   sdkVersion?: string;
 }
 

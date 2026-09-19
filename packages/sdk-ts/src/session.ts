@@ -5,6 +5,7 @@
  * 갱신을 클라이언트 코드가 신경 쓰지 않도록 여기서 감춘다.
  */
 
+import type { Maintenance, SdkStatus, SessionConfigOverlay } from "./config.ts";
 import { PlatformError, type Transport } from "./transport.ts";
 
 /** 자격증명 종류. */
@@ -24,6 +25,8 @@ export interface Session {
   supportCode: string;
   appUserId: string;
   isAnonymous: boolean;
+  /** 검증된 외부 계정 또는 AppsInToss 계정과 연결됐는지. */
+  isLinkedAccount: boolean;
   /** 절대 만료 시각(epoch ms). */
   expiresAt: number;
 }
@@ -57,20 +60,43 @@ export class MemorySessionStore implements SessionStore {
  */
 const REFRESH_MARGIN_MS = 60_000;
 
-interface SessionResponse {
+export interface SessionResponse {
   platformToken: string;
   refreshToken: string;
   platformUserId: string;
   supportCode: string;
   appUserId: string;
   isAnonymous: boolean;
+  /** 구버전 서버와의 순차 배포 동안 없을 수 있어 false로 해석한다. */
+  isLinkedAccount?: boolean;
   expiresIn: number;
+
+  /**
+   * 부팅 왕복을 줄이려고 서버가 얹어 주는 설정.
+   *
+   * 넷은 함께 오거나 함께 빠진다. 설정 조회가 실패해도 세션 발급은 막지
+   * 않으며, 그때는 넷 다 없다. 빈 값이 오지 않으므로 "없음"과 "ok"를
+   * 구분할 수 있다.
+   */
+  features?: Record<string, boolean>;
+  sdk?: SdkStatus;
+  maintenance?: Maintenance;
+  configEtag?: string;
 }
 
 export class SessionManager {
   private readonly transport: Transport;
   private readonly store: SessionStore;
   private readonly now: () => number;
+
+  /**
+   * 세션 응답에 실려 온 설정을 넘길 곳.
+   *
+   * Session 타입에 넣지 않는 이유는 SessionStore 직렬화 모양이 바뀌면
+   * 이미 저장된 세션을 읽지 못하게 되기 때문이다. 설정은 서버가 매번
+   * 다시 주므로 보관할 이유도 없다.
+   */
+  private onOverlay: ((overlay: SessionConfigOverlay) => void) | null = null;
 
   /** 갱신이 겹치지 않게 하나로 묶는다. */
   private inflight: Promise<Session> | null = null;
@@ -81,6 +107,11 @@ export class SessionManager {
     this.transport = transport;
     this.store = store;
     this.now = now;
+  }
+
+  /** 세션 응답에 실린 설정을 받을 곳을 등록한다. */
+  observeConfig(listener: (overlay: SessionConfigOverlay) => void): void {
+    this.onOverlay = listener;
   }
 
   /**
@@ -135,6 +166,16 @@ export class SessionManager {
     return this.store.load();
   }
 
+  /** 계정 연결 응답의 새 세션을 현재 세션으로 원자적으로 교체한다. */
+  async adopt(res: SessionResponse): Promise<Session> {
+    const session = this.toSession(res);
+    // 이전 guest credential로 자동 재로그인하면 연결 계정이 조용히
+    // guest로 강등될 수 있다. refresh 실패 시 provider 로그인을 다시 받는다.
+    this.credential = null;
+    await this.store.save(session);
+    return session;
+  }
+
   async signOut(): Promise<void> {
     this.credential = null;
     await this.store.clear();
@@ -165,6 +206,14 @@ export class SessionManager {
   }
 
   private toSession(res: SessionResponse): Session {
+    if (this.onOverlay) {
+      this.onOverlay({
+        ...(res.features !== undefined ? { features: res.features } : {}),
+        ...(res.sdk !== undefined ? { sdk: res.sdk } : {}),
+        ...(res.maintenance !== undefined ? { maintenance: res.maintenance } : {}),
+        ...(res.configEtag !== undefined ? { configEtag: res.configEtag } : {}),
+      });
+    }
     return {
       platformToken: res.platformToken,
       refreshToken: res.refreshToken,
@@ -172,6 +221,7 @@ export class SessionManager {
       supportCode: res.supportCode,
       appUserId: res.appUserId,
       isAnonymous: res.isAnonymous,
+      isLinkedAccount: res.isLinkedAccount ?? false,
       expiresAt: this.now() + res.expiresIn * 1000,
     };
   }

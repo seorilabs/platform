@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -91,16 +92,30 @@ func (c AppleConfig) Enabled() bool {
 	return len(c.KeyContent) > 0 && c.KeyID != "" && c.Issuer != "" && c.BundleID != ""
 }
 
+// TossClientCredential은 미니앱 하나의 AppsInToss mTLS 자격증명이다.
+//
+// 어느 앱의 것인지는 인증서 CN이 정한다. 토스 파트너 API가 CN으로 미니앱을
+// 식별하므로, 환경변수 이름이 아니라 인증서 자체가 소유자를 말하게 둔다.
+// Source는 어느 환경변수에서 왔는지만 담는 진단용 값이다.
+type TossClientCredential struct {
+	Source  string
+	CertPEM []byte
+	KeyPEM  []byte
+}
+
 // TossConfig는 AppsInToss 설정이다. mTLS를 쓴다.
+//
+// 인증서는 미니앱마다 따로 발급된다. 한 장을 프로세스 전역으로 쓰면 다른 앱의
+// 인가코드까지 그 인증서로 교환하게 되고, 토스는 CN이 다른 미니앱의 코드를
+// 거부한다. 그래서 앱 수만큼 자격증명을 들고 있는다.
 type TossConfig struct {
-	ClientCertPEM []byte
-	ClientKeyPEM  []byte
-	BaseURL       string
+	Clients []TossClientCredential
+	BaseURL string
 }
 
 // Enabled는 AIT 검증기를 조립할 수 있는지 본다.
 func (c TossConfig) Enabled() bool {
-	return len(c.ClientCertPEM) > 0 && len(c.ClientKeyPEM) > 0
+	return len(c.Clients) > 0
 }
 
 // IsSandbox는 샌드박스 원장인지 본다.
@@ -186,10 +201,13 @@ func loadIAP(requireMarket bool) (IAPConfig, error) {
 		c.Apple.Sandbox = appleSandbox
 	}
 
+	tossClients, err := loadTossClients("IAP_TOSS_CLIENT_CERT", "IAP_TOSS_CLIENT_KEY")
+	if err != nil {
+		return IAPConfig{}, err
+	}
 	c.Toss = TossConfig{
-		ClientCertPEM: decodeMaybeBase64(os.Getenv("IAP_TOSS_CLIENT_CERT")),
-		ClientKeyPEM:  decodeMaybeBase64(os.Getenv("IAP_TOSS_CLIENT_KEY")),
-		BaseURL:       os.Getenv("IAP_TOSS_BASE_URL"),
+		Clients: tossClients,
+		BaseURL: os.Getenv("IAP_TOSS_BASE_URL"),
 	}
 
 	if err := loadIAPLimits(&c); err != nil {
@@ -310,6 +328,53 @@ func decodeKey(s string) ([]byte, error) {
 //
 // .p8 키와 PEM 인증서는 개행이 있어 환경변수에 그대로 넣기 어렵다.
 // base64로 받는 것을 권하되 원문도 허용해 로컬 개발을 편하게 한다.
+// loadTossClients는 AppsInToss mTLS 자격증명 쌍을 모은다.
+//
+// `<certPrefix>`/`<keyPrefix>` 한 쌍과, 접미사가 붙은 `<certPrefix>_<SUFFIX>`
+// 쌍을 모두 읽는다. 접미사는 사람이 배포 설정을 읽을 때의 표지일 뿐이고,
+// 어느 앱의 인증서인지는 CN이 정한다.
+//
+// 한쪽만 있는 쌍은 오류다. 조용히 무시하면 인증서만 갈아 끼운 배포가
+// 이전 키로 붙어 원인을 찾기 어려운 401을 만든다.
+func loadTossClients(certPrefix, keyPrefix string) ([]TossClientCredential, error) {
+	suffixes := map[string]struct{}{"": {}}
+	for _, entry := range os.Environ() {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		for _, prefix := range [2]string{certPrefix, keyPrefix} {
+			if suffix, found := strings.CutPrefix(name, prefix+"_"); found && suffix != "" {
+				suffixes[suffix] = struct{}{}
+			}
+		}
+	}
+
+	names := make([]string, 0, len(suffixes))
+	for suffix := range suffixes {
+		names = append(names, suffix)
+	}
+	sort.Strings(names)
+
+	clients := make([]TossClientCredential, 0, len(names))
+	for _, suffix := range names {
+		certName, keyName := certPrefix, keyPrefix
+		if suffix != "" {
+			certName, keyName = certPrefix+"_"+suffix, keyPrefix+"_"+suffix
+		}
+		cert := decodeMaybeBase64(os.Getenv(certName))
+		key := decodeMaybeBase64(os.Getenv(keyName))
+		if len(cert) == 0 && len(key) == 0 {
+			continue
+		}
+		if len(cert) == 0 || len(key) == 0 {
+			return nil, fmt.Errorf("config: %s와 %s는 함께 필요하다", certName, keyName)
+		}
+		clients = append(clients, TossClientCredential{Source: certName, CertPEM: cert, KeyPEM: key})
+	}
+	return clients, nil
+}
+
 func decodeMaybeBase64(s string) []byte {
 	s = strings.TrimSpace(s)
 	if s == "" {

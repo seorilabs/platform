@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 )
 
 // CredentialKind는 클라이언트가 제시하는 자격증명 종류다.
@@ -42,6 +44,14 @@ type TokenVerifier interface {
 	Verify(ctx context.Context, token string, app registry.App) (Claims, error)
 }
 
+// Blocklist는 앱별 차단 계정 조회 포트다.
+//
+// 소비자인 이 패키지가 정의한다. blocklist.Service가 구현한다.
+// 차단 목록이 레지스트리에서 빠져나온 이유는 ADR 0026에 있다.
+type Blocklist interface {
+	Blocked(ctx context.Context, appID, uid string) (bool, error)
+}
+
 // AITLoginVerifier는 일회용 appLogin authorization code를 mTLS로 교환한다.
 // 반환값은 원문 userKey가 아니라 이미 SHA-256 처리된 앱 사용자 ID다.
 type AITLoginVerifier interface {
@@ -54,21 +64,58 @@ type AppCheckVerifier interface {
 	Verify(ctx context.Context, token, firebaseProjectID string) error
 }
 
+// ClientInfo는 요청 헤더가 알려 주는 실행 환경이다.
+//
+// 권한이 아니라 관측값이다. 클라이언트가 값을 고르므로 신뢰 경계 안에서는 쓰지
+// 않고 운영 이벤트에만 싣는다. 헤더를 보내지 않는 구버전 SDK가 있어 전부 선택이다.
+type ClientInfo struct {
+	// AppVersion은 X-Seori-AppVer다. 예 `1.2.4`.
+	AppVersion string
+	// Runtime은 X-Seori-Runtime이다. 예 `godot-native-android`, `ait-rn`, `web`.
+	Runtime string
+	// SDK는 X-Seori-Sdk다. 예 `gd/0.6.8`, `ts/0.4.0`.
+	SDK string
+}
+
+// AppVersionObserver는 (앱, 런타임, 버전) 조합을 처음 본 순간을 한 번만 기록한다.
+//
+// 마켓 업로드도 태그도 아닌 "그 빌드로 실제 세션이 처음 열린 시각"이라
+// 새 버전의 실유입 개시를 가른다.
+type AppVersionObserver interface {
+	ObserveAppVersion(ctx context.Context, appID string, client ClientInfo) error
+}
+
+// NewIdentity는 자격증명에서 확인한, 계정을 만들 때 원장과 운영 이벤트에 함께
+// 남길 사실이다.
+type NewIdentity struct {
+	// UID는 앱 사용자 식별자다.
+	UID string
+	// Anonymous는 클라이언트가 값을 고를 수 있어 사칭이 되는 신원인지다.
+	Anonymous bool
+	// AuthType은 계정이 만들어진 인증 경로다.
+	// firebase, firebase_bridge, apps_in_toss, anonymous 중 하나다.
+	AuthType string
+	// Referrer는 AppsInToss 로그인의 DEFAULT/SANDBOX 구분이고 다른 자격증명에서는
+	// 비어 있다. 운영 이벤트에서 실서비스 유입과 샌드박스 테스트를 가른다.
+	Referrer string
+	// SignInProvider는 Firebase ID token의 sign_in_provider다. google.com,
+	// apple.com, anonymous 같은 값이고 AuthType이 가리는 실제 로그인 수단이다.
+	//
+	// platform이 uid를 새로 만드는 bridge 게스트 경로에는 아직 로그인이 없어
+	// 비어 있다. 없는 사실을 지어내지 않으려고 그때는 이벤트에도 싣지 않는다.
+	SignInProvider string
+	// Client는 이 계정을 만든 요청의 실행 환경이다. 헤더를 보내지 않는 구버전
+	// 클라이언트에서는 비어 있다.
+	Client ClientInfo
+}
+
 // UserRepository는 identity 저장소다.
 type UserRepository interface {
-	// EnsureUser는 (appID, uid)에 대응하는 platform_user_id를 돌려준다.
+	// EnsureUser는 (appID, identity.UID)에 대응하는 platform_user_id를 돌려준다.
 	//
 	// 없으면 만들고 있으면 기존 것을 쓴다. 동시 호출에도 하나만 만들어야 한다.
 	// 여러 개가 만들어지면 같은 사람의 결제 원장이 갈라진다.
-	//
-	// referrer는 AppsInToss 로그인의 DEFAULT/SANDBOX 구분이고 다른 자격증명에서는
-	// 비어 있다. 운영 이벤트에서 실서비스 유입과 샌드박스 테스트를 가른다.
-	EnsureUser(
-		ctx context.Context,
-		appID, uid string,
-		anonymous bool,
-		authType, referrer string,
-	) (string, error)
+	EnsureUser(ctx context.Context, appID string, identity NewIdentity) (string, error)
 	// LookupUser는 삭제 같은 멱등 경로에서 기존 매핑만 읽는다.
 	// 매핑이 없을 때 새 사용자를 만들면 안 된다.
 	LookupUser(ctx context.Context, appID, uid string) (platformUserID string, found bool, err error)
@@ -97,11 +144,18 @@ type Result struct {
 	// 앱이 Firebase uid를 화면에 보여주면 CS가 그걸로 우리 원장을 찾을
 	// 수 없다. 플랫폼은 앱의 uid를 조회 키로 두지 않고, PII도 저장하지
 	// 않아 이메일 검색이 성립하지 않는다. ADR 0005다.
-	SupportCode string
-	AppUserID   string
-	IsAnonymous bool
-	ExpiresIn   int
-	ExpiresAt   time.Time
+	SupportCode     string
+	AppUserID       string
+	IsAnonymous     bool
+	IsLinkedAccount bool
+	ExpiresIn       int
+	ExpiresAt       time.Time
+
+	// Config는 세션 응답에 동봉할 원격 설정이다.
+	// 오버레이가 없거나 실패하면 HasConfig가 false이고 응답에서 빠진다.
+	Config     remoteconfig.Resolved
+	ConfigETag string
+	HasConfig  bool
 }
 
 // FirebaseCustomTokenResult는 custom token bridge 응답이다.
@@ -114,43 +168,156 @@ type FirebaseCustomTokenResult struct {
 
 // Service는 세션 교환 유스케이스다.
 type Service struct {
-	registry     *registry.Registry
-	verifier     TokenVerifier
-	aitLogin     AITLoginVerifier
-	users        UserRepository
-	issuer       *SessionIssuer
-	customTokens CustomTokenIssuer
-	appCheck     AppCheckVerifier
-	refreshTTL   time.Duration
-	now          func() time.Time
+	registry         *registry.Registry
+	verifier         TokenVerifier
+	blocklist        Blocklist
+	aitLogin         map[string]AITLoginVerifier
+	users            UserRepository
+	deletions        DeletionRepository
+	issuer           *SessionIssuer
+	customTokens     CustomTokenIssuer
+	appCheck         AppCheckVerifier
+	accounts         AccountRepository
+	accountProviders map[string]AccountProvider
+	appVersions      AppVersionObserver
+	configOverlay    ConfigOverlay
+	refreshTTL       time.Duration
+	now              func() time.Time
 }
 
-func (s *Service) WithAITLoginVerifier(verifier AITLoginVerifier) *Service {
-	s.aitLogin = verifier
+// WithAITLoginVerifiers는 appID별 AppsInToss 로그인 검증기를 등록한다.
+//
+// 검증기는 미니앱마다 다른 mTLS 인증서를 쥔다. 하나를 모든 앱에 쓰면 토스가
+// 다른 미니앱의 인가코드로 보고 거부한다. 그래서 앱을 키로 들고 있는다.
+func (s *Service) WithAITLoginVerifiers(verifiers map[string]AITLoginVerifier) *Service {
+	s.aitLogin = verifiers
 	return s
 }
 
 // NewService는 서비스를 만든다.
+// blocklist는 선택 인자가 아니다. nil이면 차단이 조용히 풀린 채
+// 배포되고, 그 상태는 로그에도 남지 않는다.
 func NewService(
 	reg *registry.Registry,
 	verifier TokenVerifier,
 	users UserRepository,
 	issuer *SessionIssuer,
+	blocked Blocklist,
 ) *Service {
 	return &Service{
 		registry:   reg,
 		verifier:   verifier,
 		users:      users,
 		issuer:     issuer,
+		blocklist:  blocked,
 		refreshTTL: DefaultRefreshTTL,
 		now:        time.Now,
 	}
+}
+
+// ensureNotBlocked는 차단된 계정을 거른다.
+//
+// 조회 자체가 실패하면 그 에러를 그대로 올린다. 차단 여부를 모른 채
+// 통과시키면 차단이 무의미해진다.
+func (s *Service) ensureNotBlocked(ctx context.Context, appID, uid string) error {
+	if s.deletions != nil {
+		deleting, err := s.deletions.AccountDeleting(ctx, appID, uid)
+		if err != nil {
+			return err
+		}
+		if deleting {
+			return deletionDenied()
+		}
+	}
+	blocked, err := s.blocklist.Blocked(ctx, appID, uid)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
+	}
+	return nil
 }
 
 // WithCustomTokenIssuer는 API role에만 custom token 원격 서명기를 연결한다.
 func (s *Service) WithCustomTokenIssuer(issuer CustomTokenIssuer) *Service {
 	s.customTokens = issuer
 	return s
+}
+
+// WithAppVersionObserver는 세션 경로의 앱 버전 최초 관측을 연결한다.
+//
+// 연결하지 않으면 관측만 꺼지고 세션 발급은 그대로 동작한다.
+func (s *Service) WithAppVersionObserver(observer AppVersionObserver) *Service {
+	s.appVersions = observer
+	return s
+}
+
+// observeAppVersion은 실패해도 요청을 막지 않는다.
+//
+// 이건 관측이지 인증이 아니다. Firestore 한 번 흔들렸다고 로그인이 막히면
+// 얻는 것보다 잃는 게 크다. 대신 조용히 넘기지 않고 로그를 남긴다.
+func (s *Service) observeAppVersion(ctx context.Context, appID string, client ClientInfo) {
+	if s.appVersions == nil || client.AppVersion == "" {
+		return
+	}
+	if err := s.appVersions.ObserveAppVersion(ctx, appID, client); err != nil {
+		slog.WarnContext(ctx, "앱 버전 최초 관측 실패. 세션은 계속한다",
+			"app_id", appID, "app_version", client.AppVersion, "err", err)
+	}
+}
+
+// ConfigOverlay는 세션 응답에 얹을 원격 설정을 계산한다.
+//
+// 부팅 왕복을 1회로 줄이는 게 목적이다. Godot의 HTTPRequest는 동시 1요청만
+// 처리하므로 이게 실제로 값을 한다.
+//
+// 소비자인 여기서 인터페이스를 정의한다. remoteconfig.Service가 만족한다.
+type ConfigOverlay interface {
+	ResolveFor(ctx context.Context, app registry.App, t remoteconfig.Target) (
+		remoteconfig.Resolved, string, error)
+}
+
+// WithConfigOverlay는 세션 응답의 설정 동봉을 연결한다.
+//
+// 연결하지 않으면 동봉만 빠지고 세션 발급은 그대로 동작한다.
+func (s *Service) WithConfigOverlay(overlay ConfigOverlay) *Service {
+	s.configOverlay = overlay
+	return s
+}
+
+// attachConfig는 세션 결과에 설정을 얹는다.
+//
+// 실패해도 요청을 막지 않는다. observeAppVersion과 같은 판단이다 -- 이건
+// 편의지 인증이 아니다. Firestore가 한 번 흔들렸다고 로그인이 막히면 얻는
+// 것보다 잃는 게 크다. 대신 조용히 넘기지 않고 로그를 남긴다.
+//
+// 실패하면 필드를 통째로 비운다. 빈 값을 채워 넣으면 클라이언트가 그걸
+// 유효한 판정으로 오해한다. 필드가 없으면 "모른다"가 정직하게 전달되고
+// 클라이언트는 /v1/config로 떨어진다.
+func (s *Service) attachConfig(
+	ctx context.Context,
+	app registry.App,
+	client ClientInfo,
+	res Result,
+) Result {
+	if s.configOverlay == nil {
+		return res
+	}
+	target := remoteconfig.Target{
+		Platform:   remoteconfig.PlatformFromRuntime(client.Runtime),
+		AppVersion: client.AppVersion,
+	}
+	resolved, etag, err := s.configOverlay.ResolveFor(ctx, app, target)
+	if err != nil {
+		slog.WarnContext(ctx, "세션 설정 동봉 실패. 세션은 계속한다",
+			"app_id", app.AppID, "err", err)
+		return res
+	}
+	res.Config = resolved
+	res.ConfigETag = etag
+	res.HasConfig = true
+	return res
 }
 
 // WithAppCheckVerifier는 공개 bootstrap 경로의 앱 증명을 연결한다.
@@ -207,6 +374,7 @@ func (s *Service) CreateFirebaseCustomToken(
 	ctx context.Context,
 	appID string,
 	existingFirebaseIDToken string,
+	client ClientInfo,
 ) (FirebaseCustomTokenResult, error) {
 	app, err := s.registry.GetUsable(ctx, appID)
 	if err != nil {
@@ -225,7 +393,7 @@ func (s *Service) CreateFirebaseCustomToken(
 		)
 	}
 
-	var uid string
+	var uid, signInProvider string
 	platformGuest := false
 	if token := strings.TrimSpace(existingFirebaseIDToken); token != "" {
 		if len(token) > 4096 {
@@ -239,6 +407,7 @@ func (s *Service) CreateFirebaseCustomToken(
 			return FirebaseCustomTokenResult{}, verifyErr
 		}
 		uid = claims.UID
+		signInProvider = claims.SignInProvider
 	} else {
 		platformGuest = true
 		uid, err = NewFirebaseBridgeUserID()
@@ -250,11 +419,8 @@ func (s *Service) CreateFirebaseCustomToken(
 			)
 		}
 	}
-	if app.UIDBlocked(uid) {
-		return FirebaseCustomTokenResult{}, platformerr.New(
-			platformerr.CodeUserBlocked,
-			"이용이 제한된 계정이에요",
-		)
+	if err := s.ensureNotBlocked(ctx, app.AppID, uid); err != nil {
+		return FirebaseCustomTokenResult{}, err
 	}
 
 	customToken, err := s.customTokens.Mint(ctx, app, uid, platformGuest)
@@ -265,10 +431,16 @@ func (s *Service) CreateFirebaseCustomToken(
 			"Firebase 인증 토큰을 만들지 못했어요",
 		)
 	}
-	platformUserID, err := s.users.EnsureUser(ctx, app.AppID, uid, false, "firebase_bridge", "")
+	platformUserID, err := s.users.EnsureUser(ctx, app.AppID, NewIdentity{
+		UID:            uid,
+		AuthType:       "firebase_bridge",
+		SignInProvider: signInProvider,
+		Client:         client,
+	})
 	if err != nil {
 		return FirebaseCustomTokenResult{}, err
 	}
+	s.observeAppVersion(ctx, app.AppID, client)
 	return FirebaseCustomTokenResult{
 		FirebaseCustomToken: customToken,
 		AppUserID:           uid,
@@ -287,6 +459,9 @@ func (s *Service) DeleteFirebaseAccount(
 	app, err := s.registry.GetUsable(ctx, appID)
 	if err != nil {
 		return err
+	}
+	if app.FeatureEnabled("account_deletion") {
+		return legacyDeletionDenied()
 	}
 	if !app.FeatureEnabled("firebase_custom_token_bridge") {
 		return platformerr.New(
@@ -322,49 +497,69 @@ func (s *Service) WithClock(now func() time.Time) *Service {
 }
 
 // CreateSession은 자격증명을 플랫폼 세션으로 교환한다.
-func (s *Service) CreateSession(ctx context.Context, appID string, cred Credential) (Result, error) {
+func (s *Service) CreateSession(
+	ctx context.Context,
+	appID string,
+	cred Credential,
+	client ClientInfo,
+) (Result, error) {
 	app, err := s.registry.GetUsable(ctx, appID)
 	if err != nil {
 		return Result{}, err
 	}
 
-	uid, anonymous, authType, referrer, err := s.resolveIdentity(ctx, app, cred)
+	identity, err := s.resolveIdentity(ctx, app, cred)
 	if err != nil {
 		return Result{}, err
 	}
+	identity.Client = client
 
-	puid, err := s.users.EnsureUser(ctx, app.AppID, uid, anonymous, authType, referrer)
+	puid, err := s.users.EnsureUser(ctx, app.AppID, identity)
 	if err != nil {
 		return Result{}, err
 	}
+	s.observeAppVersion(ctx, app.AppID, client)
+	linked := identity.AuthType == "apps_in_toss"
+	if s.accounts != nil {
+		storedLinked, linkErr := s.accounts.IsAccountLinked(ctx, app.AppID, puid)
+		if linkErr != nil {
+			return Result{}, linkErr
+		}
+		linked = linked || storedLinked
+	}
 
-	return s.issue(ctx, Session{
-		PlatformUserID: puid,
-		AppID:          app.AppID,
-		AppUserID:      uid,
-		IsAnonymous:    anonymous,
+	res, err := s.issue(ctx, Session{
+		PlatformUserID:  puid,
+		AppID:           app.AppID,
+		AppUserID:       identity.UID,
+		IsAnonymous:     identity.Anonymous,
+		IsLinkedAccount: linked,
 	})
+	if err != nil {
+		return Result{}, err
+	}
+	return s.attachConfig(ctx, app, client, res), nil
 }
 
-// resolveIdentity는 자격증명에서 앱 사용자 식별자를 얻는다.
+// resolveIdentity는 자격증명에서 계정을 만들 때 남길 사실을 얻는다.
 func (s *Service) resolveIdentity(
 	ctx context.Context,
 	app registry.App,
 	cred Credential,
-) (uid string, anonymous bool, authType, referrer string, err error) {
+) (NewIdentity, error) {
 	value := strings.TrimSpace(cred.Value)
 	if value == "" {
-		return "", false, "", "", platformerr.New(platformerr.CodeAuthRequired, "자격증명이 필요해요")
+		return NewIdentity{}, platformerr.New(platformerr.CodeAuthRequired, "자격증명이 필요해요")
 	}
 
 	switch cred.Kind {
 	case KindFirebaseIDToken:
 		if strings.TrimSpace(cred.Referrer) != "" {
-			return "", false, "", "", platformerr.New(platformerr.CodeRequestInvalid, "Firebase 로그인에는 referrer를 넣을 수 없어요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeRequestInvalid, "Firebase 로그인에는 referrer를 넣을 수 없어요")
 		}
 		claims, err := s.verifier.Verify(ctx, value, app)
 		if err != nil {
-			return "", false, "", "", err
+			return NewIdentity{}, err
 		}
 		// Firebase 익명 로그인은 여기서 익명으로 치지 않는다.
 		//
@@ -378,20 +573,24 @@ func (s *Service) resolveIdentity(
 		//
 		// 실제로 이걸 묶어 두면 lizard-tycoon은 결제가 하나도 되지 않는다.
 		// 전 사용자가 Firebase 익명 계정이기 때문이다.
-		return claims.UID, false, "firebase", "", nil
+		return NewIdentity{
+			UID:            claims.UID,
+			AuthType:       "firebase",
+			SignInProvider: claims.SignInProvider,
+		}, nil
 
 	case KindAnonymous:
 		if strings.TrimSpace(cred.Referrer) != "" {
-			return "", false, "", "", platformerr.New(platformerr.CodeRequestInvalid, "익명 로그인에는 referrer를 넣을 수 없어요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeRequestInvalid, "익명 로그인에는 referrer를 넣을 수 없어요")
 		}
 		// 사칭 가능한 신원이다. 여기서 막지 않고 세션에 표시만 한다.
 		// IAP 같은 민감 경로가 EnsureNotAnonymous로 거부한다.
 		// 이렇게 하는 이유는 RemoteConfig 조회와 이벤트 로그는
 		// 익명으로도 허용해야 하기 때문이다.
-		if app.UIDBlocked(value) {
-			return "", false, "", "", platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
+		if err := s.ensureNotBlocked(ctx, app.AppID, value); err != nil {
+			return NewIdentity{}, err
 		}
-		return "anon:" + value, true, "anonymous", "", nil
+		return NewIdentity{UID: "anon:" + value, Anonymous: true, AuthType: "anonymous"}, nil
 
 	case KindAITLogin:
 		// AppsInToss userKey는 광고와 IAP가 함께 쓰는 앱 범위 신원이다.
@@ -399,26 +598,33 @@ func (s *Service) resolveIdentity(
 		adsEnabled := app.FeatureEnabled("ads") && slices.Contains(app.Ads.Providers, "apps_in_toss")
 		iapEnabled := app.FeatureEnabled("iap") && app.MarketEnabled("apps_in_toss")
 		if !adsEnabled && !iapEnabled {
-			return "", false, "", "", platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 AppsInToss 로그인을 사용하지 않아요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 AppsInToss 로그인을 사용하지 않아요")
 		}
 		referrer := strings.ToUpper(strings.TrimSpace(cred.Referrer))
 		if referrer != "DEFAULT" && referrer != "SANDBOX" {
-			return "", false, "", "", platformerr.New(platformerr.CodeRequestInvalid, "AppsInToss referrer가 올바르지 않아요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeRequestInvalid, "AppsInToss referrer가 올바르지 않아요")
 		}
-		if s.aitLogin == nil {
-			return "", false, "", "", platformerr.New(platformerr.CodePlatformUnavailable, "AppsInToss 로그인이 준비되지 않았어요")
+		if len(s.aitLogin) == 0 {
+			return NewIdentity{}, platformerr.New(platformerr.CodePlatformUnavailable, "AppsInToss 로그인이 준비되지 않았어요")
 		}
-		uid, err := s.aitLogin.Verify(ctx, value, referrer)
+		// 이 앱의 인증서가 없으면 다른 앱 인증서로 대신 교환하지 않는다.
+		// 그렇게 하면 토스가 CN 불일치로 거부해 설정 오류가 인증 실패로 둔갑한다.
+		verifier, ok := s.aitLogin[app.AppID]
+		if !ok {
+			return NewIdentity{}, platformerr.New(platformerr.CodeProviderConfigInvalid,
+				"이 앱의 AppsInToss 로그인 인증서가 없어요")
+		}
+		uid, err := verifier.Verify(ctx, value, referrer)
 		if err != nil {
-			return "", false, "", "", err
+			return NewIdentity{}, err
 		}
 		if !isSHA256(uid) {
-			return "", false, "", "", platformerr.New(platformerr.CodeProviderResponseInvalid, "AppsInToss 사용자 응답이 올바르지 않아요")
+			return NewIdentity{}, platformerr.New(platformerr.CodeProviderResponseInvalid, "AppsInToss 사용자 응답이 올바르지 않아요")
 		}
-		return "ait:" + uid, false, "apps_in_toss", referrer, nil
+		return NewIdentity{UID: "ait:" + uid, AuthType: "apps_in_toss", Referrer: referrer}, nil
 
 	default:
-		return "", false, "", "", platformerr.Newf(platformerr.CodeRequestInvalid,
+		return NewIdentity{}, platformerr.Newf(platformerr.CodeRequestInvalid,
 			"알 수 없는 자격증명 종류예요: %s", cred.Kind)
 	}
 }
@@ -435,7 +641,11 @@ func isSHA256(value string) bool {
 //
 // 쓰인 갱신 토큰은 폐기하고 새로 발급한다. 회전이다.
 // 유출된 토큰이 무기한 쓰이는 걸 막는다.
-func (s *Service) Refresh(ctx context.Context, appID, refreshToken string) (Result, error) {
+func (s *Service) Refresh(
+	ctx context.Context,
+	appID, refreshToken string,
+	client ClientInfo,
+) (Result, error) {
 	app, err := s.registry.GetUsable(ctx, appID)
 	if err != nil {
 		return Result{}, err
@@ -450,15 +660,28 @@ func (s *Service) Refresh(ctx context.Context, appID, refreshToken string) (Resu
 	if sess.AppID != app.AppID {
 		return Result{}, platformerr.New(platformerr.CodeRefreshInvalid, "갱신 토큰이 올바르지 않아요")
 	}
-	if app.UIDBlocked(sess.AppUserID) {
-		return Result{}, platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
+	if err := s.ensureNotBlocked(ctx, app.AppID, sess.AppUserID); err != nil {
+		return Result{}, err
+	}
+	if sess.IsLinkedAccount && s.accounts != nil {
+		linked, err := s.accounts.IsAccountLinked(ctx, app.AppID, sess.PlatformUserID)
+		if err != nil {
+			return Result{}, err
+		}
+		sess.IsLinkedAccount = linked
 	}
 
 	// 회전. 실패해도 새 토큰 발급은 진행한다.
 	// 옛 토큰이 남는 것보다 사용자가 로그아웃되는 게 더 나쁘다.
 	_ = s.users.DeleteRefresh(ctx, refreshToken)
 
-	return s.issue(ctx, sess)
+	res, err := s.issue(ctx, sess)
+	if err != nil {
+		return Result{}, err
+	}
+	// 갱신에도 설정을 얹는다. 앱이 오래 떠 있으면 부팅 응답의 설정이 낡는데,
+	// 갱신은 만료 전에 돌아오므로 새 값을 받을 유일한 정기 경로다.
+	return s.attachConfig(ctx, app, client, res), nil
 }
 
 func (s *Service) issue(ctx context.Context, sess Session) (Result, error) {
@@ -483,14 +706,15 @@ func (s *Service) issue(ctx context.Context, sess Session) (Result, error) {
 	// 하나뿐이라 갈라질 수 없다. refreshDoc에 필드를 더하는 방법도 있지만
 	// 이미 발급된 갱신 토큰에는 값이 없어, 재로그인 전까지 빈 코드가 나간다.
 	return Result{
-		PlatformToken:  token,
-		RefreshToken:   refresh,
-		PlatformUserID: sess.PlatformUserID,
-		SupportCode:    NewSupportCode(sess.AppID, sess.PlatformUserID),
-		AppUserID:      sess.AppUserID,
-		IsAnonymous:    sess.IsAnonymous,
-		ExpiresIn:      int(s.issuer.TTL().Seconds()),
-		ExpiresAt:      exp,
+		PlatformToken:   token,
+		RefreshToken:    refresh,
+		PlatformUserID:  sess.PlatformUserID,
+		SupportCode:     NewSupportCode(sess.AppID, sess.PlatformUserID),
+		AppUserID:       sess.AppUserID,
+		IsAnonymous:     sess.IsAnonymous,
+		IsLinkedAccount: sess.IsLinkedAccount,
+		ExpiresIn:       int(s.issuer.TTL().Seconds()),
+		ExpiresAt:       exp,
 	}, nil
 }
 
@@ -507,9 +731,9 @@ func (s *Service) Authenticate(ctx context.Context, appID, sessionToken string) 
 	}
 
 	// 세션 발급 후 차단됐을 수 있다. 세션 수명이 revocation 지연의 상한이지만
-	// 레지스트리 차단은 즉시 반영한다.
-	if app.UIDBlocked(sess.AppUserID) {
-		return Session{}, platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
+	// 차단은 캐시 TTL 안에 반영된다.
+	if err := s.ensureNotBlocked(ctx, app.AppID, sess.AppUserID); err != nil {
+		return Session{}, err
 	}
 	return sess, nil
 }
@@ -519,5 +743,18 @@ func (s *Service) Authenticate(ctx context.Context, appID, sessionToken string) 
 // 앱이 계정을 삭제할 때 부른다. PII를 저장하지 않더라도 삭제 경로는 있어야 한다.
 // ADR 0005 참고.
 func (s *Service) DeleteCurrentUser(ctx context.Context, sess Session) error {
+	app, err := s.registry.GetUsable(ctx, sess.AppID)
+	if err != nil {
+		return err
+	}
+	if app.FeatureEnabled("account_deletion") {
+		return legacyDeletionDenied()
+	}
 	return s.users.DeleteUser(ctx, sess.AppID, sess.AppUserID, sess.PlatformUserID)
+}
+
+func legacyDeletionDenied() error {
+	// 전체 삭제를 선택한 앱은 연결을 먼저 끊으면 과거 광고·분석 자료를
+	// 찾을 수 없다. 이 기능을 켜지 않은 앱의 기존 API 의미는 유지한다.
+	return platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 /auth/account-deletions에서 전체 삭제를 요청해야 해요")
 }

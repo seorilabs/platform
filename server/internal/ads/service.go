@@ -18,7 +18,7 @@ import (
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 type Repository interface {
-	CreateClaim(context.Context, Claim, int, int) (Claim, error)
+	CreateClaim(context.Context, Claim, int, int, int) (Claim, error)
 	GetClaim(context.Context, string) (Claim, error)
 	ConfirmClaim(context.Context, ConfirmInput) (Claim, error)
 	AcknowledgeClaim(context.Context, string, string, string, time.Time) (Claim, error)
@@ -127,7 +127,7 @@ func (s *Service) CreateClaim(ctx context.Context, in CreateClaimInput) (Claim, 
 	}
 	// 보상을 받은 뒤 한도 초과로 거부되는 일을 줄이기 위해 claim 생성 시에도
 	// 현재 사용량을 확인한다. 최종 원자적 한도 판정은 confirm에서 다시 한다.
-	return s.repo.CreateClaim(ctx, claim, placement.DailyLimit, placement.CooldownSeconds)
+	return s.repo.CreateClaim(ctx, claim, placement.DailyLimit, placement.CooldownSeconds, placement.RequestCooldownSeconds)
 }
 
 func (s *Service) validateClaimInput(ctx context.Context, in CreateClaimInput) (registry.App, registry.AdsPlacementConfig, error) {
@@ -243,11 +243,11 @@ func (s *Service) ConfirmAdMob(ctx context.Context, appID string, result SSVResu
 	if !ok {
 		return Claim{}, platformerr.New(platformerr.CodeProviderConfigInvalid, "AdMob 지면 설정을 찾을 수 없어요")
 	}
-	wantUnit := provider.AndroidAdUnitID
-	if claim.ClientPlatform == "ios" {
-		wantUnit = provider.IOSAdUnitID
-	}
-	if wantUnit == "" || adUnitSuffix(wantUnit) != result.AdUnitID {
+	// result.AdUnitID는 SSV 콜백의 ad_unit, 즉 설치된 바이너리에 박힌 unit이다.
+	// unit을 교체해도 구버전은 계속 옛 unit으로 재생하므로 전환 기간에는 은퇴
+	// unit도 통과시킨다. 그러지 않으면 광고는 끝까지 재생되고 확정만 거부되어,
+	// 구버전 사용자 전체가 보상을 못 받는다.
+	if !acceptsAdUnit(provider.AcceptedAdMobUnits(claim.ClientPlatform), result.AdUnitID) {
 		return Claim{}, platformerr.New(platformerr.CodeAdUnitMismatch, "광고 unit이 claim과 일치하지 않아요")
 	}
 	if result.RewardAmount <= 0 || provider.RewardItem != "" && result.RewardItem != provider.RewardItem || provider.RewardAmount > 0 && result.RewardAmount != provider.RewardAmount {
@@ -367,4 +367,18 @@ func adUnitSuffix(value string) string {
 		return value[i+1:]
 	}
 	return value
+}
+
+// acceptsAdUnit은 SSV 콜백의 ad_unit이 허용된 unit 중 하나인지 본다.
+// 콜백은 publisher 접두사 없이 suffix만 싣기 때문에 suffix로 비교한다.
+func acceptsAdUnit(accepted []string, adUnitID string) bool {
+	if adUnitID == "" {
+		return false
+	}
+	for _, unit := range accepted {
+		if adUnitSuffix(unit) == adUnitID {
+			return true
+		}
+	}
+	return false
 }

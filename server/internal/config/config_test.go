@@ -51,6 +51,55 @@ func TestIngestRequiresPlatformSessionSecret(t *testing.T) {
 	}
 }
 
+func TestGA4MeasurementProtocolSecretsAreIngestOnlyAndStrict(t *testing.T) {
+	t.Setenv("PLATFORM_ROLE", string(RoleIngest))
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
+	t.Setenv("PLATFORM_SESSION_SECRET", strings.Repeat("s", 64))
+	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `{"jomul":"secret-value"}`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("ingest GA4 config load 실패: %v", err)
+	}
+	if cfg.GA4MeasurementProtocolSecrets["jomul"] != "secret-value" {
+		t.Fatal("ingest가 앱 범위 GA4 secret을 읽지 않았다")
+	}
+	if cfg.GA4TrustedIngressProxyHops != 0 {
+		t.Fatal("명시하지 않은 trusted ingress가 활성화됐다")
+	}
+
+	t.Setenv("GA4_TRUSTED_INGRESS_PROXY_HOPS", "1")
+	cfg, err = Load()
+	if err != nil || cfg.GA4TrustedIngressProxyHops != 1 {
+		t.Fatalf("trusted ingress hop config = %d, err=%v", cfg.GA4TrustedIngressProxyHops, err)
+	}
+	t.Setenv("GA4_TRUSTED_INGRESS_PROXY_HOPS", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("0 hop을 명시적으로 활성화했다")
+	}
+	t.Setenv("GA4_TRUSTED_INGRESS_PROXY_HOPS", "")
+
+	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `{}`)
+	if _, err := Load(); err == nil {
+		t.Fatal("빈 GA4 secret map을 허용했다")
+	}
+	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `{"Jomul":"secret-value"}`)
+	if _, err := Load(); err == nil {
+		t.Fatal("유효하지 않은 app_id의 GA4 secret을 허용했다")
+	}
+
+	setAPIConfigEnv(t)
+	t.Setenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON", `not-json`)
+	t.Setenv("GA4_TRUSTED_INGRESS_PROXY_HOPS", `not-a-number`)
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("API role이 ingest 전용 GA4 secret을 읽었다: %v", err)
+	}
+	if len(cfg.GA4MeasurementProtocolSecrets) != 0 {
+		t.Fatal("API role에 GA4 secret이 조립됐다")
+	}
+}
+
 func TestOperationalConfigRequiresPairAndPreservesSharedSecret(t *testing.T) {
 	t.Setenv("PLATFORM_ROLE", string(RoleAPI))
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
@@ -78,5 +127,84 @@ func TestOperationalConfigRequiresPairAndPreservesSharedSecret(t *testing.T) {
 	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_URL", "http://backoffice.example/internal/events")
 	if _, err := Load(); err == nil {
 		t.Fatal("외부 평문 HTTP로 서명키를 보내도록 허용했다")
+	}
+}
+
+func TestKakaoUnlinkConfigRequiresCompleteAPIOnlySecretSet(t *testing.T) {
+	setAPIConfigEnv(t)
+	t.Setenv("KAKAO_UNLINK_PLATFORM_APP_ID", "ungeul")
+	t.Setenv("KAKAO_UNLINK_APP_ID", "1559177")
+	t.Setenv("KAKAO_UNLINK_ADMIN_KEY", "admin-key-value")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("config load 실패: %v", err)
+	}
+	if !cfg.KakaoUnlink.Enabled() || cfg.KakaoUnlink.PlatformAppID != "ungeul" ||
+		cfg.KakaoUnlink.KakaoAppID != "1559177" || string(cfg.KakaoUnlink.AdminKey) != "admin-key-value" {
+		t.Fatalf("Kakao unlink config = %#v", cfg.KakaoUnlink)
+	}
+
+	t.Setenv("KAKAO_UNLINK_ADMIN_KEY", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("부분 Kakao unlink 설정을 허용했다")
+	}
+}
+
+func TestKakaoUnlinkConfigRejectsInvalidIDs(t *testing.T) {
+	setAPIConfigEnv(t)
+	t.Setenv("KAKAO_UNLINK_PLATFORM_APP_ID", "Ungeul")
+	t.Setenv("KAKAO_UNLINK_APP_ID", "1559177")
+	t.Setenv("KAKAO_UNLINK_ADMIN_KEY", "admin-key-value")
+	if _, err := Load(); err == nil {
+		t.Fatal("대문자 Platform app ID를 허용했다")
+	}
+
+	t.Setenv("KAKAO_UNLINK_PLATFORM_APP_ID", "ungeul")
+	t.Setenv("KAKAO_UNLINK_APP_ID", "app-1559177")
+	if _, err := Load(); err == nil {
+		t.Fatal("숫자가 아닌 Kakao app ID를 허용했다")
+	}
+}
+
+func setAPIConfigEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("PLATFORM_ROLE", string(RoleAPI))
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
+	t.Setenv("PLATFORM_SESSION_SECRET", strings.Repeat("s", 64))
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_URL", "")
+	t.Setenv("BACKOFFICE_OPERATIONAL_EVENTS_SECRET", "")
+}
+
+func TestPresenceConfigIsOptionalButRejectsPartialPair(t *testing.T) {
+	t.Setenv("PLATFORM_ROLE", string(RoleIngest))
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "platform-test")
+	t.Setenv("PLATFORM_SESSION_SECRET", strings.Repeat("s", 64))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("presence 비활성 config load 실패: %v", err)
+	}
+	if cfg.Presence.Enabled() {
+		t.Fatal("키가 없는데 presence가 활성화됐다")
+	}
+
+	t.Setenv("PLATFORM_PRESENCE_EDGE_URL", "https://edge.vzyx.xyz")
+	if _, err := Load(); err == nil {
+		t.Fatal("Edge URL만 있는 presence 설정을 허용했다")
+	}
+
+	t.Setenv("PLATFORM_PRESENCE_PRIVATE_KEY", "private-key-placeholder")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("presence 설정 load 실패: %v", err)
+	}
+	if !cfg.Presence.Enabled() || cfg.Presence.EdgeURL != "https://edge.vzyx.xyz" {
+		t.Fatalf("presence 설정이 달라졌다: %+v", cfg.Presence)
+	}
+
+	t.Setenv("PLATFORM_PRESENCE_EDGE_URL", "http://edge.vzyx.xyz")
+	if _, err := Load(); err == nil {
+		t.Fatal("외부 평문 HTTP Edge URL을 허용했다")
 	}
 }

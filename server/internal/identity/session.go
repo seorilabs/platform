@@ -15,9 +15,9 @@ import (
 
 // 세션 토큰 기본 수명.
 //
-// 1시간은 Firebase ID 토큰과 같다. 이 값이 revocation 지연의 상한이 된다.
-// 계정을 차단해도 이미 발급된 세션은 최대 1시간 유효하다.
-// 즉시성이 필요하면 레지스트리의 blocked_uids로 막는다.
+// 1시간은 Firebase ID 토큰과 같다. 이 값이 revocation 지연의 상한처럼
+// 보이지만 실제로는 아니다. 세션 검증마다 차단 목록을 보므로 차단은
+// 캐시 TTL(60초) 안에 반영된다. ADR 0026 참고.
 const (
 	DefaultSessionTTL = time.Hour
 	DefaultRefreshTTL = 90 * 24 * time.Hour
@@ -27,12 +27,13 @@ const sessionIssuer = "seorilabs-platform"
 
 // Session은 발급된 플랫폼 세션이다.
 type Session struct {
-	PlatformUserID string
-	AppID          string
-	AppUserID      string
-	IsAnonymous    bool
-	IssuedAt       time.Time
-	ExpiresAt      time.Time
+	PlatformUserID  string
+	AppID           string
+	AppUserID       string
+	IsAnonymous     bool
+	IsLinkedAccount bool
+	IssuedAt        time.Time
+	ExpiresAt       time.Time
 }
 
 // sessionClaims는 세션 토큰의 내용이다.
@@ -42,6 +43,7 @@ type sessionClaims struct {
 	AppID     string `json:"app"`
 	AppUserID string `json:"auid"`
 	Anonymous bool   `json:"anon"`
+	Linked    bool   `json:"linked"`
 }
 
 // SessionIssuer는 플랫폼 세션 토큰을 발급하고 검증한다.
@@ -93,6 +95,7 @@ func (s *SessionIssuer) Issue(sess Session) (string, time.Time, error) {
 		AppID:     sess.AppID,
 		AppUserID: sess.AppUserID,
 		Anonymous: sess.IsAnonymous,
+		Linked:    sess.IsLinkedAccount,
 	}
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.secret)
@@ -142,12 +145,13 @@ func (s *SessionIssuer) Verify(tokenStr, appID string) (Session, error) {
 	}
 
 	return Session{
-		PlatformUserID: claims.Subject,
-		AppID:          claims.AppID,
-		AppUserID:      claims.AppUserID,
-		IsAnonymous:    claims.Anonymous,
-		IssuedAt:       issued,
-		ExpiresAt:      expires,
+		PlatformUserID:  claims.Subject,
+		AppID:           claims.AppID,
+		AppUserID:       claims.AppUserID,
+		IsAnonymous:     claims.Anonymous,
+		IsLinkedAccount: claims.Linked,
+		IssuedAt:        issued,
+		ExpiresAt:       expires,
 	}, nil
 }
 
@@ -156,7 +160,7 @@ func (s *SessionIssuer) Verify(tokenStr, appID string) (Session, error) {
 // Firebase anonymous 사용자는 이름 없는 사용자이지만 Firebase가 서명한 ID token으로
 // 소유권을 증명한다. 반면 KindAnonymous의 `anon:` appUserId는 클라이언트가 아무 값이나
 // 보낼 수 있어 타인 사칭이 가능하다. 민감 경로는 후자만 막는다.
-// docs/03-architecture/identity.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/identity.md 참고.
 func (s Session) EnsureNotAnonymous() error {
 	if s.IsAnonymous && strings.HasPrefix(s.AppUserID, "anon:") {
 		return platformerr.New(platformerr.CodeAnonymousNotAllowed,

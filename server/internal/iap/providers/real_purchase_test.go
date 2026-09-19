@@ -61,7 +61,8 @@ func TestAppleRealSandboxPurchase(t *testing.T) {
 	defer cancel()
 
 	got, err := verifier.Verify(ctx, domain.Proof{
-		Platform: domain.PlatformAppStore,
+		Platform:    domain.PlatformAppStore,
+		ProductType: domain.ProductNonConsumable,
 		// 상품을 지정하지 않는다. 응답이 알려주게 둔다 —
 		// 웹훅 재검증 경로와 같은 형태다.
 		Token: txID,
@@ -86,7 +87,7 @@ func TestAppleRealSandboxPurchase(t *testing.T) {
 	if got.ProductID == "" {
 		t.Error("productId가 비었다")
 	}
-	// 불변식 9. NON_CONSUMABLE만 통과한다. 통과했다는 것 자체가 검증이다.
+	// 카탈로그의 non_consumable과 서명된 NON_CONSUMABLE이 일치해야 통과한다.
 	if got.State != domain.StateActive && got.State != domain.StateRevoked {
 		t.Errorf("state = %s — active나 revoked를 기대했다", got.State)
 	}

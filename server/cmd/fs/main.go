@@ -5,7 +5,7 @@
 //
 // 조회 전용이다. 쓰기 명령을 만들지 않는다.
 // 지급이나 회수는 감사 원장을 남기며 백오피스를 통해야 한다.
-// docs/08-ops/BREAK-GLASS.md 참고.
+// Obsidian 프로젝트/platform/08-ops/BREAK-GLASS.md 참고.
 //
 // 사용법:
 //

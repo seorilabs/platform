@@ -61,11 +61,16 @@ type App struct {
 	RequireAppCheck bool `json:"require_app_check" firestore:"require_app_check"`
 
 	GA4 GA4Config `json:"ga4" firestore:"ga4"`
-	IAP IAPConfig `json:"iap" firestore:"iap"`
-	Ads AdsConfig `json:"ads" firestore:"ads"`
+	// Auth는 외부 계정 공급자 allowlist와 공개 audience를 보관한다.
+	// provider secret과 토큰은 레지스트리에 저장하지 않는다.
+	Auth AuthConfig `json:"auth,omitempty" firestore:"auth,omitempty"`
+	IAP  IAPConfig  `json:"iap" firestore:"iap"`
+	Ads  AdsConfig  `json:"ads" firestore:"ads"`
 	// Content는 private GCS 릴리스와 사용자별 조회 한도의 원장이다.
 	// bucket에는 gs://를 넣지 않고, prefix에는 환경(staging/production)을 넣지 않는다.
 	Content ContentConfig `json:"content,omitempty" firestore:"content,omitempty"`
+	// Store는 마켓 배포 페이지 주소다. 업데이트 안내가 어디를 열지 결정한다.
+	Store StoreConfig `json:"store,omitempty" firestore:"store,omitempty"`
 
 	// PlatformEventAllowlist에 없는 이벤트는 플랫폼으로 보내지 않는다.
 	// 비용과 QPS를 규모와 무관한 상수로 묶는 장치다.
@@ -73,9 +78,6 @@ type App struct {
 
 	// CORSOrigins는 웹, AIT와 Capacitor WebView 빌드용이다. 비어 있으면 CORS를 허용하지 않는다.
 	CORSOrigins []string `json:"cors_origins" firestore:"cors_origins"`
-
-	// BlockedUIDs는 남용 계정 차단용이다. 앱 전체를 멈추지 않고 개별 차단한다.
-	BlockedUIDs []string `json:"blocked_uids" firestore:"blocked_uids"`
 
 	// RegistrySyncedAt은 regsync가 Firestore에 반영한 시각이다. JSON 원장에는
 	// 들어가지 않으며 운영툴이 파일 변경과 런타임 반영을 구분할 때만 쓴다.
@@ -90,6 +92,10 @@ type GA4Config struct {
 	// 접두사를 벗겨야 횡단 쿼리가 가능해진다.
 	// GA4로는 기존 이름 그대로 보내 시계열을 끊지 않는다.
 	EventPrefix string `json:"event_prefix" firestore:"event_prefix"`
+	PropertyID  string `json:"property_id,omitempty" firestore:"property_id,omitempty"`
+	// MeasurementID는 Measurement Protocol을 보낼 공개 Web stream 식별자다.
+	// api_secret은 레지스트리가 아니라 ingest role 전용 Secret Manager에 둔다.
+	MeasurementID string `json:"measurement_id,omitempty" firestore:"measurement_id,omitempty"`
 }
 
 type IAPConfig struct {
@@ -104,9 +110,35 @@ type IAPConfig struct {
 	// AppStoreBundleID는 Apple 거래를 어느 앱에 묶을지 결정한다.
 	// provider 전역 환경변수에 두면 여러 앱을 한 서비스에서 검증할 수 없다.
 	AppStoreBundleID string `json:"app_store_bundle_id,omitempty" firestore:"app_store_bundle_id,omitempty"`
+	// AppleSandboxEnabled는 기존 기본 환경과 별도로 Apple 테스트 거래만
+	// 허용한다. 기존 공용 원장을 쓰는 앱만 대상이며 앱 범위 원장은 거부한다.
+	// 검증기·원장·worker·Admin 모두 이 허용 범위를 따른다. ADR 0027.
+	AppleSandboxEnabled bool `json:"apple_sandbox_enabled,omitempty" firestore:"apple_sandbox_enabled,omitempty"`
 	// EntitlementIDs는 이 앱에 지급할 수 있는 entitlement allowlist다.
 	// 전역 SKU 카탈로그는 상품 매핑의 원장이고, 이 목록은 앱 경계의 원장이다.
 	EntitlementIDs []string `json:"entitlement_ids" firestore:"entitlement_ids"`
+	// RequireLinkedAccount는 결제·복원 전에 검증된 외부 계정 연결을 요구한다.
+	// 기존 앱은 기본 false로 동작을 유지한다.
+	RequireLinkedAccount bool `json:"require_linked_account,omitempty" firestore:"require_linked_account,omitempty"`
+}
+
+// IAPEnvironmentAllowed는 기본 환경을 보존하고 명시적으로 허용한 Apple
+// sandbox만 추가한다. 클라이언트가 환경 이름만 바꿔 원장을 고를 수 없다.
+func (a App) IAPEnvironmentAllowed(env LedgerEnvironment) bool {
+	if env != LedgerProduction && env != LedgerSandbox {
+		return false
+	}
+	return env == a.IAP.LedgerEnvironment ||
+		(env == LedgerSandbox && a.IAP.AppleSandboxEnabled && a.IAP.LegacyUnscopedLedger && a.FeatureEnabled("iap") && a.MarketEnabled("app_store"))
+}
+
+type AuthConfig struct {
+	AccountProviders map[string]AuthProviderConfig `json:"account_providers,omitempty" firestore:"account_providers,omitempty"`
+}
+
+type AuthProviderConfig struct {
+	// Audience는 OIDC ID token의 aud와 정확히 대조하는 공개 식별자다.
+	Audience string `json:"audience" firestore:"audience"`
 }
 
 // AdsConfig는 보상 광고 정책의 앱별 원장이다.
@@ -117,20 +149,45 @@ type AdsConfig struct {
 }
 
 type AdsPlacementConfig struct {
-	ID              string                       `json:"id" firestore:"id"`
-	Format          string                       `json:"format" firestore:"format"`
-	Providers       map[string]AdsProviderConfig `json:"providers" firestore:"providers"`
-	Reward          *AdsRewardConfig             `json:"reward,omitempty" firestore:"reward,omitempty"`
-	DailyLimit      int                          `json:"daily_limit" firestore:"daily_limit"`
-	CooldownSeconds int                          `json:"cooldown_seconds" firestore:"cooldown_seconds"`
+	ID                     string                       `json:"id" firestore:"id"`
+	Format                 string                       `json:"format" firestore:"format"`
+	Providers              map[string]AdsProviderConfig `json:"providers" firestore:"providers"`
+	Reward                 *AdsRewardConfig             `json:"reward,omitempty" firestore:"reward,omitempty"`
+	DailyLimit             int                          `json:"daily_limit" firestore:"daily_limit"`
+	CooldownSeconds        int                          `json:"cooldown_seconds" firestore:"cooldown_seconds"`
+	RequestCooldownSeconds int                          `json:"request_cooldown_seconds,omitempty" firestore:"request_cooldown_seconds,omitempty"`
 }
 
 type AdsProviderConfig struct {
 	AndroidAdUnitID string `json:"android_ad_unit_id,omitempty" firestore:"android_ad_unit_id,omitempty"`
 	IOSAdUnitID     string `json:"ios_ad_unit_id,omitempty" firestore:"ios_ad_unit_id,omitempty"`
-	AdGroupID       string `json:"ad_group_id,omitempty" firestore:"ad_group_id,omitempty"`
-	RewardItem      string `json:"reward_item,omitempty" firestore:"reward_item,omitempty"`
-	RewardAmount    int    `json:"reward_amount,omitempty" firestore:"reward_amount,omitempty"`
+	// 은퇴 unit은 새 unit으로 갈아탄 뒤에도 설치된 구버전이 계속 재생하는 unit이다.
+	// SSV 콜백의 ad_unit은 앱 바이너리에 박힌 값이라 서버가 바꿀 수 없고, 클라이언트
+	// 업데이트는 사용자 속도로 퍼진다. 그래서 이 목록이 없으면 unit을 교체하는 순간
+	// 구버전 전체가 광고를 끝까지 보고도 ad_unit_mismatch로 보상을 못 받는다.
+	//
+	// 전환 기간에만 둔다. 구버전 소진을 확인한 뒤 지운다.
+	RetiredAndroidAdUnitIDs []string `json:"retired_android_ad_unit_ids,omitempty" firestore:"retired_android_ad_unit_ids,omitempty"`
+	RetiredIOSAdUnitIDs     []string `json:"retired_ios_ad_unit_ids,omitempty" firestore:"retired_ios_ad_unit_ids,omitempty"`
+	AdGroupID               string   `json:"ad_group_id,omitempty" firestore:"ad_group_id,omitempty"`
+	RewardItem              string   `json:"reward_item,omitempty" firestore:"reward_item,omitempty"`
+	RewardAmount            int      `json:"reward_amount,omitempty" firestore:"reward_amount,omitempty"`
+}
+
+// AcceptedAdMobUnits는 해당 클라이언트 플랫폼에서 SSV 대조를 통과시킬 unit을 돌려준다.
+// 첫 항목이 현재 발급 unit이고 나머지는 전환 기간 동안만 남기는 은퇴 unit이다.
+//
+// 현재 unit이 비어 있으면 그 플랫폼은 광고를 서비스하지 않는다는 뜻이므로 은퇴
+// unit만으로 통과시키지 않는다. Validate가 같은 불변식을 파일 단계에서 먼저 막는다.
+func (c AdsProviderConfig) AcceptedAdMobUnits(clientPlatform string) []string {
+	current, retired := c.AndroidAdUnitID, c.RetiredAndroidAdUnitIDs
+	if clientPlatform == "ios" {
+		current, retired = c.IOSAdUnitID, c.RetiredIOSAdUnitIDs
+	}
+	if current == "" {
+		return nil
+	}
+	return append([]string{current}, retired...)
 }
 
 type AdsRewardConfig struct {
@@ -155,6 +212,23 @@ type ContentConfig struct {
 	TicketUnitsPerPurchase int    `json:"ticket_units_per_purchase,omitempty" firestore:"ticket_units_per_purchase,omitempty"`
 	// SeasonEntitlements는 연도 문자열을 활성 entitlement에 연결한다.
 	SeasonEntitlements map[string]string `json:"season_entitlements,omitempty" firestore:"season_entitlements,omitempty"`
+	// PairingEnabled는 궁합(pairings:resolve) 킬 스위치다. 꺼져 있으면 좌표를 만들기 전에
+	// content_not_enabled로 거절한다. 레지스트리 파일은 환경을 모르므로 staging에 먼저
+	// regsync하고 앱이 나간 뒤 production에 regsync하는 것이 "단계적 켜기"다.
+	PairingEnabled bool `json:"pairing_enabled,omitempty" firestore:"pairing_enabled,omitempty"`
+}
+
+// StoreConfig는 마켓 배포 페이지의 원장이다.
+//
+// 최소 지원 버전 같은 정책은 Firestore configs/{appId}에 있고 여기에는 거의
+// 바뀌지 않는 주소만 둔다. 운영자가 차단 화면에서 URL을 직접 타이핑하지
+// 못하게 하는 경계이기도 하다. 오타 하나가 유저를 엉뚱한 앱으로 보낸다.
+//
+// AppsInToss와 웹은 없다. 미니앱 번들은 토스가 전달하므로 유저가 "설치본을
+// 업데이트"할 대상이 존재하지 않는다.
+type StoreConfig struct {
+	GooglePlayURL string `json:"google_play_url,omitempty" firestore:"google_play_url,omitempty"`
+	AppStoreURL   string `json:"app_store_url,omitempty" firestore:"app_store_url,omitempty"`
 }
 
 var appIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -165,6 +239,17 @@ var adsIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
 var admobUnitPattern = regexp.MustCompile(`^ca-app-pub-[0-9]{16}/[0-9]{10}$`)
 var gcsBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
 var contentPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9/_-]{0,127}$`)
+var authProviderAudiencePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,256}$`)
+var ga4MeasurementIDPattern = regexp.MustCompile(`^G-[A-Z0-9]{4,20}$`)
+
+// 추적 파라미터를 허용하지 않는다. &hl=ko나 &utm_source=가 붙은 채 굳으면
+// 나중에 아무도 걷어내지 못한다.
+var playStoreURLPattern = regexp.MustCompile(
+	`^https://play\.google\.com/store/apps/details\?id=[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$`)
+
+// 국가 코드와 앱 이름 세그먼트는 선택이다. 정본은 뒤의 숫자 App ID다.
+var appStoreURLPattern = regexp.MustCompile(
+	`^https://apps\.apple\.com/(?:[a-z]{2}/)?app/(?:[^/?#]+/)?id[0-9]{6,12}$`)
 
 // Validate는 레지스트리 항목을 검증한다.
 //
@@ -188,6 +273,22 @@ func (a App) Validate() error {
 	} else if a.FirebaseCustomTokenServiceAccount != "" {
 		return fmt.Errorf("%s: bridge가 비활성인데 custom token service account가 설정됐다", a.AppID)
 	}
+	if a.FeatureEnabled("account_deletion") {
+		if !a.FeatureEnabled("firebase_custom_token_bridge") || a.FeatureEnabled("iap") || a.FeatureEnabled("content") || len(a.Auth.AccountProviders) > 0 {
+			return fmt.Errorf("%s: account deletion supports Firebase guest apps without IAP or content only", a.AppID)
+		}
+		if _, err := strconv.ParseUint(a.GA4.PropertyID, 10, 64); err != nil || a.GA4.PropertyID == "0" {
+			return fmt.Errorf("%s: account deletion needs a GA4 property", a.AppID)
+		}
+	}
+	if a.GA4.MeasurementID != "" {
+		if !a.FeatureEnabled("events") {
+			return fmt.Errorf("%s: GA4 measurement에는 events 기능이 필요하다", a.AppID)
+		}
+		if !ga4MeasurementIDPattern.MatchString(a.GA4.MeasurementID) {
+			return fmt.Errorf("%s: GA4 measurement_id가 올바르지 않다", a.AppID)
+		}
+	}
 	switch a.Status {
 	case StatusActive, StatusPaused:
 	default:
@@ -203,6 +304,20 @@ func (a App) Validate() error {
 	}
 	if a.FeatureEnabled("iap") && len(a.IAP.EntitlementIDs) == 0 {
 		return fmt.Errorf("%s: IAP 활성 앱에는 iap.entitlement_ids가 필요하다", a.AppID)
+	}
+	if err := a.validateAuth(); err != nil {
+		return err
+	}
+	if a.IAP.RequireLinkedAccount && (!a.FeatureEnabled("iap") || len(a.Auth.AccountProviders) == 0) {
+		return fmt.Errorf("%s: 연결 계정 필수 IAP에는 활성 IAP와 auth provider가 필요하다", a.AppID)
+	}
+	if a.IAP.AppleSandboxEnabled && (!a.FeatureEnabled("iap") || !a.MarketEnabled("app_store") || a.IAP.LedgerEnvironment != LedgerProduction) {
+		return fmt.Errorf("%s: 추가 Apple sandbox에는 production 기본 환경과 활성 App Store IAP가 필요하다", a.AppID)
+	}
+	// Admin의 기존 공용 원장 조작과 같은 배치를 보장한다. 앱 범위 원장을
+	// 지원한다고 선언만 하고 서로 다른 원장을 읽고 쓰는 설정은 받지 않는다.
+	if a.IAP.AppleSandboxEnabled && !a.IAP.LegacyUnscopedLedger {
+		return fmt.Errorf("%s: 추가 Apple sandbox는 기존 공용 원장 앱에서만 지원한다", a.AppID)
 	}
 	if a.FeatureEnabled("iap") && a.MarketEnabled("google_play") {
 		if !androidPackagePattern.MatchString(a.IAP.GooglePlayPackageName) ||
@@ -243,6 +358,9 @@ func (a App) Validate() error {
 	if err := a.validateCORSOrigins(); err != nil {
 		return err
 	}
+	if err := a.validateStore(); err != nil {
+		return err
+	}
 	// placeholder가 남은 채 배포되면 런타임에 이상하게 동작한다.
 	// 부팅 시점에 잡는 편이 낫다.
 	for _, v := range []string{a.AppID, a.DisplayName, a.FirebaseProjectID} {
@@ -253,12 +371,30 @@ func (a App) Validate() error {
 	return nil
 }
 
+func (a App) validateAuth() error {
+	if len(a.Auth.AccountProviders) == 0 {
+		return nil
+	}
+	if !a.RequireAppCheck || !a.FeatureEnabled("firebase_custom_token_bridge") {
+		return fmt.Errorf("%s: 외부 계정 연결에는 App Check와 firebase custom token bridge가 필요하다", a.AppID)
+	}
+	for provider, cfg := range a.Auth.AccountProviders {
+		if provider != "kakao" && provider != "apple" && provider != "google" {
+			return fmt.Errorf("%s: 지원하지 않는 auth provider다: %q", a.AppID, provider)
+		}
+		if !authProviderAudiencePattern.MatchString(cfg.Audience) || isPlaceholder(cfg.Audience) {
+			return fmt.Errorf("%s: %s auth audience가 올바르지 않다", a.AppID, provider)
+		}
+	}
+	return nil
+}
+
 func (a App) validateContent() error {
 	cfg := a.Content
 	if !a.FeatureEnabled("content") {
 		if cfg.Bucket != "" || cfg.Prefix != "" || cfg.ReadingDailyLimit != 0 ||
 			cfg.TermDailyLimit != 0 || cfg.RewardKey != "" || cfg.TicketEntitlementID != "" ||
-			cfg.TicketUnitsPerPurchase != 0 || len(cfg.SeasonEntitlements) != 0 {
+			cfg.TicketUnitsPerPurchase != 0 || len(cfg.SeasonEntitlements) != 0 || cfg.PairingEnabled {
 			return fmt.Errorf("%s: content가 비활성인데 content 설정이 존재한다", a.AppID)
 		}
 		return nil
@@ -338,6 +474,32 @@ func (a App) validateCORSOrigins() error {
 	return nil
 }
 
+// validateStore는 마켓 주소를 검증한다.
+//
+// ads·content와 달리 기능 플래그와 묶지 않는다. 무과금 앱도 스토어에 있고
+// 업데이트 안내가 필요하다. 둘 다 비어 있는 것도 정상이다. 스토어 등록 전
+// 앱이 부팅에 실패하면 안 된다.
+func (a App) validateStore() error {
+	if url := a.Store.GooglePlayURL; url != "" {
+		if !playStoreURLPattern.MatchString(url) || isPlaceholder(url) {
+			return fmt.Errorf("%s: store.google_play_url이 Play 스토어 주소 형식이 아니다: %q", a.AppID, url)
+		}
+		// 같은 파일 안에 이미 있는 사실을 대조하지 않을 이유가 없다.
+		// 패키지명이 어긋난 링크는 유저를 다른 앱으로 보낸다.
+		if pkg := a.IAP.GooglePlayPackageName; pkg != "" {
+			if _, id, _ := strings.Cut(url, "?id="); id != pkg {
+				return fmt.Errorf("%s: store.google_play_url이 iap.google_play_package_name과 다르다", a.AppID)
+			}
+		}
+	}
+	if url := a.Store.AppStoreURL; url != "" {
+		if !appStoreURLPattern.MatchString(url) || isPlaceholder(url) {
+			return fmt.Errorf("%s: store.app_store_url이 App Store 주소 형식이 아니다: %q", a.AppID, url)
+		}
+	}
+	return nil
+}
+
 func (a App) validateAds() error {
 	if !a.FeatureEnabled("ads") {
 		if len(a.Ads.Providers) != 0 || len(a.Ads.Placements) != 0 {
@@ -370,6 +532,9 @@ func (a App) validateAds() error {
 		if placement.DailyLimit <= 0 || placement.CooldownSeconds < 0 {
 			return fmt.Errorf("%s/%s: 일일 한도와 cooldown이 올바르지 않다", a.AppID, placement.ID)
 		}
+		if placement.RequestCooldownSeconds < 0 || placement.RequestCooldownSeconds > 86400 {
+			return fmt.Errorf("%s/%s: 요청 간격은 0~86400초여야 한다", a.AppID, placement.ID)
+		}
 		if len(placement.Providers) == 0 {
 			return fmt.Errorf("%s/%s: provider 설정이 필요하다", a.AppID, placement.ID)
 		}
@@ -387,6 +552,14 @@ func (a App) validateAds() error {
 				}
 				if cfg.AndroidAdUnitID == "" && cfg.IOSAdUnitID == "" {
 					return fmt.Errorf("%s/%s: AdMob unit이 하나 이상 필요하다", a.AppID, placement.ID)
+				}
+				if err := validateRetiredAdMobUnits(
+					a.AppID, placement.ID, "Android", cfg.AndroidAdUnitID, cfg.RetiredAndroidAdUnitIDs); err != nil {
+					return err
+				}
+				if err := validateRetiredAdMobUnits(
+					a.AppID, placement.ID, "iOS", cfg.IOSAdUnitID, cfg.RetiredIOSAdUnitIDs); err != nil {
+					return err
 				}
 			case "apps_in_toss":
 				if strings.TrimSpace(cfg.AdGroupID) == "" {
@@ -415,11 +588,46 @@ func (a App) AdsPlacement(id string) (AdsPlacementConfig, bool) {
 	return AdsPlacementConfig{}, false
 }
 
+// maxRetiredAdMobUnits는 한 지면·플랫폼이 동시에 들고 갈 수 있는 은퇴 unit 상한이다.
+// 이 목록은 구버전이 소진되면 지워야 하는 임시 값이라, 쌓인다는 것은 정리가 밀렸다는 뜻이다.
+const maxRetiredAdMobUnits = 4
+
+// validateRetiredAdMobUnits는 은퇴 unit 목록이 대조를 느슨하게만 만들고 모호하게는
+// 만들지 않는지 본다. ConfirmAdMob이 suffix로 비교하므로 중복 판정도 suffix로 한다.
+func validateRetiredAdMobUnits(appID, placementID, platform, current string, retired []string) error {
+	if len(retired) == 0 {
+		return nil
+	}
+	if current == "" {
+		return fmt.Errorf("%s/%s: %s 은퇴 AdMob unit은 현재 unit이 있을 때만 둘 수 있다",
+			appID, placementID, platform)
+	}
+	if len(retired) > maxRetiredAdMobUnits {
+		return fmt.Errorf("%s/%s: %s 은퇴 AdMob unit은 %d개를 넘을 수 없다",
+			appID, placementID, platform, maxRetiredAdMobUnits)
+	}
+	seen := map[string]struct{}{unitSuffix(current): {}}
+	for _, unit := range retired {
+		if !admobUnitPattern.MatchString(unit) {
+			return fmt.Errorf("%s/%s: %s 은퇴 AdMob unit이 올바르지 않다", appID, placementID, platform)
+		}
+		if _, exists := seen[unitSuffix(unit)]; exists {
+			return fmt.Errorf("%s/%s: %s 은퇴 AdMob unit이 현재 unit이나 다른 항목과 겹친다",
+				appID, placementID, platform)
+		}
+		seen[unitSuffix(unit)] = struct{}{}
+	}
+	return nil
+}
+
 // AdMobUnits는 앱이 사용하는 AdMob unit을 중복 없이 돌려준다.
 //
 // 한 앱이 여러 placement에서 같은 unit을 공유하는 것은 허용하지만,
 // 서로 다른 앱이 같은 unit을 공유하면 AdMob Console의 단일 SSV callback이
 // 어느 appId로 가야 하는지 모호해진다.
+//
+// 은퇴 unit도 포함한다. 전환 기간에는 그 unit으로도 실제 콜백이 들어오므로
+// 귀속이 모호해지는 위험이 현재 unit과 똑같다.
 func (a App) AdMobUnits() []string {
 	seen := map[string]struct{}{}
 	units := make([]string, 0)
@@ -428,7 +636,10 @@ func (a App) AdMobUnits() []string {
 		if !ok {
 			continue
 		}
-		for _, unit := range []string{provider.AndroidAdUnitID, provider.IOSAdUnitID} {
+		all := []string{provider.AndroidAdUnitID, provider.IOSAdUnitID}
+		all = append(all, provider.RetiredAndroidAdUnitIDs...)
+		all = append(all, provider.RetiredIOSAdUnitIDs...)
+		for _, unit := range all {
 			if unit == "" {
 				continue
 			}
@@ -500,6 +711,20 @@ func (a App) EntitlementAllowed(entitlementID string) bool {
 	return false
 }
 
+// UpdateURL은 플랫폼에 맞는 스토어 주소를 돌려준다.
+//
+// web과 ait은 설치본이 없으므로 빈 문자열이다. 주소가 없으면 클라이언트가
+// 업데이트 버튼을 숨긴다. 눌러도 아무 일 없는 버튼을 만들지 않는다.
+func (a App) UpdateURL(platform string) string {
+	switch platform {
+	case "android":
+		return a.Store.GooglePlayURL
+	case "ios":
+		return a.Store.AppStoreURL
+	}
+	return ""
+}
+
 // MarketEnabled는 앱 레지스트리의 IAP 마켓 allowlist를 확인한다.
 func (a App) MarketEnabled(market string) bool {
 	for _, enabled := range a.IAP.Markets {
@@ -526,16 +751,6 @@ func (a App) StripEventPrefix(name string) string {
 		return name
 	}
 	return strings.TrimPrefix(name, a.GA4.EventPrefix)
-}
-
-// UIDBlocked는 계정이 차단됐는지 본다.
-func (a App) UIDBlocked(uid string) bool {
-	for _, b := range a.BlockedUIDs {
-		if b == uid {
-			return true
-		}
-	}
-	return false
 }
 
 // EnsureUsable은 앱이 요청을 받을 수 있는 상태인지 확인한다.

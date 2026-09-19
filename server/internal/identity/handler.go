@@ -3,23 +3,70 @@ package identity
 import (
 	"context"
 	"net/http"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 )
 
 // AppHeader는 어느 앱의 요청인지 고르는 힌트다.
 //
 // 권한이 아니다. 헤더를 바꿔도 토큰의 aud 불일치로 거부된다.
-// docs/03-architecture/identity.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/identity.md 참고.
 const AppHeader = "X-Seori-App"
+
+// 관측 헤더. 스펙이 32자로 제한한다.
+const (
+	appVersionHeader = "X-Seori-AppVer"
+	runtimeHeader    = "X-Seori-Runtime"
+	sdkHeader        = "X-Seori-Sdk"
+	maxClientInfoLen = 32
+)
+
+// observationValuePattern은 관측 헤더가 가질 수 있는 값이다.
+//
+// `1.2.4`, `godot-native-android`, `ait-rn`, `gd/0.6.8`을 담으면 충분하다.
+// 이 값은 Firestore 문서와 Discord 카드까지 그대로 흘러가므로 제어 문자와
+// 서식 문자가 섞이지 않게 여기서 좁힌다.
+var observationValuePattern = regexp.MustCompile(`^[A-Za-z0-9._/+-]{1,32}$`)
+
+// clientInfo는 실행 환경 헤더를 읽는다.
+//
+// 셋 다 선택이고 형식이 어긋나면 그 축만 비운다. 여기서 요청을 거부하면
+// 관측 필드 하나가 로그인을 막는다.
+func clientInfo(r *http.Request) ClientInfo {
+	return ClientInfo{
+		AppVersion: boundedHeader(r, appVersionHeader),
+		Runtime:    boundedHeader(r, runtimeHeader),
+		SDK:        boundedHeader(r, sdkHeader),
+	}
+}
+
+func boundedHeader(r *http.Request, name string) string {
+	value := strings.TrimSpace(r.Header.Get(name))
+	if value == "" || !observationValuePattern.MatchString(value) {
+		return ""
+	}
+	return value
+}
 
 // Handler는 identity HTTP 핸들러다.
 type Handler struct {
-	svc *Service
+	svc         *Service
+	kakaoUnlink *KakaoUnlinkWebhookConfig
 }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithKakaoUnlinkWebhook은 카카오 연결 해제 webhook을 활성화한다.
+func (h *Handler) WithKakaoUnlinkWebhook(config KakaoUnlinkWebhookConfig) *Handler {
+	config.AdminKey = append([]byte(nil), config.AdminKey...)
+	h.kakaoUnlink = &config
+	return h
+}
 
 // Register는 라우트를 등록한다.
 //
@@ -28,6 +75,13 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/session", httpx.Wrap(h.createSession))
 	mux.HandleFunc("POST /v1/auth/firebase-custom-token", httpx.Wrap(h.createFirebaseCustomToken))
+	mux.HandleFunc("POST /v1/auth/account-link-challenges", httpx.Wrap(h.createAccountLinkChallenge))
+	mux.HandleFunc("POST /v1/auth/account-links", httpx.Wrap(h.createAccountLink))
+	if h.kakaoUnlink != nil {
+		mux.HandleFunc("POST /v1/auth/webhooks/kakao/unlink", httpx.Wrap(h.kakaoUnlinkWebhook))
+	}
+	mux.HandleFunc("POST /v1/auth/account-deletions", httpx.Wrap(h.requestAccountDeletion))
+	mux.HandleFunc("POST /v1/auth/account-deletions/status", httpx.Wrap(h.accountDeletionStatus))
 	mux.HandleFunc("DELETE /v1/auth/firebase-account", httpx.Wrap(h.deleteFirebaseAccount))
 	mux.HandleFunc("POST /v1/auth/refresh", httpx.Wrap(h.refresh))
 	mux.HandleFunc("DELETE /v1/users/me", httpx.Wrap(h.deleteMe))
@@ -104,6 +158,7 @@ func (h *Handler) createFirebaseCustomToken(w http.ResponseWriter, r *http.Reque
 		r.Context(),
 		appID,
 		req.ExistingFirebaseIDToken,
+		clientInfo(r),
 	)
 	if err != nil {
 		return err
@@ -130,11 +185,23 @@ type sessionResponse struct {
 	PlatformUserID string `json:"platformUserId"`
 	// 앱이 설정 화면에 보여줄 식별자다. Firebase uid를 보여주면 CS가
 	// 그걸로 우리 원장을 찾을 수 없다.
-	SupportCode    string `json:"supportCode"`
-	AppUserID      string `json:"appUserId,omitempty"`
-	IsAnonymous    bool   `json:"isAnonymous"`
-	ExpiresIn      int    `json:"expiresIn"`
-	ServerTimeUnix int64  `json:"serverTimeUnix"`
+	SupportCode     string `json:"supportCode"`
+	AppUserID       string `json:"appUserId,omitempty"`
+	IsAnonymous     bool   `json:"isAnonymous"`
+	IsLinkedAccount bool   `json:"isLinkedAccount"`
+	ExpiresIn       int    `json:"expiresIn"`
+	ServerTimeUnix  int64  `json:"serverTimeUnix"`
+
+	// 설정을 동봉해 부팅 왕복을 1회로 줄인다. 오버레이가 없거나 실패하면
+	// 넷 다 빠진다.
+	//
+	// 포인터인 이유는 값으로 두면 실패 시 {"status":""}가 나가고 클라이언트가
+	// 그걸 유효한 판정으로 오해하기 때문이다. 필드가 아예 없으면 "모른다"가
+	// 정직하게 전달되고 클라이언트는 /v1/config로 떨어진다.
+	Features    map[string]bool           `json:"features,omitempty"`
+	SDK         *remoteconfig.SDKStatus   `json:"sdk,omitempty"`
+	Maintenance *remoteconfig.Maintenance `json:"maintenance,omitempty"`
+	ConfigETag  string                    `json:"configEtag,omitempty"`
 }
 
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
@@ -154,20 +221,89 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) error {
 		Kind:     CredentialKind(req.Credential.Kind),
 		Value:    req.Credential.Value,
 		Referrer: req.Credential.Referrer,
-	})
+	}, clientInfo(r))
 	if err != nil {
 		return err
 	}
 
-	httpx.WriteOK(w, http.StatusOK, sessionResponse{
-		PlatformToken:  res.PlatformToken,
-		RefreshToken:   res.RefreshToken,
-		PlatformUserID: res.PlatformUserID,
-		SupportCode:    res.SupportCode,
-		AppUserID:      res.AppUserID,
-		IsAnonymous:    res.IsAnonymous,
-		ExpiresIn:      res.ExpiresIn,
-		ServerTimeUnix: h.svc.now().Unix(),
+	httpx.WriteOK(w, http.StatusOK, h.sessionResponse(res))
+	return nil
+}
+
+type createAccountLinkChallengeRequest struct {
+	Provider string `json:"provider"`
+}
+
+type accountLinkChallengeResponse struct {
+	Provider  string    `json:"provider"`
+	Nonce     string    `json:"nonce"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func (h *Handler) createAccountLinkChallenge(w http.ResponseWriter, r *http.Request) error {
+	var req createAccountLinkChallengeRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if req.Provider == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid, "로그인 공급자가 필요해요")
+	}
+	sess, err := h.Authenticate(r)
+	if err != nil {
+		return err
+	}
+	if err := h.VerifyAppCheck(
+		r.Context(), sess.AppID, r.Header.Get("X-Firebase-AppCheck"),
+	); err != nil {
+		return err
+	}
+	challenge, err := h.svc.BeginAccountLink(r.Context(), sess, req.Provider)
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusCreated, accountLinkChallengeResponse(challenge))
+	return nil
+}
+
+type createAccountLinkRequest struct {
+	Provider string `json:"provider"`
+	IDToken  string `json:"idToken"`
+	Nonce    string `json:"nonce"`
+}
+
+type accountLinkResponse struct {
+	Session             sessionResponse `json:"session"`
+	FirebaseCustomToken string          `json:"firebaseCustomToken"`
+	Provider            string          `json:"provider"`
+	Restored            bool            `json:"restored"`
+}
+
+func (h *Handler) createAccountLink(w http.ResponseWriter, r *http.Request) error {
+	var req createAccountLinkRequest
+	if err := httpx.DecodeStrict(w, r, &req); err != nil {
+		return err
+	}
+	if req.Provider == "" || req.IDToken == "" || req.Nonce == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid, "로그인 정보가 필요해요")
+	}
+	sess, err := h.Authenticate(r)
+	if err != nil {
+		return err
+	}
+	if err := h.VerifyAppCheck(
+		r.Context(), sess.AppID, r.Header.Get("X-Firebase-AppCheck"),
+	); err != nil {
+		return err
+	}
+	result, err := h.svc.CompleteAccountLink(
+		r.Context(), sess, req.Provider, req.IDToken, req.Nonce,
+	)
+	if err != nil {
+		return err
+	}
+	httpx.WriteOK(w, http.StatusOK, accountLinkResponse{
+		Session: h.sessionResponse(result.Session), FirebaseCustomToken: result.FirebaseCustomToken,
+		Provider: result.Provider, Restored: result.Restored,
 	})
 	return nil
 }
@@ -198,22 +334,31 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	res, err := h.svc.Refresh(r.Context(), appID, req.RefreshToken)
+	res, err := h.svc.Refresh(r.Context(), appID, req.RefreshToken, clientInfo(r))
 	if err != nil {
 		return err
 	}
 
-	httpx.WriteOK(w, http.StatusOK, sessionResponse{
-		PlatformToken:  res.PlatformToken,
-		RefreshToken:   res.RefreshToken,
-		PlatformUserID: res.PlatformUserID,
-		SupportCode:    res.SupportCode,
-		AppUserID:      res.AppUserID,
-		IsAnonymous:    res.IsAnonymous,
-		ExpiresIn:      res.ExpiresIn,
-		ServerTimeUnix: h.svc.now().Unix(),
-	})
+	httpx.WriteOK(w, http.StatusOK, h.sessionResponse(res))
 	return nil
+}
+
+func (h *Handler) sessionResponse(res Result) sessionResponse {
+	out := sessionResponse{
+		PlatformToken: res.PlatformToken, RefreshToken: res.RefreshToken,
+		PlatformUserID: res.PlatformUserID, SupportCode: res.SupportCode, AppUserID: res.AppUserID,
+		IsAnonymous: res.IsAnonymous, IsLinkedAccount: res.IsLinkedAccount,
+		ExpiresIn: res.ExpiresIn, ServerTimeUnix: h.svc.now().Unix(),
+	}
+	if res.HasConfig {
+		sdk := res.Config.SDK
+		maintenance := res.Config.Maint
+		out.Features = res.Config.Features
+		out.SDK = &sdk
+		out.Maintenance = &maintenance
+		out.ConfigETag = res.ConfigETag
+	}
+	return out
 }
 
 func (h *Handler) deleteMe(w http.ResponseWriter, r *http.Request) error {

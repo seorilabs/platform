@@ -13,6 +13,30 @@ import (
 )
 
 // fakeSource는 고정 앱 목록을 준다.
+// fakeBlocklist는 앱별 차단 계정을 메모리로 흉내낸다.
+//
+// err이 설정되면 조회 자체가 실패한다. 차단 여부를 모른 채 통과시키지
+// 않는지 확인하는 데 쓴다.
+type fakeBlocklist struct {
+	uids map[string]bool
+	err  error
+}
+
+func (f fakeBlocklist) Blocked(_ context.Context, _, uid string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.uids[uid], nil
+}
+
+func blocking(uids ...string) fakeBlocklist {
+	m := map[string]bool{}
+	for _, u := range uids {
+		m[u] = true
+	}
+	return fakeBlocklist{uids: m}
+}
+
 type fakeSource struct{ apps []registry.App }
 
 func (f fakeSource) LoadApps(context.Context) ([]registry.App, error) { return f.apps, nil }
@@ -93,6 +117,7 @@ type memRepo struct {
 	deleteOK     bool
 	deleted      int
 	lastReferrer string
+	lastIdentity NewIdentity
 }
 
 func newMemRepo() *memRepo {
@@ -105,16 +130,16 @@ func newMemRepo() *memRepo {
 
 func (m *memRepo) EnsureUser(
 	_ context.Context,
-	appID, uid string,
-	_ bool,
-	_, referrer string,
+	appID string,
+	identity NewIdentity,
 ) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.lastReferrer = referrer
+	m.lastReferrer = identity.Referrer
+	m.lastIdentity = identity
 
-	key := appID + "\x00" + uid
+	key := appID + "\x00" + identity.UID
 	if p, ok := m.users[key]; ok {
 		return p, nil
 	}
@@ -180,7 +205,7 @@ func newTestService(t *testing.T, verifier TokenVerifier, repo UserRepository) *
 	if err != nil {
 		t.Fatalf("발급기 생성 실패: %v", err)
 	}
-	return NewService(reg, verifier, repo, issuer)
+	return NewService(reg, verifier, repo, issuer, fakeBlocklist{})
 }
 
 func newBridgeTestService(
@@ -199,7 +224,7 @@ func newBridgeTestService(
 	if err != nil {
 		t.Fatalf("발급기 생성 실패: %v", err)
 	}
-	return NewService(reg, verifier, repo, issuer).WithCustomTokenIssuer(customTokens)
+	return NewService(reg, verifier, repo, issuer, fakeBlocklist{}).WithCustomTokenIssuer(customTokens)
 }
 
 func TestCreateSession(t *testing.T) {
@@ -209,7 +234,7 @@ func TestCreateSession(t *testing.T) {
 	res, err := svc.CreateSession(context.Background(), "lizard-tycoon", Credential{
 		Kind:  KindFirebaseIDToken,
 		Value: "uid-abc",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -244,6 +269,7 @@ func TestCreateFirebaseCustomTokenPreservesExistingUID(t *testing.T) {
 		context.Background(),
 		"lizard-tycoon",
 		"existing-firebase-uid",
+		ClientInfo{},
 	)
 	if err != nil {
 		t.Fatalf("custom token bridge 실패: %v", err)
@@ -259,6 +285,10 @@ func TestCreateFirebaseCustomTokenPreservesExistingUID(t *testing.T) {
 	}
 	if result.PlatformUserID == "" {
 		t.Fatal("platform user 매핑이 생성되지 않았다")
+	}
+	// authType은 이 경로 전부 firebase_bridge라 실제 로그인 수단을 가린다.
+	if repo.lastIdentity.SignInProvider != "anonymous" {
+		t.Fatalf("기존 token의 공급자가 전달되지 않았다: %q", repo.lastIdentity.SignInProvider)
 	}
 }
 
@@ -295,7 +325,7 @@ func TestVerifyAppCheck(t *testing.T) {
 		if err != nil {
 			t.Fatalf("발급기 생성 실패: %v", err)
 		}
-		return NewService(reg, fakeVerifier{}, newMemRepo(), issuer).
+		return NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).
 			WithCustomTokenIssuer(&fakeCustomTokenIssuer{token: "signed-custom-token"}).
 			WithAppCheckVerifier(verifier)
 	}
@@ -337,10 +367,7 @@ func TestDeleteFirebaseAccount(t *testing.T) {
 	if _, err := repo.EnsureUser(
 		context.Background(),
 		"lizard-tycoon",
-		"firebase-user",
-		false,
-		"firebase",
-		"",
+		NewIdentity{UID: "firebase-user", AuthType: "firebase"},
 	); err != nil {
 		t.Fatalf("test user 생성 실패: %v", err)
 	}
@@ -375,9 +402,10 @@ func TestDeleteFirebaseAccount(t *testing.T) {
 
 func TestCreateFirebaseCustomTokenGeneratesServerUID(t *testing.T) {
 	customTokens := &fakeCustomTokenIssuer{token: "signed-custom-token"}
-	svc := newBridgeTestService(t, fakeVerifier{}, newMemRepo(), customTokens)
+	repo := newMemRepo()
+	svc := newBridgeTestService(t, fakeVerifier{}, repo, customTokens)
 
-	result, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+	result, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "", ClientInfo{})
 	if err != nil {
 		t.Fatalf("custom token bridge 실패: %v", err)
 	}
@@ -391,6 +419,10 @@ func TestCreateFirebaseCustomTokenGeneratesServerUID(t *testing.T) {
 	if !customTokens.guest {
 		t.Fatal("플랫폼이 새로 만든 Firebase uid에 게스트 claim이 없다")
 	}
+	// 아직 어떤 로그인도 하지 않은 계정이다. 공급자를 지어내지 않는다.
+	if repo.lastIdentity.SignInProvider != "" {
+		t.Fatalf("게스트 계정이 공급자를 지어냈다: %q", repo.lastIdentity.SignInProvider)
+	}
 }
 
 func TestCreateFirebaseCustomTokenFailsClosed(t *testing.T) {
@@ -398,7 +430,7 @@ func TestCreateFirebaseCustomTokenFailsClosed(t *testing.T) {
 		svc := newTestService(t, fakeVerifier{}, newMemRepo()).WithCustomTokenIssuer(
 			&fakeCustomTokenIssuer{token: "unused"},
 		)
-		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "", ClientInfo{})
 		if code := platformerr.CodeOf(err); code != platformerr.CodeAuthForbidden {
 			t.Fatalf("code = %q, want auth_forbidden", code)
 		}
@@ -411,7 +443,7 @@ func TestCreateFirebaseCustomTokenFailsClosed(t *testing.T) {
 			newMemRepo(),
 			&fakeCustomTokenIssuer{err: errors.New("signJwt denied")},
 		)
-		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "")
+		_, err := svc.CreateFirebaseCustomToken(context.Background(), "lizard-tycoon", "", ClientInfo{})
 		if code := platformerr.CodeOf(err); code != platformerr.CodePlatformUnavailable {
 			t.Fatalf("code = %q, want platform_unavailable", code)
 		}
@@ -435,7 +467,7 @@ func TestCreateSessionIsIdempotent(t *testing.T) {
 			res, err := svc.CreateSession(context.Background(), "lizard-tycoon", Credential{
 				Kind:  KindFirebaseIDToken,
 				Value: "동시요청-uid",
-			})
+			}, ClientInfo{})
 			if err != nil {
 				t.Errorf("세션 생성 실패: %v", err)
 				return
@@ -462,7 +494,7 @@ func TestCreateSessionRejectsUnknownApp(t *testing.T) {
 	_, err := svc.CreateSession(context.Background(), "없는-앱", Credential{
 		Kind:  KindFirebaseIDToken,
 		Value: "uid",
-	})
+	}, ClientInfo{})
 	if code := platformerr.CodeOf(err); code != platformerr.CodeAppUnknown {
 		t.Errorf("code = %q, want app_unknown", code)
 	}
@@ -474,12 +506,12 @@ func TestCreateSessionRejectsPausedApp(t *testing.T) {
 
 	reg := registry.New(fakeSource{apps: []registry.App{paused}})
 	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
-	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer)
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{})
 
 	_, err := svc.CreateSession(context.Background(), "lizard-tycoon", Credential{
 		Kind:  KindFirebaseIDToken,
 		Value: "uid",
-	})
+	}, ClientInfo{})
 	if code := platformerr.CodeOf(err); code != platformerr.CodeAppPaused {
 		t.Errorf("code = %q, want app_paused", code)
 	}
@@ -493,7 +525,7 @@ func TestCredentialKinds(t *testing.T) {
 		res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 			Kind:  KindAnonymous,
 			Value: "anon-key-hash",
-		})
+		}, ClientInfo{})
 		if err != nil {
 			t.Fatalf("익명 세션 생성 실패: %v", err)
 		}
@@ -519,7 +551,7 @@ func TestCredentialKinds(t *testing.T) {
 		_, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 			Kind:  KindAITLogin,
 			Value: "ait-token",
-		})
+		}, ClientInfo{})
 		if err == nil {
 			t.Fatal("검증 경로가 없는데 통과시켰다")
 		}
@@ -529,7 +561,7 @@ func TestCredentialKinds(t *testing.T) {
 		_, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 			Kind:  "made-up",
 			Value: "x",
-		})
+		}, ClientInfo{})
 		if code := platformerr.CodeOf(err); code != platformerr.CodeRequestInvalid {
 			t.Errorf("code = %q, want request_invalid", code)
 		}
@@ -539,7 +571,7 @@ func TestCredentialKinds(t *testing.T) {
 		_, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 			Kind:  KindFirebaseIDToken,
 			Value: "   ",
-		})
+		}, ClientInfo{})
 		if code := platformerr.CodeOf(err); code != platformerr.CodeAuthRequired {
 			t.Errorf("code = %q, want auth_required", code)
 		}
@@ -562,11 +594,11 @@ func TestAITLoginAllowsAppsInTossAdsAndStoresOnlyHashedIdentity(t *testing.T) {
 	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
 	repo := newMemRepo()
 	verifier := &fakeAITLoginVerifier{hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
-	svc := NewService(reg, fakeVerifier{}, repo, issuer).WithAITLoginVerifier(verifier)
+	svc := NewService(reg, fakeVerifier{}, repo, issuer, fakeBlocklist{}).WithAITLoginVerifiers(map[string]AITLoginVerifier{app.AppID: verifier})
 
 	res, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "one-time-authorization-code", Referrer: "sandbox",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +621,7 @@ func TestAITLoginAllowsAppsInTossAdsAndStoresOnlyHashedIdentity(t *testing.T) {
 
 	_, err = svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "another-code", Referrer: "unknown",
-	})
+	}, ClientInfo{})
 	if platformerr.CodeOf(err) != platformerr.CodeRequestInvalid {
 		t.Fatalf("invalid referrer code=%q", platformerr.CodeOf(err))
 	}
@@ -608,11 +640,11 @@ func TestAITLoginAllowsAppsInTossIAPWithoutAds(t *testing.T) {
 	verifier := &fakeAITLoginVerifier{
 		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
-	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer).WithAITLoginVerifier(verifier)
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).WithAITLoginVerifiers(map[string]AITLoginVerifier{app.AppID: verifier})
 
 	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "iap-authorization-code", Referrer: "SANDBOX",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -640,11 +672,11 @@ func TestAITLoginRejectsAdMobOnlyApp(t *testing.T) {
 	verifier := &fakeAITLoginVerifier{
 		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
-	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer).WithAITLoginVerifier(verifier)
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).WithAITLoginVerifiers(map[string]AITLoginVerifier{app.AppID: verifier})
 
 	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
 		Kind: KindAITLogin, Value: "must-not-be-exchanged", Referrer: "DEFAULT",
-	})
+	}, ClientInfo{})
 	if code := platformerr.CodeOf(err); code != platformerr.CodeAuthForbidden {
 		t.Fatalf("code=%q, want auth_forbidden", code)
 	}
@@ -661,12 +693,12 @@ func TestRefreshRotatesToken(t *testing.T) {
 
 	first, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "uid-refresh",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
 
-	second, err := svc.Refresh(ctx, "lizard-tycoon", first.RefreshToken)
+	second, err := svc.Refresh(ctx, "lizard-tycoon", first.RefreshToken, ClientInfo{})
 	if err != nil {
 		t.Fatalf("갱신 실패: %v", err)
 	}
@@ -679,7 +711,7 @@ func TestRefreshRotatesToken(t *testing.T) {
 	}
 
 	// 옛 토큰은 더 이상 쓸 수 없다
-	if _, err := svc.Refresh(ctx, "lizard-tycoon", first.RefreshToken); err == nil {
+	if _, err := svc.Refresh(ctx, "lizard-tycoon", first.RefreshToken, ClientInfo{}); err == nil {
 		t.Error("폐기된 갱신 토큰이 다시 통과했다")
 	}
 }
@@ -692,12 +724,12 @@ func TestAuthenticateRejectsCrossAppToken(t *testing.T) {
 
 	reg := registry.New(fakeSource{apps: []registry.App{testApp(), other}})
 	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
-	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer)
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{})
 	ctx := context.Background()
 
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "uid",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -714,19 +746,37 @@ func TestAuthenticateRejectsBlockedUID(t *testing.T) {
 
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "곧-차단될-uid",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
 
 	// 세션 발급 후에 차단한다. 세션 수명이 남아 있어도 즉시 막혀야 한다.
-	blocked := testApp()
-	blocked.BlockedUIDs = []string{"곧-차단될-uid"}
-	svc.registry = registry.New(fakeSource{apps: []registry.App{blocked}})
+	svc.blocklist = blocking("곧-차단될-uid")
 
 	_, err = svc.Authenticate(ctx, "lizard-tycoon", res.PlatformToken)
 	if code := platformerr.CodeOf(err); code != platformerr.CodeUserBlocked {
 		t.Errorf("code = %q, want user_blocked", code)
+	}
+}
+
+// 차단 목록 조회가 실패하면 통과가 아니라 실패다. 차단 여부를 모른 채
+// 세션을 내주면 차단이 무의미해진다.
+func TestAuthenticateFailsWhenBlocklistUnavailable(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, fakeVerifier{}, newMemRepo())
+
+	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
+		Kind: KindFirebaseIDToken, Value: "uid-1",
+	}, ClientInfo{})
+	if err != nil {
+		t.Fatalf("세션 생성 실패: %v", err)
+	}
+
+	svc.blocklist = fakeBlocklist{err: errors.New("firestore 장애")}
+
+	if _, err := svc.Authenticate(ctx, "lizard-tycoon", res.PlatformToken); err == nil {
+		t.Fatal("차단 조회 실패를 통과시켰다")
 	}
 }
 
@@ -774,7 +824,7 @@ func TestFirebaseAnonymousCanPay(t *testing.T) {
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind:  KindFirebaseIDToken,
 		Value: "firebase-uid-1",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("세션 생성 실패: %v", err)
 	}
@@ -802,7 +852,7 @@ func TestAnonymousKeyStillCannotPay(t *testing.T) {
 	res, err := svc.CreateSession(ctx, "lizard-tycoon", Credential{
 		Kind:  KindAnonymous,
 		Value: "anon-key-hash",
-	})
+	}, ClientInfo{})
 	if err != nil {
 		t.Fatalf("익명 세션 생성 실패: %v", err)
 	}
@@ -816,5 +866,35 @@ func TestAnonymousKeyStillCannotPay(t *testing.T) {
 	}
 	if err := sess.EnsureNotAnonymous(); err == nil {
 		t.Error("사칭 가능한 신원이 결제 경로를 통과했다")
+	}
+}
+
+// 인증서는 미니앱마다 발급되고 토스는 CN으로 앱을 식별한다. 다른 앱 인증서로
+// 대신 교환하면 설정 누락이 인증 실패로 둔갑해 원인을 찾기 어려워진다.
+func TestAITLoginRejectsAppWithoutItsOwnCertificate(t *testing.T) {
+	app := testApp()
+	app.AppID = "ungeul"
+	app.Features = map[string]bool{"iap": true}
+	app.IAP = registry.IAPConfig{
+		LedgerEnvironment: registry.LedgerProduction,
+		Markets:           []string{"apps_in_toss"},
+		EntitlementIDs:    []string{"deep_reading_ticket"},
+	}
+	reg := registry.New(fakeSource{apps: []registry.App{app}})
+	issuer, _ := NewSessionIssuer([]byte("0123456789abcdef0123456789abcdef"), time.Hour)
+	other := &fakeAITLoginVerifier{
+		hashedUserID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	svc := NewService(reg, fakeVerifier{}, newMemRepo(), issuer, fakeBlocklist{}).
+		WithAITLoginVerifiers(map[string]AITLoginVerifier{"lizard-tycoon": other})
+
+	_, err := svc.CreateSession(context.Background(), app.AppID, Credential{
+		Kind: KindAITLogin, Value: "must-not-be-exchanged", Referrer: "SANDBOX",
+	}, ClientInfo{})
+	if code := platformerr.CodeOf(err); code != platformerr.CodeProviderConfigInvalid {
+		t.Fatalf("code=%q, want provider_config_invalid", code)
+	}
+	if other.code != "" {
+		t.Fatalf("다른 앱 인증서로 교환했다: %q", other.code)
 	}
 }

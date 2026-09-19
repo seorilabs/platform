@@ -228,3 +228,64 @@ func contentRequestDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
 }
+
+// ContentUnitsRemaining은 차감하지 않고 남은 열람권 수만 읽는다.
+//
+// ConsumeUnits와 같은 규칙(활성 source마다 unitsPerSource)으로 세지만
+// 결과가 0인 것을 에러로 보지 않는다. 화면에 "0장 남음"을 그리는 것이
+// 정상 상태이기 때문이다. 차감 경로는 0을 열람 실패로 다뤄야 하므로
+// chooseContentSource를 그대로 쓰지 않고 여기서 따로 센다.
+func (l *Ledger) ContentUnitsRemaining(
+	ctx context.Context,
+	puid, entitlementID string,
+	unitsPerSource int,
+) (int, error) {
+	if puid == "" || entitlementID == "" || unitsPerSource <= 0 || unitsPerSource > 10000 {
+		return 0, platformerr.New(platformerr.CodeInternal,
+			"콘텐츠 열람권 조회 정보가 올바르지 않아요")
+	}
+	p, err := l.paths.internalEntitlement(puid, entitlementID)
+	if err != nil {
+		return 0, err
+	}
+	snap, err := l.store.Get(ctx, p)
+	if errors.Is(err, store.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, platformerr.Wrap(err, platformerr.CodeContentUnavailable,
+			"열람권 잔여를 읽지 못했어요")
+	}
+	var entitlement entitlementDoc
+	if err := snap.DataTo(&entitlement); err != nil {
+		return 0, err
+	}
+	if entitlement.EntitlementID != "" && entitlement.EntitlementID != entitlementID {
+		return 0, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"열람권 entitlement 원장이 올바르지 않아요")
+	}
+	return contentUnitsRemaining(entitlement.Sources, unitsPerSource)
+}
+
+// contentUnitsRemaining은 활성 source의 남은 용량을 더한다.
+//
+// chooseContentSource와 셈은 같지만 0을 에러로 만들지 않는다. 차감은
+// 0에서 실패해야 하고 조회는 0을 그대로 답해야 한다.
+func contentUnitsRemaining(
+	sources map[string]domain.Source,
+	unitsPerSource int,
+) (int, error) {
+	remaining := 0
+	for _, source := range sources {
+		if source.State != domain.StateActive {
+			continue
+		}
+		consumed := source.ContentUnitsConsumed
+		if consumed < 0 || consumed > unitsPerSource {
+			return 0, platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"열람권 source 사용 원장이 올바르지 않아요")
+		}
+		remaining += unitsPerSource - consumed
+	}
+	return remaining, nil
+}

@@ -154,7 +154,7 @@ func TestResolve(t *testing.T) {
 	}
 
 	t.Run("규칙에 안 맞으면 기본값", func(t *testing.T) {
-		got := doc.Resolve(Target{Platform: "ios", AppVersion: "1.0.0"})
+		got := doc.Resolve(Target{Platform: "ios", AppVersion: "1.0.0"}, "")
 		if got.Values["banner"] != "기본" {
 			t.Errorf("banner = %v, want 기본", got.Values["banner"])
 		}
@@ -167,14 +167,14 @@ func TestResolve(t *testing.T) {
 	})
 
 	t.Run("플랫폼 규칙 적용", func(t *testing.T) {
-		got := doc.Resolve(Target{Platform: "android", AppVersion: "1.0.0"})
+		got := doc.Resolve(Target{Platform: "android", AppVersion: "1.0.0"}, "")
 		if got.Values["banner"] != "안드로이드" {
 			t.Errorf("banner = %v, want 안드로이드", got.Values["banner"])
 		}
 	})
 
 	t.Run("버전 규칙이 기능도 덮는다", func(t *testing.T) {
-		got := doc.Resolve(Target{Platform: "ios", AppVersion: "2.1.0"})
+		got := doc.Resolve(Target{Platform: "ios", AppVersion: "2.1.0"}, "")
 		if got.Values["reward_multiplier"] != 2 {
 			t.Errorf("reward_multiplier = %v, want 2", got.Values["reward_multiplier"])
 		}
@@ -184,7 +184,7 @@ func TestResolve(t *testing.T) {
 	})
 
 	t.Run("두 규칙이 모두 맞으면 뒤가 이긴다", func(t *testing.T) {
-		got := doc.Resolve(Target{Platform: "android", AppVersion: "2.1.0"})
+		got := doc.Resolve(Target{Platform: "android", AppVersion: "2.1.0"}, "")
 		if got.Values["banner"] != "안드로이드" {
 			t.Errorf("banner = %v", got.Values["banner"])
 		}
@@ -194,7 +194,7 @@ func TestResolve(t *testing.T) {
 	})
 
 	t.Run("원본이 오염되지 않는다", func(t *testing.T) {
-		doc.Resolve(Target{Platform: "android"})
+		doc.Resolve(Target{Platform: "android"}, "")
 		if doc.Values["banner"] != "기본" {
 			t.Errorf("원본 banner가 바뀌었다: %v", doc.Values["banner"])
 		}
@@ -202,7 +202,7 @@ func TestResolve(t *testing.T) {
 
 	t.Run("SDK 상태 기본값은 ok", func(t *testing.T) {
 		empty := Document{}
-		if got := empty.Resolve(Target{}); got.SDK.Status != SDKStatusOK {
+		if got := empty.Resolve(Target{}, ""); got.SDK.Status != SDKStatusOK {
 			t.Errorf("SDK.Status = %q, want ok", got.SDK.Status)
 		}
 	})
@@ -214,18 +214,18 @@ func TestResolveExpiresMaintenance(t *testing.T) {
 	doc := Document{
 		Maint: Maintenance{Active: true, Until: time.Now().Add(-time.Hour)},
 	}
-	if doc.Resolve(Target{}).Maint.Active {
+	if doc.Resolve(Target{}, "").Maint.Active {
 		t.Error("만료된 점검 모드가 계속 켜져 있다")
 	}
 
 	doc.Maint.Until = time.Now().Add(time.Hour)
-	if !doc.Resolve(Target{}).Maint.Active {
+	if !doc.Resolve(Target{}, "").Maint.Active {
 		t.Error("아직 유효한 점검 모드가 꺼졌다")
 	}
 
 	// Until이 없으면 수동으로 끌 때까지 유지한다
 	doc.Maint = Maintenance{Active: true}
-	if !doc.Resolve(Target{}).Maint.Active {
+	if !doc.Resolve(Target{}, "").Maint.Active {
 		t.Error("종료 시각 없는 점검 모드가 꺼졌다")
 	}
 }

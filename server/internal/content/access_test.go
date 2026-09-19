@@ -12,6 +12,8 @@ import (
 )
 
 type fakeUnlocks struct {
+	listed         []UnlockRecord
+	listErr        error
 	grant          UnlockGrant
 	rewardClaim    string
 	ticketRecorded bool
@@ -28,6 +30,11 @@ func (f *fakeUnlocks) BindReward(_ context.Context, _, _, _, _, claim string) er
 		f.grant = UnlockGrant{Exists: true, Source: "reward_claim", Reference: claim}
 	}
 	return f.bindErr
+}
+func (f *fakeUnlocks) ListUnlocks(
+	_ context.Context, _, _ string, _ int,
+) ([]UnlockRecord, error) {
+	return f.listed, f.listErr
 }
 func (f *fakeUnlocks) RecordTicket(_ context.Context, _, _, _, _, sourceKey string) error {
 	f.ticketRecorded = true
@@ -59,6 +66,8 @@ func (f *fakeClaims) AcknowledgeClaim(
 }
 
 type fakeEntitlements struct {
+	remaining    int
+	remainingErr error
 	active       bool
 	sourceActive bool
 	consumed     bool
@@ -73,6 +82,11 @@ func (f *fakeEntitlements) SourceActive(
 	context.Context, registry.App, string, string, string,
 ) (bool, error) {
 	return f.sourceActive, nil
+}
+func (f *fakeEntitlements) Remaining(
+	_ context.Context, _ registry.App, _, _ string, _ int,
+) (int, error) {
+	return f.remaining, f.remainingErr
 }
 func (f *fakeEntitlements) Consume(
 	_ context.Context, _ registry.App, _, _ string, _ int, key string,
@@ -91,11 +105,12 @@ func accessApp() registry.App {
 	}}
 }
 
-func TestRewardUnlockRequiresServerVerifiedClaim(t *testing.T) {
+func TestRewardUnlockRejectsAdMobClaimWithoutServerVerification(t *testing.T) {
 	unlocks := &fakeUnlocks{}
 	claim := platformads.Claim{
 		ClaimID: "cl_valid", AppID: "ungeul", PlatformUserID: "puid",
-		State: platformads.StateConfirmed, Assurance: platformads.AssuranceClientConfirmed,
+		Provider: platformads.ProviderAdMob,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceClientConfirmed,
 		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
 	}
 	claims := &fakeClaims{claim: claim}
@@ -108,11 +123,12 @@ func TestRewardUnlockRequiresServerVerifiedClaim(t *testing.T) {
 	}
 }
 
-func TestRewardUnlockBindsServerVerifiedClaim(t *testing.T) {
+func TestRewardUnlockBindsSettledAdMobClaim(t *testing.T) {
 	unlocks := &fakeUnlocks{}
 	claim := platformads.Claim{
 		ClaimID: "cl_valid", AppID: "ungeul", PlatformUserID: "puid",
-		State: platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
+		Provider: platformads.ProviderAdMob,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
 		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
 	}
 	claims := &fakeClaims{claim: claim}
@@ -127,12 +143,63 @@ func TestRewardUnlockBindsServerVerifiedClaim(t *testing.T) {
 	}
 }
 
+// AppsInToss에는 SSV가 없다. 서버가 지면의 일일 한도와 cooldown을 원자적으로 걸고 받은
+// client_confirmed가 그 provider의 확정이고, 그 위로 승격되는 경로가 없다. 여기서
+// AdMob 기준을 요구하면 AIT 보상형 광고는 구조적으로 영원히 열리지 않는다.
+func TestRewardUnlockBindsSettledAppsInTossClaim(t *testing.T) {
+	unlocks := &fakeUnlocks{}
+	claim := platformads.Claim{
+		ClaimID: "cl_ait", AppID: "ungeul", PlatformUserID: "puid",
+		Provider: platformads.ProviderAppsInToss,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceClientConfirmed,
+		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
+	}
+	claims := &fakeClaims{claim: claim}
+	access := NewAccessService(unlocks, claims, nil)
+	if err := access.Unlock(t.Context(), accessApp(), "puid", "rk", "seun:2026", UnlockRequest{
+		Kind: "reward_claim", Section: "seun", ClaimID: claim.ClaimID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if unlocks.rewardClaim != claim.ClaimID || !claims.acked {
+		t.Fatalf("bound=%q acked=%v", unlocks.rewardClaim, claims.acked)
+	}
+}
+
+// 반대 방향도 막는다. AIT 기준을 AdMob에 쓰면 SSV를 통과하지 않은 보상이 열게 된다.
+func TestRewardUnlockRejectsUnknownProvider(t *testing.T) {
+	for _, claim := range []platformads.Claim{
+		{
+			ClaimID: "cl_none", AppID: "ungeul", PlatformUserID: "puid",
+			State: platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
+			Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
+		},
+		{
+			ClaimID: "cl_pending", AppID: "ungeul", PlatformUserID: "puid",
+			Provider: platformads.ProviderAppsInToss,
+			State:    platformads.StateAccepted, Assurance: platformads.AssuranceClientConfirmed,
+			Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
+		},
+	} {
+		unlocks := &fakeUnlocks{}
+		claims := &fakeClaims{claim: claim}
+		access := NewAccessService(unlocks, claims, nil)
+		err := access.Unlock(t.Context(), accessApp(), "puid", "rk", "seun:2026", UnlockRequest{
+			Kind: "reward_claim", Section: "seun", ClaimID: claim.ClaimID,
+		})
+		if platformerr.CodeOf(err) != platformerr.CodeContentClaimInvalid || unlocks.rewardClaim != "" {
+			t.Fatalf("%s: code=%q bound=%q", claim.ClaimID, platformerr.CodeOf(err), unlocks.rewardClaim)
+		}
+	}
+}
+
 func TestRewardUnlockDoesNotAcknowledgeBeforeBinding(t *testing.T) {
 	bindErr := platformerr.New(platformerr.CodeContentUnavailable, "write failed")
 	unlocks := &fakeUnlocks{bindErr: bindErr}
 	claim := platformads.Claim{
 		ClaimID: "cl_valid", AppID: "ungeul", PlatformUserID: "puid",
-		State: platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
+		Provider: platformads.ProviderAdMob,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
 		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
 	}
 	claims := &fakeClaims{claim: claim}
@@ -149,7 +216,8 @@ func TestRewardUnlockRetriesAcknowledgeAfterBinding(t *testing.T) {
 	unlocks := &fakeUnlocks{}
 	claim := platformads.Claim{
 		ClaimID: "cl_valid", AppID: "ungeul", PlatformUserID: "puid",
-		State: platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
+		Provider: platformads.ProviderAdMob,
+		State:    platformads.StateConfirmed, Assurance: platformads.AssuranceServerVerified,
 		Reward: platformads.Reward{Key: "deep-reading", Amount: 1},
 	}
 	claims := &fakeClaims{claim: claim, ackErr: errors.New("ack failed")}
@@ -227,5 +295,28 @@ func TestSeasonPassIsCheckedByYear(t *testing.T) {
 	got, err := access.Authorized(t.Context(), accessApp(), "puid", "rk", "seun:2026", 2026)
 	if err != nil || !got {
 		t.Fatalf("authorized=%v err=%v", got, err)
+	}
+}
+
+// 궁합은 연도가 없어 year 0 으로 들어온다. 시즌 entitlement는 한 해의 흐름을 여는 구매라
+// 궁합까지 열어 주면 안 된다 — 0 을 "0000" 으로 조회하는 일도 없어야 한다.
+func TestAuthorizedSkipsSeasonEntitlementForYearZero(t *testing.T) {
+	app := testContentApp()
+	app.Content.SeasonEntitlements = map[string]string{"0000": "season", "2026": "season"}
+	access := NewAccessService(&fakeUnlocks{}, nil, &fakeEntitlements{active: true})
+
+	got, err := access.Authorized(t.Context(), app, "puid", "pk_pair", "gunghap", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got {
+		t.Fatal("연도 없는 궁합이 시즌 entitlement로 열렸다")
+	}
+	got, err = access.Authorized(t.Context(), app, "puid", "rk_reading", "flow:2026", 2026)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Fatal("시즌 entitlement가 있는 해의 흐름이 열리지 않았다")
 	}
 }

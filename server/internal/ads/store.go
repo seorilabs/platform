@@ -27,12 +27,29 @@ const (
 	appHealthCollection     = "ad_app_health"
 )
 
+// AccountGuard는 소비자인 ads에 정의하고 identity 구현을 조립한다.
+type AccountGuard interface {
+	CheckAccountActive(*store.Tx, string, string) error
+}
+
 type StoreRepository struct {
+	accounts    AccountGuard
 	store       *store.Client
 	operational *operational.Repository
 }
 
 func NewStoreRepository(st *store.Client) *StoreRepository { return &StoreRepository{store: st} }
+
+func (r *StoreRepository) WithAccounts(guard AccountGuard) *StoreRepository {
+	r.accounts = guard
+	return r
+}
+func (r *StoreRepository) checkAccount(tx *store.Tx, appID, puid string) error {
+	if r.accounts == nil {
+		return nil
+	}
+	return r.accounts.CheckAccountActive(tx, appID, puid)
+}
 
 func (r *StoreRepository) WithOperationalEvents(repo *operational.Repository) *StoreRepository {
 	r.operational = repo
@@ -56,6 +73,7 @@ type transactionDoc struct {
 type usageDoc struct {
 	Count           int       `firestore:"count"`
 	LastConfirmedAt time.Time `firestore:"lastConfirmedAt"`
+	LastRequestedAt time.Time `firestore:"lastRequestedAt,omitempty"`
 }
 type policyDoc struct {
 	AppID                string    `firestore:"appId"`
@@ -95,7 +113,7 @@ func appHealthPath(appID string) (fspath.Path, error) {
 	return path(appHealthCollection + "/" + hash(appID))
 }
 
-func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, cooldownSeconds int) (Claim, error) {
+func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, cooldownSeconds, requestCooldownSeconds int) (Claim, error) {
 	cp, err := claimPath(c.ClaimID)
 	if err != nil {
 		return Claim{}, err
@@ -106,6 +124,10 @@ func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, 
 	}
 	result := c
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkAccount(tx, c.AppID, c.PlatformUserID); err != nil {
+			return err
+		}
+
 		exists, snap, err := tx.Exists(rp)
 		if err != nil {
 			return err
@@ -138,8 +160,8 @@ func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, 
 		if err != nil {
 			return err
 		}
+		usage := usageDoc{}
 		if usageExists {
-			var usage usageDoc
 			if err := usageSnap.DataTo(&usage); err != nil {
 				return err
 			}
@@ -148,6 +170,38 @@ func (r *StoreRepository) CreateClaim(ctx context.Context, c Claim, dailyLimit, 
 			}
 			if !usage.LastConfirmedAt.IsZero() && c.CreatedAt.Sub(usage.LastConfirmedAt) < time.Duration(cooldownSeconds)*time.Second {
 				return platformerr.New(platformerr.CodeAdCooldown, "잠시 후 다시 시도해 주세요")
+			}
+		}
+		if requestCooldownSeconds > 0 {
+			lastRequested := usage.LastRequestedAt
+			// 최대 요청 간격은 하루다. 자정 직전 요청도 확인하여 새 UTC 일자로
+			// 간격 제한을 우회하지 못하게 한다. 새 collection은 만들지 않는다.
+			cutoff := c.CreatedAt.Add(-time.Duration(requestCooldownSeconds) * time.Second)
+			if cutoff.UTC().Format("2006-01-02") != c.CreatedAt.UTC().Format("2006-01-02") {
+				previous, err := usagePath(ConfirmInput{AppID: c.AppID, PlatformUserID: c.PlatformUserID}, c.PlacementID, cutoff.UTC().Format("2006-01-02"))
+				if err != nil {
+					return err
+				}
+				exists, snap, err := tx.Exists(previous)
+				if err != nil {
+					return err
+				}
+				if exists {
+					var prior usageDoc
+					if err := snap.DataTo(&prior); err != nil {
+						return err
+					}
+					if prior.LastRequestedAt.After(lastRequested) {
+						lastRequested = prior.LastRequestedAt
+					}
+				}
+			}
+			if !lastRequested.IsZero() && c.CreatedAt.Sub(lastRequested) < time.Duration(requestCooldownSeconds)*time.Second {
+				return platformerr.New(platformerr.CodeAdCooldown, "잠시 후 다시 시도해 주세요")
+			}
+			usage.LastRequestedAt = c.CreatedAt
+			if err := tx.Set(up, usage); err != nil {
+				return err
 			}
 		}
 		if err := tx.Create(cp, c); err != nil {
@@ -195,6 +249,10 @@ func (r *StoreRepository) ConfirmClaim(ctx context.Context, in ConfirmInput) (Cl
 	}
 	var result Claim
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkAccount(tx, in.AppID, in.PlatformUserID); err != nil {
+			return err
+		}
+
 		claimSnap, err := tx.Get(cp)
 		if errors.Is(err, store.ErrNotFound) {
 			return platformerr.New(platformerr.CodeClaimNotFound, "보상 claim을 찾을 수 없어요")
@@ -283,6 +341,10 @@ func (r *StoreRepository) AcknowledgeClaim(ctx context.Context, id, appID, puid 
 	}
 	var result Claim
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkAccount(tx, appID, puid); err != nil {
+			return err
+		}
+
 		snap, err := tx.Get(p)
 		if errors.Is(err, store.ErrNotFound) {
 			return platformerr.New(platformerr.CodeClaimNotFound, "보상 claim을 찾을 수 없어요")
@@ -397,6 +459,10 @@ func (r *StoreRepository) suppression(ctx context.Context, record SuppressionRec
 	}
 	var out SuppressionResult
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkAccount(tx, record.AppID, record.PlatformUserID); err != nil {
+			return err
+		}
+
 		exists, snap, err := tx.Exists(rp)
 		if err != nil {
 			return err

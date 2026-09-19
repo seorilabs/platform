@@ -148,3 +148,26 @@ func TestCORSFailsClosedWhenRegistryIsUnavailable(t *testing.T) {
 		t.Fatalf("status = %d, want 503", w.Code)
 	}
 }
+
+func TestCORSAllowsObservationHeaders(t *testing.T) {
+	// SDK가 관측 헤더를 붙이는 순간 웹·AIT의 preflight가 이 목록을 통과해야 한다.
+	// 빠지면 400으로 끊겨 로그인 자체가 실패한다.
+	origins := &corsOriginAuthorizerStub{allowed: true}
+	handler := CORS(origins)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("preflight가 실제 핸들러까지 도달했다")
+	}))
+	r := httptest.NewRequest(http.MethodOptions, "/v1/auth/session", nil)
+	r.Header.Set("Origin", "https://lizard-tycoon.private-apps.tossmini.com")
+	r.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	r.Header.Set(
+		"Access-Control-Request-Headers",
+		"content-type, x-seori-app, x-seori-appver, x-seori-runtime, x-seori-sdk",
+	)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+}

@@ -6,18 +6,28 @@ const TEMP_SUFFIX := ".tmp"
 
 
 static func read_dictionary(path: String) -> Dictionary:
+	if DirAccess.dir_exists_absolute(path):
+		return {"ok": false, "exists": true, "value": {}}
 	if not FileAccess.file_exists(path):
 		return {"ok": true, "exists": false, "value": {}}
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(path)) != OK:
+		return {"ok": false, "exists": true, "value": {}}
+	var parsed: Variant = parser.data
 	if parsed is Dictionary:
 		return {"ok": true, "exists": true, "value": parsed}
 	return {"ok": false, "exists": true, "value": {}}
 
 
 static func read_string_array(path: String) -> Dictionary:
+	if DirAccess.dir_exists_absolute(path):
+		return {"ok": false, "exists": true, "value": []}
 	if not FileAccess.file_exists(path):
 		return {"ok": true, "exists": false, "value": []}
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(path)) != OK:
+		return {"ok": false, "exists": true, "value": []}
+	var parsed: Variant = parser.data
 	if not parsed is Array:
 		return {"ok": false, "exists": true, "value": []}
 	var values: Array[String] = []

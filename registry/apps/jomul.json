@@ -6,14 +6,16 @@
   "status": "active",
   "features": {
     "config": true,
-    "events": false,
+    "events": true,
     "iap": false,
     "ads": true,
+    "presence": true,
     "firebase_custom_token_bridge": true
   },
   "ads": {
     "providers": [
-      "admob"
+      "admob",
+      "apps_in_toss"
     ],
     "placements": [
       {
@@ -21,7 +23,13 @@
         "format": "rewarded",
         "providers": {
           "admob": {
-            "android_ad_unit_id": "ca-app-pub-2444587584524186/1396162476"
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/5497048802",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/7057542480",
+            "retired_android_ad_unit_ids": ["ca-app-pub-2444587584524186/1396162476"],
+            "retired_ios_ad_unit_ids": ["ca-app-pub-2444587584524186/4203846143"]
+          },
+          "apps_in_toss": {
+            "ad_group_id": "ait.v2.live.d6bba0043afa4672"
           }
         },
         "reward": {
@@ -29,16 +37,44 @@
           "min_amount": 3,
           "max_amount": 3
         },
-        "daily_limit": 3,
+        "daily_limit": 1,
         "cooldown_seconds": 30
       }
     ]
   },
   "require_app_check": false,
   "ga4": {
-    "event_prefix": "jomul_"
+    "event_prefix": "jomul_",
+    "measurement_id": "G-6PXDPK349G"
   },
-  "platform_event_allowlist": [],
-  "cors_origins": [],
-  "blocked_uids": []
+  "platform_event_allowlist": [
+    "session_start",
+    "clock_rollback_detected",
+    "merge_attempt",
+    "element_discovered",
+    "recipe_discovered",
+    "chapter_cleared",
+    "chapter_complete",
+    "chapter_unlocked",
+    "save_migrated",
+    "hint_used",
+    "hint_earned",
+    "onboarding_start",
+    "onboarding_complete",
+    "onboarding_skip",
+    "rewarded_complete",
+    "element_read",
+    "easter_egg_found",
+    "rewarded_start",
+    "rewarded_failed",
+    "dictionary_open",
+    "stuck",
+    "save_failed"
+  ],
+  "cors_origins": [
+    "https://jomul-game.apps.tossmini.com",
+    "https://jomul-game.private-apps.tossmini.com",
+    "https://jomul-game.web.tossmini.com",
+    "https://jomul-game.private-web.tossmini.com"
+  ]
 }

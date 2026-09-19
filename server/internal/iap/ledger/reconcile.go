@@ -65,7 +65,7 @@ func (l *Ledger) reconcileByCanonicalID(
 			// 모르는 주문이다. 환불이면 tombstone을 남기고,
 			// 그 외에는 아무것도 하지 않는다.
 			if p.State == domain.StateRevoked {
-				if err := l.RevokeByCanonicalID(ctx, p.Platform, p.CanonicalID, p.ObservedAt); err != nil {
+				if err := l.RevokeByCanonicalID(ctx, p); err != nil {
 					return ReconcileResult{}, err
 				}
 			}

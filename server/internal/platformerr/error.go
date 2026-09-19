@@ -3,7 +3,7 @@
 // Error가 code와 HTTP status를 함께 들고 다닌다. 원본 lizard-tycoon의
 // IapError와 같은 모양이다. 도메인이 HTTP를 안다는 점이 순수하지 않지만,
 // 코드가 60개 넘어 대응표를 한 곳에 모으는 편이 누락을 잡기 쉽다.
-// ADR 0009 이전 결정이며 docs/03-architecture/server-layout.md 참고.
+// ADR 0009 이전 결정이며 Obsidian 프로젝트/platform/03-architecture/server-layout.md 참고.
 //
 // 판정은 errors.Is가 아니라 CodeOf를 쓴다. 코드 비교가 실제 의도이기 때문이다.
 //

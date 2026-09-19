@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/seorilabs/platform/server/internal/admin"
+	"github.com/seorilabs/platform/server/internal/iap/domain"
+	"github.com/seorilabs/platform/server/internal/iap/ledger"
 )
 
 // registerAdmin은 백오피스 전용 API를 연다.
@@ -56,11 +58,30 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 	if err != nil {
 		return err
 	}
+	// Sandbox는 별도 원장 Handler로 고정한다. 실제 조작은 기존 앱 허용,
+	// 사용자, expectedEnvironment, 확인 문구와 write identity 검사를 유지한다.
+	sandboxHandler, err := admin.NewHandler(
+		ledger.New(d.store, domain.EnvSandbox), d.config, d.adminUsers,
+		d.registry, d.iap.catalog, auth, auditAdapter{col: d.events},
+	)
+	if err != nil {
+		return err
+	}
+	if d.iap.ledger.Environment() != domain.EnvSandbox {
+		if err := handler.WithEnvironmentHandlers(map[domain.Environment]*admin.Handler{domain.EnvSandbox: sandboxHandler}); err != nil {
+			return err
+		}
+	}
 	handler.Register(mux)
 	if d.ads == nil {
 		return errors.New("admin role에 광고 서비스가 필요하다")
 	}
 	if err := admin.RegisterAds(mux, auth, d.ads.service); err != nil {
+		return err
+	}
+	// 차단 관리는 백오피스가 유일한 조작 경로다. registry/apps/*.json은
+	// public 저장소라 사용자 식별자를 담지 않는다. ADR 0026 참고.
+	if err := admin.RegisterBlocks(mux, auth, d.blocklist, d.registry, auditAdapter{col: d.events}); err != nil {
 		return err
 	}
 

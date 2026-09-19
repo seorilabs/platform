@@ -22,11 +22,13 @@ type fakeVerifier struct {
 	verifyErr  error
 	completeEr error
 	completed  int
+	gotProof   domain.Proof
 }
 
 func (f *fakeVerifier) Platform() domain.Platform { return f.platform }
 
-func (f *fakeVerifier) Verify(context.Context, domain.Proof) (domain.VerifiedPurchase, error) {
+func (f *fakeVerifier) Verify(_ context.Context, proof domain.Proof) (domain.VerifiedPurchase, error) {
+	f.gotProof = proof
 	if f.verifyErr != nil {
 		return domain.VerifiedPurchase{}, f.verifyErr
 	}
@@ -173,6 +175,9 @@ func TestVerifyPurchaseGrants(t *testing.T) {
 	}
 	if v.completed != 1 {
 		t.Errorf("마켓 완료 호출 = %d, want 1", v.completed)
+	}
+	if v.gotProof.ProductType != domain.ProductNonConsumable {
+		t.Errorf("catalog product type = %q, want non_consumable", v.gotProof.ProductType)
 	}
 	if out.Completion == nil || out.Completion.Action != domain.ActionNone {
 		t.Errorf("completion = %+v, want none", out.Completion)

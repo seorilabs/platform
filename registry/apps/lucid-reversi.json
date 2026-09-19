@@ -19,6 +19,5 @@
   "cors_origins": [
     "https://lucid-reversi.apps.tossmini.com",
     "https://lucid-reversi.private-apps.tossmini.com"
-  ],
-  "blocked_uids": []
+  ]
 }

@@ -9,7 +9,7 @@ import { Transport, PlatformError } from "../src/transport.ts";
 import { SessionManager, MemorySessionStore } from "../src/session.ts";
 import { Events, MemoryEventOutbox } from "../src/events.ts";
 import { Iap } from "../src/iap.ts";
-import { Config } from "../src/config.ts";
+import { Config, MemoryGateStore, updateGateState } from "../src/config.ts";
 import { Ads } from "../src/ads.ts";
 import { Platform, SDK_VERSION } from "../src/index.ts";
 
@@ -76,6 +76,56 @@ describe("Transport", () => {
     await newTransport(f.impl).request({ method: "GET", path: "/v1/test" });
 
     assert.equal(f.calls[0]!.headers["X-Seori-App"], "lizard-tycoon");
+  });
+
+  it("SDK 버전은 앱 설정 없이도 붙는다", async () => {
+    const f = fakeFetch([ok({})]);
+    await newTransport(f.impl).request({ method: "GET", path: "/v1/test" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-Sdk"], `ts/${SDK_VERSION}`);
+  });
+
+  it("실행 환경을 관측 헤더로 붙인다", async () => {
+    const f = fakeFetch([ok({})]);
+    const transport = new Transport({
+      baseUrl: "https://platform.test",
+      appId: "lizard-tycoon",
+      fetchImpl: f.impl,
+      clientContext: () => ({ appVersion: " 1.2.4 ", runtime: "ait-rn" }),
+    });
+    await transport.request({ method: "GET", path: "/v1/test" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], "1.2.4");
+    assert.equal(f.calls[0]!.headers["X-Seori-Runtime"], "ait-rn");
+  });
+
+  for (const [label, appVersion] of [
+    ["상한 초과", "9".repeat(33)],
+    ["개행 주입", "1.2.4\r\nX-Seori-App: other"],
+    ["공백 섞임", "1.2.4 dirty"],
+  ] as const) {
+    it(`형식을 어긴 관측 값(${label})은 잘라 보내지 않고 뺀다`, async () => {
+      // 잘라 보내면 관측에 없는 버전 문자열이 만들어지고, 개행은 요청을 깨뜨린다.
+      const f = fakeFetch([ok({})]);
+      const transport = new Transport({
+        baseUrl: "https://platform.test",
+        appId: "lizard-tycoon",
+        fetchImpl: f.impl,
+        clientContext: () => ({ appVersion, runtime: "web" }),
+      });
+      await transport.request({ method: "GET", path: "/v1/test" });
+
+      assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], undefined);
+      assert.equal(f.calls[0]!.headers["X-Seori-Runtime"], "web");
+    });
+  }
+
+  it("실행 환경을 모르면 관측 헤더를 지어내지 않는다", async () => {
+    const f = fakeFetch([ok({})]);
+    await newTransport(f.impl).request({ method: "GET", path: "/v1/test" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], undefined);
+    assert.equal(f.calls[0]!.headers["X-Seori-Runtime"], undefined);
   });
 
   it("App Check 공급자의 최신 토큰을 붙인다", async () => {
@@ -216,6 +266,7 @@ describe("SessionManager", () => {
     platformToken: "pt-1",
     refreshToken: "rt-1",
     platformUserId: "pu_01J",
+    supportCode: "TEST-00000000",
     appUserId: "uid-1",
     isAnonymous: false,
     expiresIn: 3600,
@@ -299,6 +350,27 @@ describe("SessionManager", () => {
     assert.equal(await sm.token(), "pt-3");
     // 마지막 호출은 재로그인이다
     assert.equal(f.calls[2]!.url, "https://platform.test/v1/auth/session");
+  });
+
+  it("연결 세션은 refresh 실패 때 이전 guest로 자동 강등하지 않는다", async () => {
+    let now = 1_000_000;
+    const f = fakeFetch([ok(sessionBody), fail(401, "auth_invalid")]);
+    const sm = new SessionManager(newTransport(f.impl), new MemorySessionStore(), () => now);
+    await sm.signIn({ kind: "firebase-id-token", value: "guest-id-token" });
+    await sm.adopt({
+      ...sessionBody,
+      platformToken: "linked-token",
+      refreshToken: "linked-refresh",
+      isLinkedAccount: true,
+    });
+    now += 3600 * 1000;
+
+    await assert.rejects(() => sm.token(), (err: unknown) => {
+      assert.ok(err instanceof PlatformError);
+      assert.equal(err.code, "auth_invalid");
+      return true;
+    });
+    assert.equal(f.count, 2, "이전 guest credential 재로그인을 시도했다");
   });
 
   it("세션이 없으면 auth_required를 던진다", async () => {
@@ -448,6 +520,7 @@ describe("Platform routing", () => {
         platform: "ait",
         appVersion: "1.2.3",
         locale: "ko-KR",
+        analyticsConsent: true,
       },
     });
 
@@ -461,7 +534,7 @@ describe("Platform routing", () => {
     assert.equal(f.calls[1]!.url, "https://ingest.platform.test/v1/events");
     const body = f.calls[1]!.body as {
       events: Array<{ name: string; sessionId: string }>;
-      context: Record<string, string>;
+      context: Record<string, unknown>;
     };
     assert.deepEqual(body.events.map((event) => event.name), ["seori_session_start", "game_start"]);
     assert.equal(new Set(body.events.map((event) => event.sessionId)).size, 1);
@@ -469,8 +542,31 @@ describe("Platform routing", () => {
       platform: "ait",
       appVersion: "1.2.3",
       locale: "ko-KR",
+      analyticsConsent: true,
       sdkVersion: SDK_VERSION,
     });
+    // 앱이 이미 준 버전을 헤더에도 그대로 쓴다. 같은 사실을 두 번 설정하게 하지 않는다.
+    assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], "1.2.3");
+    assert.equal(f.calls[1]!.headers["X-Seori-AppVer"], "1.2.3");
+  });
+
+  it("clientContext를 주면 eventContext 대신 그 값을 헤더로 쓴다", async () => {
+    const f = fakeFetch([ok({ values: {}, features: {}, sdk: { status: "ok" }, maintenance: { active: false } })]);
+    const platform = new Platform({
+      baseUrl: "https://api.platform.test",
+      appId: "happy-farm",
+      fetchImpl: f.impl,
+      maxRetries: 0,
+      eventFlushIntervalMs: 0,
+      eventContext: { platform: "ait", appVersion: "1.2.3" },
+      // runtime은 eventContext에 없는 축이라 앱이 직접 알려 준다.
+      clientContext: () => ({ appVersion: "1.2.4", runtime: "ait-rn" }),
+    });
+
+    await platform.config.fetch({ appVersion: "1.2.4", platform: "android" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-AppVer"], "1.2.4");
+    assert.equal(f.calls[0]!.headers["X-Seori-Runtime"], "ait-rn");
   });
 
   it("IAP는 별도 호스트를 사용한다", async () => {
@@ -721,11 +817,176 @@ describe("Config", () => {
     const f = fakeFetch([ok({})]);
     const c = new Config({ transport: newTransport(f.impl), ttlMs: 60_000, now: () => 1_000 });
 
-    c.seed(configBody as never);
+    c.seedSession({ sdk: { status: "ok" }, maintenance: { active: false } });
     await c.fetch(target);
 
-    // seed가 캐시를 채웠으니 네트워크를 타지 않는다
+    // 세션이 캐시를 채웠으니 네트워크를 타지 않는다
     assert.equal(f.count, 0);
+  });
+
+  // 세션 오버레이에는 values가 없다. 통째로 덮으면 앞서 /v1/config로 받은
+  // 값이 사라진다.
+  it("세션 응답이 기존 values를 지우지 않는다", async () => {
+    const f = fakeFetch([ok(configBody)]);
+    const c = new Config({ transport: newTransport(f.impl), ttlMs: 60_000, now: () => 1_000 });
+
+    await c.fetch(target);
+    c.seedSession({ sdk: { status: "deprecated", recommendedVersion: "1.5.0" } });
+
+    const got = c.current();
+    assert.equal(got.values["max_energy"], 10);
+    assert.equal(got.features["new_shop"], true);
+    assert.equal(got.sdk.status, "deprecated");
+  });
+
+  // 설정을 싣지 못한 세션 응답이 캐시 수명을 갱신하면 진짜 조회가 TTL 동안
+  // 막힌다.
+  it("설정이 없는 세션 응답은 캐시를 건드리지 않는다", async () => {
+    const f = fakeFetch([ok(configBody)]);
+    const c = new Config({ transport: newTransport(f.impl), ttlMs: 60_000, now: () => 1_000 });
+
+    c.seedSession({});
+    await c.fetch(target);
+
+    assert.equal(f.count, 1);
+  });
+
+  // 세션 오버레이에는 values가 없는데 ETag는 전체 설정을 가리킨다.
+  // 그 ETag로 조건부 요청을 보내면 서버가 304를 주고 values를 영영 못 받는다.
+  it("전체 설정을 받기 전에는 세션 ETag를 조건부 요청에 쓰지 않는다", async () => {
+    const f = fakeFetch([ok(configBody), ok(configBody)]);
+    const c = new Config({ transport: newTransport(f.impl), ttlMs: 0, now: () => 1_000 });
+
+    c.seedSession({ sdk: { status: "ok" }, configEtag: 'W/"abc123"' });
+    await c.fetch(target);
+    assert.equal(f.calls[0]!.headers["If-None-Match"], undefined);
+
+    // 전체 응답을 받은 뒤에는 캐시가 완전하므로 써도 된다.
+    await c.fetch(target);
+    assert.equal(f.calls[1]!.headers["If-None-Match"], 'W/"abc123"');
+  });
+});
+
+describe("업데이트 게이트", () => {
+  const base = {
+    values: {},
+    features: {},
+    sdk: { status: "ok" as const },
+    maintenance: { active: false },
+  };
+
+  it("정상이면 아무것도 띄우지 않는다", () => {
+    assert.deepEqual(updateGateState(base), { kind: "ok" });
+  });
+
+  it("deprecated는 닫을 수 있는 권장 안내다", () => {
+    const state = updateGateState({
+      ...base,
+      sdk: {
+        status: "deprecated",
+        message: "새 버전이 나왔어요",
+        updateUrl: "https://play.google.com/store/apps/details?id=com.a.b",
+        recommendedVersion: "1.5.0",
+      },
+    });
+    assert.equal(state.kind, "recommended");
+    assert.equal(state.kind === "recommended" && state.recommendedVersion, "1.5.0");
+  });
+
+  it("blocked는 강제다", () => {
+    const state = updateGateState({ ...base, sdk: { status: "blocked" } });
+    assert.equal(state.kind, "required");
+    // 문구가 없으면 서버 상수 대신 SDK 기본 문구를 쓴다.
+    assert.match(state.kind === "required" ? state.message : "", /업데이트/);
+  });
+
+  // 점검은 시간이 정해져 있고 자동으로 해제되며 안내가 더 행동 가능하다.
+  it("점검이 강제보다 우선한다", () => {
+    const state = updateGateState({
+      ...base,
+      sdk: { status: "blocked" },
+      maintenance: { active: true, message: "점검 중", until: "2026-09-06T13:00:00Z" },
+    });
+    assert.equal(state.kind, "maintenance");
+  });
+
+  // 서버가 상태를 추가해도 구버전 SDK가 스스로를 막으면 안 된다.
+  it("모르는 status는 ok로 읽는다", () => {
+    const state = updateGateState({
+      ...base,
+      sdk: { status: "quarantined" as never },
+    });
+    assert.deepEqual(state, { kind: "ok" });
+  });
+
+  it("sdk 키가 아예 없어도 ok다", () => {
+    const state = updateGateState({ values: {}, features: {} } as never);
+    assert.deepEqual(state, { kind: "ok" });
+  });
+
+  it("권장은 하루 1회, 강제는 매번 띄운다", async () => {
+    let now = 1_000_000;
+    const f = fakeFetch([]);
+    const c = new Config({
+      transport: newTransport(f.impl),
+      now: () => now,
+      gateStore: new MemoryGateStore(),
+    });
+
+    const recommended = { kind: "recommended", message: "m", recommendedVersion: "1.5.0" } as const;
+    assert.equal(await c.shouldPrompt(recommended), true);
+    await c.markPrompted(recommended);
+    assert.equal(await c.shouldPrompt(recommended), false);
+
+    // 강제는 이력과 무관하다.
+    assert.equal(await c.shouldPrompt({ kind: "required", message: "m" }), true);
+
+    now += 24 * 60 * 60 * 1000;
+    assert.equal(await c.shouldPrompt(recommended), true);
+  });
+
+  // 기기 시계가 과거로 교정되면 경과가 음수가 된다. 그대로 두면 미래
+  // 시각에서 24시간이 더 지날 때까지 안내가 멈춘다.
+  it("시계가 역행하면 이력을 무시하고 다시 띄운다", async () => {
+    let now = 5_000_000_000;
+    const f = fakeFetch([]);
+    const c = new Config({
+      transport: newTransport(f.impl),
+      now: () => now,
+      gateStore: new MemoryGateStore(),
+    });
+
+    const state = { kind: "recommended", message: "m", recommendedVersion: "1.5.0" } as const;
+    await c.markPrompted(state);
+    now -= 60 * 60 * 1000;
+
+    assert.equal(await c.shouldPrompt(state), true);
+  });
+
+  // 한쪽만 공백을 다듬으면 같은 응답에 앱마다 다른 문구가 뜬다.
+  it("문구 앞뒤 공백을 다듬고 비면 기본 문구를 쓴다", () => {
+    const trimmed = updateGateState({
+      ...base,
+      sdk: { status: "deprecated", message: "  새 버전이 나왔어요  " },
+    });
+    assert.equal(trimmed.kind === "recommended" && trimmed.message, "새 버전이 나왔어요");
+
+    const blank = updateGateState({ ...base, sdk: { status: "blocked", message: "   " } });
+    assert.match(blank.kind === "required" ? blank.message : "", /스토어에서 최신 버전/);
+  });
+
+  // 권장 기준이 올라갔는데 하루를 기다리게 하면 새 안내가 늦는다.
+  it("권장 기준이 바뀌면 이력을 무시하고 다시 띄운다", async () => {
+    const f = fakeFetch([]);
+    const c = new Config({
+      transport: newTransport(f.impl),
+      now: () => 1_000_000,
+      gateStore: new MemoryGateStore(),
+    });
+
+    await c.markPrompted({ kind: "recommended", message: "m", recommendedVersion: "1.5.0" });
+    const next = { kind: "recommended", message: "m", recommendedVersion: "1.6.0" } as const;
+    assert.equal(await c.shouldPrompt(next), true);
   });
 });
 
@@ -822,6 +1083,51 @@ describe("Content와 Identity", () => {
     assert.equal(f.calls[1]!.headers["X-Firebase-AppCheck"], "attested-content");
   });
 
+  it("궁합 해설은 pairings:resolve 로 보내고 세션과 App Check를 붙인다", async () => {
+    const f = fakeFetch([
+      ok({
+        platformToken: "pt-content", refreshToken: "rt-content",
+        platformUserId: "pu-content", appUserId: "uid-content",
+        isAnonymous: false, expiresIn: 3600,
+      }),
+      ok({
+        schemaVersion: 1, contentVersion: `sha256-${"a".repeat(64)}`, pairKey: `pk_${"b".repeat(64)}`,
+        articles: [], locked: [{ deepKey: "gunghap", section: "gunghap" }],
+      }),
+    ]);
+    const platform = new Platform({
+      baseUrl: "https://platform.test", appId: "ungeul", fetchImpl: f.impl,
+      appCheckToken: async () => "attested-content",
+    });
+    await platform.signIn({ kind: "firebase-id-token", value: "firebase-id-token" });
+    const request = {
+      schemaVersion: 1 as const,
+      a: { kind: "full" as const, chart: { year: "丙午", month: "乙未", day: "丁巳", hour: "丙午" } },
+      b: { kind: "three_pillar" as const, chart: { year: "乙丑", month: "戊寅", day: "癸酉" } },
+      pair: {
+        ilgan: { aToB: "pyeonjae" as const, bToA: "pyeongwan" as const, hap: false },
+        ilji: { tags: ["samhap" as const], primary: "samhap" as const },
+        ohaeng: [
+          { name: "mok" as const, a: "보통" as const, b: "보통" as const, kind: "plain" as const },
+          { name: "hwa" as const, a: "과다" as const, b: "부족" as const, kind: "fill_a" as const },
+          { name: "to" as const, a: "보통" as const, b: "보통" as const, kind: "plain" as const },
+          { name: "geum" as const, a: "부족" as const, b: "보통" as const, kind: "plain" as const },
+          { name: "su" as const, a: "부족" as const, b: "보통" as const, kind: "plain" as const },
+        ],
+        close: { stem: "sanggeuk" as const, branch: "hap" as const },
+      },
+      unlock: { section: "gunghap" as const, kind: "ticket" as const },
+    };
+    const got = await platform.content.resolvePairing(request);
+
+    assert.equal(got.locked[0]?.deepKey, "gunghap");
+    assert.equal(f.calls[1]!.url, "https://platform.test/v1/content/pairings:resolve");
+    assert.equal(f.calls[1]!.method, "POST");
+    assert.deepEqual(f.calls[1]!.body, request);
+    assert.equal(f.calls[1]!.headers.Authorization, "Bearer pt-content");
+    assert.equal(f.calls[1]!.headers["X-Firebase-AppCheck"], "attested-content");
+  });
+
   it("Firebase custom token bridge는 기존 ID token을 선택적으로 보낸다", async () => {
     const f = fakeFetch([ok({ firebaseCustomToken: "custom", appUserId: "uid" })]);
     const platform = new Platform({
@@ -835,4 +1141,44 @@ describe("Content와 Identity", () => {
       appId: "ungeul", existingFirebaseIdToken: "existing-id-token",
     });
   });
+
+  for (const provider of ["kakao", "apple", "google"] as const) {
+    it(`${provider} 계정 연결은 현재 세션과 App Check를 쓰고 linked 세션으로 교체한다`, async () => {
+      const f = fakeFetch([
+        ok({
+          platformToken: "guest-token", refreshToken: "guest-refresh",
+          platformUserId: "pu-guest", supportCode: "UG-GUEST",
+          appUserId: "guest-uid", isAnonymous: true, isLinkedAccount: false, expiresIn: 3600,
+        }),
+        ok({ provider, nonce: "server-nonce", expiresAt: "2026-08-23T01:07:03Z" }),
+        ok({
+          firebaseCustomToken: "firebase-custom", provider, restored: true,
+          session: {
+            platformToken: "linked-token", refreshToken: "linked-refresh",
+            platformUserId: "pu-existing", supportCode: "UG-EXISTING",
+            appUserId: "existing-uid", isAnonymous: false, isLinkedAccount: true, expiresIn: 3600,
+          },
+        }),
+      ]);
+      const platform = new Platform({
+        baseUrl: "https://platform.test", appId: "ungeul", fetchImpl: f.impl,
+        appCheckToken: async () => "attested-content",
+      });
+      await platform.signIn({ kind: "firebase-id-token", value: "guest-id-token" });
+      const challenge = await platform.identity.beginAccountLink(provider);
+      const linked = await platform.identity.completeAccountLink(
+        provider, "provider-id-token", challenge.nonce,
+      );
+
+      assert.equal(f.calls[1]!.headers.Authorization, "Bearer guest-token");
+      assert.equal(f.calls[2]!.headers.Authorization, "Bearer guest-token");
+      assert.equal(f.calls[2]!.headers["X-Firebase-AppCheck"], "attested-content");
+      assert.deepEqual(f.calls[2]!.body, {
+        provider, idToken: "provider-id-token", nonce: "server-nonce",
+      });
+      assert.equal(linked.restored, true);
+      assert.equal(linked.session.isLinkedAccount, true);
+      assert.equal((await platform.session.current())?.platformToken, "linked-token");
+    });
+  }
 });

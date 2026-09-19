@@ -23,36 +23,32 @@
 #
 # ## 이미지 빌드
 #
-# 이미지는 Cloud Build에서 만들고 러너는 제출만 한다. ARC RPi 러너에서는
-# 무엇을 해도 30분 timeout에 걸렸다 — DIND 안에서 빌드하면 golang 이미지
-# pull 6분과 go mod download 9분, Docker를 걷어내고 러너에서 직접 빌드해도
-# 모듈 다운로드만 20분이었다. 병목은 컴파일이 아니라 그 러너의 네트워크다.
+# 이미지는 러너에서 직접 만든다. 예전에 Cloud Build로 위임했던 이유는
+# ARC RPi 러너의 네트워크였다 — golang 이미지 pull 6분, go mod download
+# 9분, Docker를 걷어내도 모듈 다운로드만 20분이라 30분 timeout에 잘렸다.
+# 병목은 컴파일이 아니라 그 러너였다.
 #
-# Cloud Build는 amd64 네이티브고 Artifact Registry와 같은 클라우드 안에
-# 있다. 러너는 gcloud만 쓰므로 Docker도 필요 없다.
+# GitHub-hosted로 옮기면서 그 제약이 사라졌다. ubuntu-latest는 amd64
+# 네이티브라 크로스컴파일이 필요 없고, buildx 레이어 캐시로 go mod
+# download를 재사용한다. Cloud Build를 거치면서 필요했던 우회 두 개
+# (소스 업로드용 quota project, 읽을 수 있는 로그 버킷 지정)도 함께
+# 없어진다.
 #
 # ## 러너
 #
-# ARC를 기본으로 쓴다. 이미지는 Cloud Build가 만들고 두 job 모두 gcloud만
-# 호출하므로 러너 성능이 배포 시간을 좌우하지 않는다. GitHub-hosted를 기본에
-# 두면 Actions 분량을 쓰는데, 이 저장소 몫은 이미 무료 한도를 넘겨 초과 과금
-# 구간이다.
+# GitHub-hosted를 쓴다. 저장소가 public이라 standard 러너는 과금 대상이
+# 아니고, 두 job 모두 gcloud만 호출하므로 러너 성능이 배포 시간을 좌우하지
+# 않는다.
 #
-# ARC가 죽었을 때만 dispatch의 runner 드롭다운에서 github를 고른다. 그 경우
-# 분량을 쓰므로 상시로 두지 않는다.
+# ARC를 쓰지 않는 이유는 가용성이다. ARC는 집에서 운영하는 RPI 클러스터에
+# 있어서 정전이나 ISP 장애가 곧 배포 불가가 된다. production 배포 경로가
+# 그 의존을 가질 이유가 없다.
 name: Deploy
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      runner:
-        description: "러너. ARC가 죽었을 때만 github를 고른다"
-        type: choice
-        required: false
-        default: arc
-        options: [arc, github]
 
 permissions:
   contents: read
@@ -72,7 +68,10 @@ env:
   API_RUNTIME_SA: platform-api@seorilabs-platform.iam.gserviceaccount.com
   INGEST_RUNTIME_SA: platform-ingest@seorilabs-platform.iam.gserviceaccount.com
   ADS_RUNTIME_SA: platform-ads@seorilabs-platform.iam.gserviceaccount.com
+  KAKAO_UNLINK_PLATFORM_APP_ID: ungeul
+  KAKAO_UNLINK_APP_ID: "1559177"
   BACKOFFICE_OPERATIONAL_EVENTS_URL: https://backoffice.vzyx.xyz/api/internal/platform/operational-events
+  PLATFORM_PRESENCE_EDGE_URL: https://edge.vzyx.xyz
   # 실거래만 배포한다. registry의 기존 원장 앱이 이 값과 다르면 배포를
   # 거부하므로, sandbox가 필요해지면 이 워크플로를 먼저 고쳐야 한다.
   IAP_ENVIRONMENT: production
@@ -81,33 +80,26 @@ jobs:
   build:
     name: Build and push image
     # 빌드는 Cloud Build에서 돌므로 러너에는 gcloud만 있으면 된다.
-    runs-on: ${{ github.event.inputs.runner == 'github' && 'ubuntu-latest' || 'seorilabs-rpi-arm64' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Resolve image reference
         id: meta
         run: echo "image=${REGISTRY}/${IMAGE_PATH}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.DEPLOYER_SA }}
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
-
-      # WIF는 external account 자격증명이라 gcloud가 어느 프로젝트로 쿼터를
-      # 청구할지 스스로 알지 못한다. 지정하지 않으면 Cloud Build 소스 업로드가
-      # "forbidden from accessing the bucket ... serviceusage.services.use"로
-      # 막힌다. platform-deployer에는 serviceusage.serviceUsageConsumer가 있다.
-      - name: Set quota project
-        run: gcloud config set billing/quota_project "$PROJECT_ID"
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       # 같은 commit을 다시 배포할 때 빌드를 반복하지 않는다. 재배포가
       # 곧바로 배포 단계로 들어간다.
@@ -121,21 +113,37 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 로그를 우리 버킷에 쓴다. 기본 로그 버킷은 Google이 관리해서 읽으려면
-      # 프로젝트 Viewer/Owner가 필요하고, platform-deployer에는 그 권한이 없다.
-      # 빌드가 SUCCESS여도 gcloud가 스트리밍에 실패해 exit 1로 끝나 배포가
-      # 통째로 건너뛰어졌다. 스테이징 버킷은 이미 deployer가 쓰고 있다.
-      - name: Build and push on Cloud Build
+      # Artifact Registry에 push하려면 docker가 gcloud 자격증명을 쓰도록
+      # 등록해야 한다. auth 액션이 만든 external account 자격증명을 그대로
+      # 재사용한다.
+      - name: Configure Docker for Artifact Registry
         if: steps.exists.outputs.found == 'false'
-        run: |
-          gcloud builds submit server \
-            --project="$PROJECT_ID" \
-            --tag="${{ steps.meta.outputs.image }}" \
-            --gcs-log-dir="gs://${PROJECT_ID}_cloudbuild/logs" \
-            --quiet
+        run: gcloud auth configure-docker "$REGISTRY" --quiet
 
-      # Cloud Build가 성공했다고 태그가 우리가 기대한 자리에 생겼다는 보장은
-      # 없다. 배포가 없는 이미지를 가리키기 전에 여기서 끊는다.
+      - name: Set up Buildx
+        if: steps.exists.outputs.found == 'false'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      # GitHub Actions cache의 mode=max는 실행마다 BuildKit blob을 누적해 조직
+      # 저장공간을 소진한다. 최종 이미지의 inline cache만 하나의 mutable
+      # buildcache tag로 보관해 같은 레지스트리 안에서 재사용한다.
+      # Cloud Run은 amd64 전용이고 러너도 amd64라 크로스컴파일이 없다.
+      - name: Build and push image
+        if: steps.exists.outputs.found == 'false'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: server
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PATH }}:buildcache
+          provenance: false
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PATH }}:buildcache
+          cache-to: type=inline
+
+      # push가 성공했다고 태그가 우리가 기대한 자리에 생겼다는 보장은 없다.
+      # 배포가 없는 이미지를 가리키기 전에 여기서 끊는다.
       - name: Assert image exists
         if: steps.exists.outputs.found == 'false'
         run: |
@@ -146,13 +154,14 @@ jobs:
     name: Deploy production runtime
     needs: build
     # gcloud만 쓰므로 Docker가 필요 없다.
-    runs-on: ${{ github.event.inputs.runner == 'github' && 'ubuntu-latest' || 'seorilabs-rpi-arm64' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 보호 규칙은 못 걸지만 배포 이력이 environment에 남는다.
+    # public 전환으로 environment 보호 규칙을 쓸 수 있게 됐다. required
+    # reviewer가 걸려 있으면 main 머지가 곧바로 배포되지 않고 여기서 멈춘다.
     environment: production
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # 신규 앱은 registry의 앱별 환경을 사용한다. 전역 환경은 기존 경로를
       # 유지하는 legacy 앱에만 적용되므로 그 앱만 production 고정값과 대조한다.
@@ -188,13 +197,13 @@ jobs:
           }
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.DEPLOYER_SA }}
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       # 서비스 이미지와 IAP 원장 환경을 함께 고정한다. 환경을 명시하지 않으면
       # 이전에 손으로 넣은 값이 다음 배포에도 남아 registry와 런타임이
@@ -205,22 +214,23 @@ jobs:
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --service-account="$API_RUNTIME_SA" \
-            --update-env-vars="BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
-            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
+            --update-env-vars="BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL},KAKAO_UNLINK_PLATFORM_APP_ID=${KAKAO_UNLINK_PLATFORM_APP_ID},KAKAO_UNLINK_APP_ID=${KAKAO_UNLINK_APP_ID}" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest,KAKAO_UNLINK_ADMIN_KEY=ungeul-kakao-admin-key:latest" \
             --quiet
 
           gcloud run deploy platform-ingest \
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --service-account="$INGEST_RUNTIME_SA" \
-            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest" \
+            --update-env-vars="PLATFORM_PRESENCE_EDGE_URL=${PLATFORM_PRESENCE_EDGE_URL}" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,PLATFORM_PRESENCE_PRIVATE_KEY=platform-presence-private-key:latest,GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=ga4-measurement-protocol-secrets:latest" \
             --quiet
 
           gcloud run deploy platform-iap \
             --project="$PROJECT_ID" --region="$REGION" \
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
-            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,IAP_TOSS_CLIENT_CERT_UNGEUL=ait-client-cert-ungeul:latest,IAP_TOSS_CLIENT_KEY_UNGEUL=ait-client-key-ungeul:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
           gcloud run deploy platform-admin \
@@ -250,7 +260,7 @@ jobs:
             --image="${{ needs.build.outputs.image }}" \
             --update-env-vars="IAP_LEDGER_ENVIRONMENT=${IAP_ENVIRONMENT},APPLE_APP_STORE_ENVIRONMENT=${IAP_ENVIRONMENT},BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}" \
             --remove-secrets="PLATFORM_SESSION_SECRET" \
-            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
+            --update-secrets="IAP_CATALOG_JSON=iap-catalog:latest,IAP_REFUND_REVIEW_ENCRYPTION_KEYS=iap-refund-review-encryption-keys:latest,IAP_TOSS_CLIENT_CERT=ait-client-cert:latest,IAP_TOSS_CLIENT_KEY=ait-client-key:latest,IAP_TOSS_CLIENT_CERT_UNGEUL=ait-client-cert-ungeul:latest,IAP_TOSS_CLIENT_KEY_UNGEUL=ait-client-key-ungeul:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest" \
             --quiet
 
       # 배포가 전부 성공했다고 같은 태그가 됐다는 보장은 없다.
@@ -309,6 +319,137 @@ jobs:
           [ -z "$actual" ] || fail=1
 
           [ "$fail" -eq 0 ] || { echo "세션 secret role 경계가 올바르지 않다." >&2; exit 1; }
+
+      # Measurement Protocol api_secret은 GA4로 fan-out하는 ingest role에만 둔다.
+      # registry에는 공개 measurement ID만 있고, 앱 산출물에는 secret을 넣지 않는다.
+      - name: Assert GA4 secret boundary
+        run: |
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r '[.spec.template.spec.containers[0].env[]?
+                | select(.name == "GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON")
+                | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          fail=0
+          actual=$(service_secret platform-ingest)
+          printf '%-18s GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=%s\n' platform-ingest "${actual:-<absent>}"
+          [ "$actual" = "ga4-measurement-protocol-secrets" ] || fail=1
+
+          for target in platform-api platform-iap platform-admin platform-ads; do
+            actual=$(service_secret "$target")
+            printf '%-18s GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=%s\n' "$target" "${actual:-<absent>}"
+            [ -z "$actual" ] || fail=1
+          done
+
+          actual=$(gcloud run jobs describe platform-worker \
+            --project="$PROJECT_ID" --region="$REGION" --format=json \
+            | jq -r '[.spec.template.spec.template.spec.containers[0].env[]?
+              | select(.name == "GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON")
+              | .valueFrom.secretKeyRef.name] | first // ""')
+          printf '%-18s GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON=%s\n' platform-worker "${actual:-<absent>}"
+          [ -z "$actual" ] || fail=1
+
+          [ "$fail" -eq 0 ] || { echo "GA4 secret role 경계가 올바르지 않다." >&2; exit 1; }
+
+      # 카카오 Admin Key는 운글 연결 해제 callback을 검증하는 API role에만 둔다.
+      # 값은 읽지 않고 앱 ID와 Secret Manager 참조 이름만 확인한다.
+      - name: Assert Kakao unlink secret boundary
+        run: |
+          service_env() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .value] | first // ""'
+          }
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+          job_env() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .value] | first // ""'
+          }
+          job_secret() {
+            gcloud run jobs describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          fail=0
+          actual_platform_app=$(service_env platform-api KAKAO_UNLINK_PLATFORM_APP_ID)
+          actual_kakao_app=$(service_env platform-api KAKAO_UNLINK_APP_ID)
+          actual_secret=$(service_secret platform-api KAKAO_UNLINK_ADMIN_KEY)
+          printf '%-18s platform_app=%s kakao_app=%s secret=%s\n' \
+            platform-api "$actual_platform_app" "$actual_kakao_app" "$actual_secret"
+          [ "$actual_platform_app" = "$KAKAO_UNLINK_PLATFORM_APP_ID" ] || fail=1
+          [ "$actual_kakao_app" = "$KAKAO_UNLINK_APP_ID" ] || fail=1
+          [ "$actual_secret" = "ungeul-kakao-admin-key" ] || fail=1
+
+          for target in platform-iap platform-ingest platform-admin platform-ads; do
+            actual_platform_app=$(service_env "$target" KAKAO_UNLINK_PLATFORM_APP_ID)
+            actual_kakao_app=$(service_env "$target" KAKAO_UNLINK_APP_ID)
+            actual_secret=$(service_secret "$target" KAKAO_UNLINK_ADMIN_KEY)
+            printf '%-18s platform_app=%s kakao_app=%s secret=%s\n' \
+              "$target" "${actual_platform_app:-<absent>}" \
+              "${actual_kakao_app:-<absent>}" "${actual_secret:-<absent>}"
+            [ -z "$actual_platform_app" ] || fail=1
+            [ -z "$actual_kakao_app" ] || fail=1
+            [ -z "$actual_secret" ] || fail=1
+          done
+
+          actual_platform_app=$(job_env platform-worker KAKAO_UNLINK_PLATFORM_APP_ID)
+          actual_kakao_app=$(job_env platform-worker KAKAO_UNLINK_APP_ID)
+          actual_secret=$(job_secret platform-worker KAKAO_UNLINK_ADMIN_KEY)
+          printf '%-18s platform_app=%s kakao_app=%s secret=%s\n' \
+            platform-worker "${actual_platform_app:-<absent>}" \
+            "${actual_kakao_app:-<absent>}" "${actual_secret:-<absent>}"
+          [ -z "$actual_platform_app" ] || fail=1
+          [ -z "$actual_kakao_app" ] || fail=1
+          [ -z "$actual_secret" ] || fail=1
+
+          [ "$fail" -eq 0 ] || { echo "Kakao unlink secret role 경계가 올바르지 않다." >&2; exit 1; }
+
+      # Presence token 서명키는 익명 이벤트 세션을 Edge token으로 바꾸는
+      # ingest role에만 둔다. URL과 키 중 하나만 있으면 프로세스가 시작을
+      # 거부하므로 같은 revision에서 함께 readback한다.
+      - name: Assert Presence secret boundary
+        run: |
+          service_env() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .value] | first // ""'
+          }
+          service_secret() {
+            gcloud run services describe "$1" \
+              --project="$PROJECT_ID" --region="$REGION" --format=json \
+              | jq -r --arg name "$2" '[.spec.template.spec.containers[0].env[]?
+                | select(.name == $name) | .valueFrom.secretKeyRef.name] | first // ""'
+          }
+
+          fail=0
+          actual_url=$(service_env platform-ingest PLATFORM_PRESENCE_EDGE_URL)
+          actual_secret=$(service_secret platform-ingest PLATFORM_PRESENCE_PRIVATE_KEY)
+          printf '%-18s presence_url=%s secret=%s\n' platform-ingest "$actual_url" "$actual_secret"
+          [ "$actual_url" = "$PLATFORM_PRESENCE_EDGE_URL" ] || fail=1
+          [ "$actual_secret" = "platform-presence-private-key" ] || fail=1
+
+          for target in platform-api platform-iap platform-admin platform-ads; do
+            actual_url=$(service_env "$target" PLATFORM_PRESENCE_EDGE_URL)
+            actual_secret=$(service_secret "$target" PLATFORM_PRESENCE_PRIVATE_KEY)
+            printf '%-18s presence_url=%s secret=%s\n' "$target" "${actual_url:-<absent>}" "${actual_secret:-<absent>}"
+            [ -z "$actual_url" ] || fail=1
+            [ -z "$actual_secret" ] || fail=1
+          done
+
+          [ "$fail" -eq 0 ] || { echo "Presence URL/secret role 경계가 올바르지 않다." >&2; exit 1; }
 
       # 조직 DRS는 allUsers IAM binding을 막는다. 공개 callback 서비스는
       # Cloud Run invoker IAM 검사 자체를 끄고 애플리케이션 검증을 사용한다.
@@ -453,7 +594,9 @@ jobs:
           }
 
           fail=0
-          for pair in IAP_TOSS_CLIENT_CERT:ait-client-cert IAP_TOSS_CLIENT_KEY:ait-client-key; do
+          for pair in IAP_TOSS_CLIENT_CERT:ait-client-cert IAP_TOSS_CLIENT_KEY:ait-client-key \
+                      IAP_TOSS_CLIENT_CERT_UNGEUL:ait-client-cert-ungeul \
+                      IAP_TOSS_CLIENT_KEY_UNGEUL:ait-client-key-ungeul; do
             env_name=${pair%%:*}
             expected=${pair#*:}
             actual=$(service_secret platform-iap "$env_name")

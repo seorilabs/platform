@@ -7,12 +7,52 @@
   "features": {
     "config": false,
     "events": false,
-    "iap": false,
-    "ads": false,
+    "iap": true,
+    "ads": true,
     "content": true,
     "firebase_custom_token_bridge": true
   },
+  "ads": {
+    "providers": [
+      "admob",
+      "apps_in_toss"
+    ],
+    "placements": [
+      {
+        "id": "deep_flow",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-2444587584524186/8793041426",
+            "ios_ad_unit_id": "ca-app-pub-2444587584524186/2557921082",
+            "reward_item": "deep_flow",
+            "reward_amount": 1
+          },
+          "apps_in_toss": {
+            "ad_group_id": "ait.v2.live.44b40e237fed4252"
+          }
+        },
+        "reward": {
+          "key": "deep_flow",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 10,
+        "cooldown_seconds": 30
+      }
+    ]
+  },
   "require_app_check": true,
+  "auth": {
+    "account_providers": {
+      "kakao": {
+        "audience": "4d309d86b98ea5db999bd1603b8c6c29"
+      },
+      "apple": {
+        "audience": "com.seorilabs.ungeul"
+      }
+    }
+  },
   "ga4": {
     "event_prefix": ""
   },
@@ -20,12 +60,62 @@
     "bucket": "seorilabs-ungeul-content",
     "prefix": "ungeul",
     "reading_daily_limit": 10,
-    "term_daily_limit": 100
+    "term_daily_limit": 100,
+    "reward_key": "deep_flow",
+    "ticket_entitlement_id": "deep_reading_ticket",
+    "ticket_units_per_purchase": 5,
+    "pairing_enabled": true
   },
-  "platform_event_allowlist": [],
+  "iap": {
+    "ledger_environment": "production",
+    "markets": [
+      "google_play",
+      "app_store",
+      "apps_in_toss"
+    ],
+    "google_play_package_name": "com.seorilabs.ungeul",
+    "app_store_bundle_id": "com.seorilabs.ungeul",
+    "entitlement_ids": [
+      "deep_reading_ticket"
+    ],
+    "require_linked_account": true
+  },
+  "platform_event_allowlist": [
+    "home_viewed",
+    "input_step_viewed",
+    "reading_started",
+    "reading_input_blocked",
+    "time_choice_shown",
+    "time_choice_completed",
+    "reading_generated",
+    "reading_section_viewed",
+    "term_help_opened",
+    "term_label_rendered",
+    "feedback_prompt_shown",
+    "feedback_prompt_responded",
+    "feedback_prompt_dismissed",
+    "deep_gate_shown",
+    "deep_means_selected",
+    "deep_ticket_used",
+    "reward_ad_requested",
+    "reward_ad_shown",
+    "reward_ad_granted",
+    "reward_ad_declined",
+    "reward_ad_closed",
+    "identity_share_requested",
+    "identity_share_outcome",
+    "home_tile_tapped",
+    "pairing_picker_viewed",
+    "pairing_started",
+    "pairing_generated",
+    "pairing_section_viewed"
+  ],
   "cors_origins": [
     "https://localhost",
-    "capacitor://localhost"
-  ],
-  "blocked_uids": []
+    "capacitor://localhost",
+    "https://ungeul.apps.tossmini.com",
+    "https://ungeul.private-apps.tossmini.com",
+    "https://ungeul.web.tossmini.com",
+    "https://ungeul.private-web.tossmini.com"
+  ]
 }

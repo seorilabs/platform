@@ -26,7 +26,8 @@
   ],
   "cors_origins": [
     "https://lucid-chess.apps.tossmini.com",
-    "https://lucid-chess.private-apps.tossmini.com"
-  ],
-  "blocked_uids": []
+    "https://lucid-chess.private-apps.tossmini.com",
+    "https://lucid-chess.web.tossmini.com",
+    "https://lucid-chess.private-web.tossmini.com"
+  ]
 }

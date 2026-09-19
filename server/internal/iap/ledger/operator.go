@@ -841,15 +841,17 @@ const (
 // providerOrderId, canonicalId와 마켓 계정 해시는 읽지 않는다. 운영자가 볼
 // 이유가 없고 응답 객체에 실리면 서버 컴포넌트 payload와 로그로 퍼진다.
 type OrderSummary struct {
-	OrderKey       string    `json:"orderKey"`
-	PlatformUserID string    `json:"platformUserId"`
-	EntitlementID  string    `json:"entitlementId"`
-	Platform       string    `json:"platform"`
-	ProductID      string    `json:"productId"`
-	State          string    `json:"state"`
-	PurchasedAt    time.Time `json:"purchasedAt"`
-	ObservedAt     time.Time `json:"observedAt"`
-	Tombstone      bool      `json:"tombstone"`
+	OrderKey               string    `json:"orderKey"`
+	PlatformUserID         string    `json:"platformUserId"`
+	EntitlementID          string    `json:"entitlementId"`
+	Platform               string    `json:"platform"`
+	ProductID              string    `json:"productId"`
+	State                  string    `json:"state"`
+	PurchasedAt            time.Time `json:"purchasedAt"`
+	ObservedAt             time.Time `json:"observedAt"`
+	Tombstone              bool      `json:"tombstone"`
+	IsTestPurchase         *bool     `json:"isTestPurchase"`
+	ProviderOrderIDPresent bool      `json:"providerOrderIdPresent"`
 }
 
 // ListRecentOrders는 최근 주문을 읽는다.
@@ -889,17 +891,24 @@ func (l *Ledger) ListRecentOrders(ctx context.Context, limit int) ([]OrderSummar
 				"주문 원장을 읽지 못했어요")
 		}
 
-		out = append(out, OrderSummary{
-			OrderKey:       snap.Ref.ID,
-			PlatformUserID: doc.PlatformUserID,
-			EntitlementID:  doc.EntitlementID,
-			Platform:       string(doc.Platform),
-			ProductID:      doc.ProductID,
-			State:          string(doc.State),
-			PurchasedAt:    doc.PurchasedAt,
-			ObservedAt:     doc.ObservedAt,
-			Tombstone:      doc.Tombstone,
-		})
+		out = append(out, summarizeOrder(snap.Ref.ID, doc))
+	}
+}
+
+// summarizeOrder는 원문 마켓 식별자를 공개 DTO로 복사하지 않는다.
+func summarizeOrder(orderKey string, doc orderDoc) OrderSummary {
+	return OrderSummary{
+		OrderKey:               orderKey,
+		PlatformUserID:         doc.PlatformUserID,
+		EntitlementID:          doc.EntitlementID,
+		Platform:               string(doc.Platform),
+		ProductID:              doc.ProductID,
+		State:                  string(doc.State),
+		PurchasedAt:            doc.PurchasedAt,
+		ObservedAt:             doc.ObservedAt,
+		Tombstone:              doc.Tombstone,
+		IsTestPurchase:         doc.IsTestPurchase,
+		ProviderOrderIDPresent: doc.Platform.IsMarket() && doc.ProviderOrderID != "",
 	}
 }
 

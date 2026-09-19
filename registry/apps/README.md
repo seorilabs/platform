@@ -12,6 +12,17 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
 
 **파일을 고치는 것만으로는 아무 일도 일어나지 않는다.** 실제로 이 함정을 밟았다 — `features.iap`가 `false`인 채 배포되어 결제는 되는데 백오피스 IAP 관리만 403이었다. 검증 경로가 admin에만 있어 증상이 한쪽에서만 났다.
 
+```mermaid
+flowchart LR
+  A["registry/apps/app-id.json<br/>PR"] --> B["CI — regsync --dry-run<br/>스키마 검증 · 미지 키 거부"]
+  B --> C["main 병합"]
+  C --> D["메인테이너가 regsync 실행"]
+  D --> E[("Firestore apps/app-id")]
+  E --> F["런타임 캐시<br/>TTL 60초"]
+  F --> G["SDK 호출 허용"]
+  C -.->|regsync 누락| H["파일만 바뀌고 런타임은 옛 값<br/>app_unknown 계속"]
+```
+
 ## 형식
 
 ```jsonc
@@ -22,9 +33,18 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   "firebase_project_id": "lizard-tycoon",
   "firebase_custom_token_service_account": "platform-auth@lizard-tycoon.iam.gserviceaccount.com",
   "status": "active",                    // active | paused
-  "features": { "iap": true, "ads": false, "events": true, "config": true },
-  "require_app_check": false,
-  "ga4": { "event_prefix": "" },
+  "features": {
+    "iap": true, "ads": false, "events": true, "config": true,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": true,
+  "auth": {
+    "account_providers": {
+      "kakao": { "audience": "0123456789abcdef0123456789abcdef" },
+      "apple": { "audience": "com.seorilabs.lizardtycoon" }
+    }
+  },
+  "ga4": { "event_prefix": "", "measurement_id": "G-XXXXXXXXXX" },
   "platform_event_allowlist": ["purchase_verified", "..."],
   "iap": {
     "ledger_environment": "production",  // sandbox | production
@@ -32,7 +52,8 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
     "markets": ["google_play", "app_store", "apps_in_toss"],
     "google_play_package_name": "com.seorilabs.lizardtycoon",
     "app_store_bundle_id": "com.seorilabs.lizardtycoon",
-    "entitlement_ids": ["sp_galaxy_gecko"]
+    "entitlement_ids": ["sp_galaxy_gecko"],
+    "require_linked_account": true
   },
   "cors_origins": [
     "http://localhost:5173",
@@ -41,6 +62,10 @@ go run ./cmd/regsync --dir=../registry/apps --project=seorilabs-platform
   ]
 }
 ```
+
+`ga4.measurement_id`는 Platform ingest가 허용 이벤트를 GA4 Measurement Protocol로 중계하는
+앱에만 둔다. 공개 stream 식별자만 registry에 저장하며 `api_secret`은
+`GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON` Secret Manager 값으로 ingest role에만 주입한다.
 
 `cors_origins`는 경로가 없는 정확한 `http` 또는 `https` origin만 허용한다.
 AppsInToss WebView 앱은 실제 서비스와 콘솔 QR 테스트 origin을 각각 등록한다.
@@ -54,6 +79,16 @@ AppsInToss WebView 앱은 실제 서비스와 콘솔 QR 테스트 origin을 각�
 `require_app_check`는 custom-token과 Firebase 계정 매핑 삭제 경계에서
 `X-Firebase-AppCheck` 검증을 강제한다. 새 클라이언트 후보의 attestation을 실기기에서
 확인하고 registry sync할 때만 true로 전환한다.
+
+`auth.account_providers`는 카카오·Apple OIDC ID token의 공개 audience allowlist다.
+secret이나 authorization token을 넣지 않는다. **카카오 audience는 앱 ID가 아니라 앱 키다** —
+ID token의 `aud`는 "SDK 초기화 시 사용된 앱 키"이므로 네이티브 SDK를 쓰는 앱은 네이티브 앱 키를
+넣는다. Apple은 bundle ID다. 계정 연결은 App Check와 Firebase custom-token
+bridge를 함께 요구한다. `iap.require_linked_account=true`이면 구매, entitlement 복원,
+account reference 발급이 모두 연결 세션에서만 가능하며 활성 IAP와 account provider가 필수다.
+AppsInToss는 mTLS Toss Login 세션을 연결 계정으로 보므로 이 provider 목록을 사용하지 않는다.
+실제 provider 콘솔 등록, Apple token 철회, 앱 SDK와 실기기 복원 검증 전에 값을 등록하거나
+sync하지 않는다.
 
 `features.iap`가 `true`이면 `iap.entitlement_ids`는 비어 있을 수 없다.
 `IAP_CATALOG_JSON`은 `(appId, market, productId)`를 entitlement에 연결하는
@@ -70,6 +105,42 @@ AppsInToss WebView 앱은 실제 서비스와 콘솔 QR 테스트 origin을 각�
 AppsInToss ad group, reward 범위, 일일 한도, cooldown은 이 파일만 원장으로
 사용하고 운영툴에서는 읽기만 한다. `regsync`는 각 문서에
 `registry_synced_at`을 기록해 운영툴이 실제 런타임 반영 시각을 표시하게 한다.
+
+## AdMob unit을 교체할 때
+
+**이미 공개된 앱의 unit을 그냥 바꾸면 구버전 사용자 전체의 보상이 끊긴다.**
+
+`ConfirmAdMob`이 대조하는 `ad_unit`은 SSV 콜백이 싣고 오는 값, 즉 **설치된
+바이너리에 박힌 unit**이다. 서버가 바꿀 수 없고 클라이언트 업데이트는 사용자
+속도로 퍼진다. 그래서 registry만 새 unit으로 넘기면 구버전은 광고를 끝까지
+재생하고 확정 단계에서만 `ad_unit_mismatch`로 거부된다. 빌드·업로드·크래시 어디에도
+드러나지 않고 보상만 사라진다.
+
+전환 기간에는 `retired_android_ad_unit_ids`와 `retired_ios_ad_unit_ids`에 옛 unit을
+남긴다. `ConfirmAdMob`은 현재 unit과 이 목록을 함께 수용한다.
+
+```jsonc
+"admob": {
+  "android_ad_unit_id": "ca-app-pub-9932778305312246/5497048802",
+  "ios_ad_unit_id": "ca-app-pub-9932778305312246/7057542480",
+  "retired_android_ad_unit_ids": ["ca-app-pub-2444587584524186/1396162476"],
+  "retired_ios_ad_unit_ids": ["ca-app-pub-2444587584524186/4203846143"]
+}
+```
+
+순서를 지킨다. **서버 배포가 `regsync`보다 먼저다.** 은퇴 unit을 모르는 서버에
+새 registry가 올라가면 그 사이에 정확히 막으려던 사고가 난다. main 병합이 곧
+배포이므로 배포 완료를 확인한 뒤 `regsync`를 돌린다.
+
+1. 은퇴 unit을 포함한 registry 변경을 병합하고 **배포 완료를 확인한다**
+2. `regsync`로 Firestore에 반영한다
+3. 새 unit을 싣는 클라이언트를 출시한다
+4. 구버전 소진을 확인한 뒤 은퇴 목록을 지우고 다시 `regsync`한다
+
+목록은 임시 값이다. 플랫폼·지면당 4개가 상한이고, 넘으면 4단계 정리가 밀렸다는
+뜻이다. 현재 unit이 없는 플랫폼에는 둘 수 없고, 현재 unit이나 다른 항목과 suffix가
+겹치면 검증이 막는다. 앱 사이 중복 금지는 현재 unit과 똑같이 적용된다 — 은퇴
+unit으로도 실제 콜백이 들어오기 때문이다.
 
 활성 IAP 앱의 `markets`에 `google_play`가 있으면
 `iap.google_play_package_name`이 필수이며 앱 사이에 중복될 수 없다. Google Play
@@ -92,18 +163,29 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 
 | app_id | Auth bridge | 원장 환경 | Events | IAP | Ads | entitlements |
 |---|---|---|---|---|---|---|
+| `alley-market-match` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
 | `babycare` | 활성 | 미사용 | 핵심 퍼널·광고 | 비활성 | 비활성 | — |
 | `crossword-puzzle` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `cycle-pair` | 활성 | production | 비활성 | 비활성 | 비활성 | — |
 | `foam-party` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `happy-farm` | 비활성 | production | 활성 | 활성 | 활성 | `ad_free` |
-| `jomul` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `jomul` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
 | `lizard-tycoon` | 비활성 | production | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
 | `lucid-chess` | 활성 | 미사용 | 핵심 퍼널·전면 광고 | 비활성 | 비활성 | — |
 | `lucid-reversi` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `lord-ledger` | 활성 | 미사용 | 핵심 게임·군량 보상 | 비활성 | 활성 | — |
 | `match-picture-app` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `slotmachine-game` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
 | `spiritgate-defenders` | 활성 | 미사용 | 활성 | 비활성 | 활성 | — |
+| `ungeul` | 활성 | production | 비활성 | 활성 | 활성 | `deep_reading_ticket` |
+
+## 광고 요청 간격
+
+광고 placement의 `request_cooldown_seconds`는 새 claim 요청 사이의 최소 간격이다.
+생략·0은 추가 요청 간격 제한 없음이며 기존 `cooldown_seconds`의 지급 간격과 구분한다.
+범위는 0~86,400초다. 서버 사용자·placement별로 UTC 자정을 넘어 적용하며, 동일
+request ID 재시도와 미지급 광고는 일일 보상 횟수를 추가 차감하지 않는다.
+`lord-ledger/city_supply`는 요청 간격 30초, 지급 일일 한도 3회다.
 
 ## ledger_environment가 서비스와 다르면
 

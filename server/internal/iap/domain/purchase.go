@@ -5,7 +5,7 @@
 //
 // 인터페이스는 여기 두지 않는다. 호출하는 쪽(iap/verify)에 정의한다.
 // Go 관용구이면서 원본 domain.ts와 값 타입 대조도 가능하게 한 절충이다.
-// docs/03-architecture/server-layout.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/server-layout.md 참고.
 package domain
 
 import (
@@ -46,6 +46,36 @@ const (
 	StateInvalid State = "invalid"
 )
 
+// ProductType은 서버 카탈로그가 결정하는 상품 유형이다.
+//
+// 클라이언트 증명에서 신뢰하지 않는다. 검증 서비스가 허용 목록인
+// 카탈로그를 조회한 뒤 Proof에 주입한다.
+type ProductType string
+
+const (
+	ProductNonConsumable ProductType = "non_consumable"
+	ProductConsumable    ProductType = "consumable"
+)
+
+// Normalize는 기존 카탈로그의 빈 유형을 비소모성으로 해석한다.
+// 명시적 type 필드가 도입되기 전 상품의 동작을 바꾸지 않기 위해서다.
+func (p ProductType) Normalize() ProductType {
+	if p == "" {
+		return ProductNonConsumable
+	}
+	return p
+}
+
+// Valid는 지원하는 상품 유형인지 본다.
+func (p ProductType) Valid() bool {
+	switch p.Normalize() {
+	case ProductNonConsumable, ProductConsumable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Rank는 상태 우선순위다. 불변식 3의 stale 억제에 쓴다.
 //
 // revoked(3) > active(2) > pending(1)
@@ -73,6 +103,8 @@ const (
 	CompletionNone Completion = "none"
 	// CompletionGoogleAcknowledge는 Play acknowledge가 필요하다.
 	CompletionGoogleAcknowledge Completion = "google_acknowledge"
+	// CompletionGoogleConsume은 Play consume이 필요하다.
+	CompletionGoogleConsume Completion = "google_consume"
 	// CompletionAppleFinish는 App Store finishTransaction이 필요하다.
 	CompletionAppleFinish Completion = "apple_finish"
 	// CompletionAppsInTossClient는 클라이언트가 completeProductGrant를 부른다.
@@ -99,6 +131,8 @@ const (
 type Proof struct {
 	Platform  Platform
 	ProductID string
+	// ProductType은 클라이언트 입력이 아니라 서버 카탈로그에서 주입된다.
+	ProductType ProductType
 	// Token은 마켓별 증명값이다.
 	//   Play:      purchaseToken
 	//   App Store: transactionId
@@ -116,12 +150,16 @@ type VerifiedPurchase struct {
 
 	// CanonicalID는 멱등키의 재료다. 마켓마다 다르다.
 	//   Play:      purchaseToken
-	//   App Store: originalTransactionId — transactionId가 아니다
+	//   App Store: 비소모성 originalTransactionId, 소모성 transactionId
 	//   AIT:       orderId
 	CanonicalID string
 
 	// ProviderOrderID는 마켓 쪽 주문 식별자다. 진단과 완료 처리에 쓴다.
 	ProviderOrderID string
+
+	// IsTestPurchase는 마켓 검증의 관측 사실이다. nil은 미확인이며 실거래로 추정하지 않는다.
+	// 구매 키와 지급 상태는 그대로 두므로 IAP 불변식 1과 2에 영향을 주지 않는다.
+	IsTestPurchase *bool
 
 	// PlatformAccountID는 마켓 계정 참조다.
 	// 저장할 때는 원문이 아니라 sha256만 남긴다. ADR 0005.
@@ -293,6 +331,16 @@ const (
 	EnvProduction Environment = "production"
 	EnvSandbox    Environment = "sandbox"
 )
+
+// Scope는 검증·원장·완료 worker가 공유하는 앱과 환경의 경계다.
+type Scope struct {
+	AppID       string
+	Environment Environment
+}
+
+func (e Environment) Valid() bool {
+	return e == EnvProduction || e == EnvSandbox
+}
 
 // PathPrefix는 이 환경의 Firestore 경로 접두사다.
 //

@@ -44,6 +44,16 @@ func TestParseAndLookup(t *testing.T) {
 		}
 	})
 
+	t.Run("기존 상품 유형은 비소모성으로 유지된다", func(t *testing.T) {
+		product, err := c.ProductForApp("", domain.PlatformGooglePlay, "gecko_galaxy")
+		if err != nil {
+			t.Fatalf("상품 조회 실패: %v", err)
+		}
+		if product.EntitlementID != "sp_galaxy_gecko" || product.Type != domain.ProductNonConsumable {
+			t.Fatalf("product=%+v", product)
+		}
+	})
+
 	t.Run("같은 SKU라도 마켓이 다르면 안 찾힌다", func(t *testing.T) {
 		// Play SKU를 App Store로 조회하면 없어야 한다
 		if _, err := c.EntitlementFor(domain.PlatformAppStore, "gecko_galaxy"); err == nil {
@@ -149,6 +159,11 @@ func TestParseValidation(t *testing.T) {
 			`{"version":1,"entitlements":{"sp a":{"google_play":"x"}}}`,
 			platformerr.CodeCatalogInvalid,
 		},
+		{
+			"지원하지 않는 상품 유형",
+			`{"version":1,"entitlements":{"sp_a":{"type":"subscription","google_play":"x"}}}`,
+			platformerr.CodeCatalogInvalid,
+		},
 	}
 
 	for _, tt := range tests {
@@ -161,6 +176,27 @@ func TestParseValidation(t *testing.T) {
 				t.Errorf("code = %q, want %q", code, tt.code)
 			}
 		})
+	}
+}
+
+func TestConsumableProductType(t *testing.T) {
+	c := mustParse(t, `{
+      "version": 2,
+      "entitlements": {
+        "content_ticket": {
+          "type": "consumable",
+          "google_play": "ungeul_content_ticket",
+          "app_store": "com.seorilabs.ungeul.contentticket"
+        }
+      }
+    }`)
+
+	product, err := c.ProductForApp("", domain.PlatformGooglePlay, "ungeul_content_ticket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if product.EntitlementID != "content_ticket" || product.Type != domain.ProductConsumable {
+		t.Fatalf("product=%+v", product)
 	}
 }
 

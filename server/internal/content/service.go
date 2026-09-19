@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
@@ -25,6 +28,7 @@ type Usage interface {
 type AccessController interface {
 	Authorized(context.Context, registry.App, string, string, string, int) (bool, error)
 	Unlock(context.Context, registry.App, string, string, string, UnlockRequest) error
+	DeepAccess(context.Context, registry.App, string, int) (DeepAccess, error)
 }
 
 type Service struct {
@@ -79,7 +83,7 @@ func (s *Service) Resolve(
 			return ResolveResult{}, platformerr.New(platformerr.CodeContentLocked,
 				"심화 권한 확인이 준비되지 않았어요")
 		}
-		deepKey := fmt.Sprintf("%s:%d", req.Unlock.Section, req.Reading.Seun.Year)
+		deepKey := flowDeepKey(req.Reading.Seun.Year)
 		alreadyAuthorized, err := s.access.Authorized(
 			ctx, app, puid, selection.ReadingKey, deepKey, req.Reading.Seun.Year,
 		)
@@ -109,7 +113,7 @@ func (s *Service) Resolve(
 		if !selection.Scope[section] {
 			continue
 		}
-		deepKey := fmt.Sprintf("%s:%d", section, req.Reading.Seun.Year)
+		deepKey := flowDeepKey(req.Reading.Seun.Year)
 		allowed := false
 		if s.access != nil {
 			allowed, err = s.access.Authorized(
@@ -138,6 +142,151 @@ func (s *Service) Resolve(
 		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
 		ReadingKey: selection.ReadingKey, Articles: articleList, Locked: locked,
 	}, nil
+}
+
+// ResolvePairing은 두 명식의 궁합 해설을 고른다. Resolve와 같은 골격이되 셋이 다르다 —
+// 무료 본문이 없고, 열람 단위가 연도가 아니라 명식 쌍(deepKey "gunghap")이며, 레지스트리
+// content.pairing_enabled가 꺼진 앱은 좌표를 만들기 전에 거절한다.
+func (s *Service) ResolvePairing(
+	ctx context.Context,
+	appID, puid string,
+	req ResolvePairingRequest,
+) (ResolvePairingResult, error) {
+	// 킬 스위치를 selector·릴리스 로드보다 먼저 본다. 앱은 이 403을 구서버의 404와 같은 뜻
+	// (궁합 미제공)으로 다루므로, 꺼진 앱은 본문이 어긋나도(400) 릴리스가 안 읽혀도(503)
+	// 항상 403이어야 카드 숨김이 흔들리지 않는다.
+	app, err := s.contentApp(ctx, appID)
+	if err != nil {
+		return ResolvePairingResult{}, err
+	}
+	if !app.Content.PairingEnabled {
+		return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentNotEnabled,
+			"이 앱은 궁합 콘텐츠를 제공하지 않아요")
+	}
+	selection, err := SelectPairing(req)
+	if err != nil {
+		return ResolvePairingResult{}, err
+	}
+	release, err := s.releases.Load(ctx, app)
+	if err != nil {
+		return ResolvePairingResult{}, err
+	}
+	if release.SchemaVersion != req.SchemaVersion {
+		return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentSchemaMismatch,
+			"앱과 콘텐츠 스키마 버전이 일치하지 않아요")
+	}
+	if err := validateItems(release, selection.DeepIDs, AccessDeep); err != nil {
+		return ResolvePairingResult{}, err
+	}
+	// 궁합도 신규 명식 일일 한도(reading_daily_limit)를 함께 쓴다. pairKey가 대칭이라
+	// 같은 두 사람을 어느 순서로 고르든 한 번만 센다.
+	if err := s.usage.AllowReading(ctx, app, puid, selection.PairKey); err != nil {
+		return ResolvePairingResult{}, err
+	}
+
+	if req.Unlock != nil {
+		if s.access == nil {
+			return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentLocked,
+				"심화 권한 확인이 준비되지 않았어요")
+		}
+		alreadyAuthorized, err := s.access.Authorized(
+			ctx, app, puid, selection.PairKey, pairingDeepKey, 0,
+		)
+		if err != nil {
+			return ResolvePairingResult{}, platformerr.Wrap(err, platformerr.CodeContentUnavailable,
+				"심화 권한을 확인하지 못했어요")
+		}
+		if !alreadyAuthorized {
+			err = s.access.Unlock(ctx, app, puid, selection.PairKey, pairingDeepKey, *req.Unlock)
+		}
+		if err != nil {
+			return ResolvePairingResult{}, err
+		}
+	}
+
+	allowed := false
+	if s.access != nil {
+		allowed, err = s.access.Authorized(ctx, app, puid, selection.PairKey, pairingDeepKey, 0)
+		if err != nil {
+			return ResolvePairingResult{}, platformerr.Wrap(err, platformerr.CodeContentUnavailable,
+				"심화 권한을 확인하지 못했어요")
+		}
+	}
+	articles := make(map[string]Article)
+	// 빈 배열이 JSON에서 null이 되지 않게 미리 만든다. 스펙에서 locked는 required 배열이다.
+	locked := make([]LockedPairing, 0, 1)
+	if allowed {
+		if err := collectArticles(release, selection.DeepIDs, AccessDeep, articles); err != nil {
+			return ResolvePairingResult{}, err
+		}
+	} else {
+		locked = append(locked, LockedPairing{DeepKey: pairingDeepKey, Section: pairingSection})
+	}
+	articleList := make([]Article, 0, len(articles))
+	for _, article := range articles {
+		articleList = append(articleList, article)
+	}
+	sort.Slice(articleList, func(i, j int) bool { return articleList[i].ID < articleList[j].ID })
+	return ResolvePairingResult{
+		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
+		PairKey: selection.PairKey, Articles: articleList, Locked: locked,
+	}, nil
+}
+
+// DeepAccess는 남은 열람권과 이미 연 심화 항목을 함께 준다.
+//
+// 둘을 한 번에 주는 것은 화면이 한 곳에서 "몇 장 남았고 무엇을 열었는지"를
+// 그리기 때문이다. 나눠 두면 두 번 왕복하고 그 사이 값이 어긋난다.
+func (s *Service) DeepAccess(
+	ctx context.Context,
+	appID, puid string,
+	limit int,
+) (DeepAccessResult, error) {
+	app, err := s.apps.GetUsable(ctx, appID)
+	if err != nil {
+		return DeepAccessResult{}, err
+	}
+	if s.access == nil {
+		return DeepAccessResult{}, platformerr.New(platformerr.CodeContentLocked,
+			"심화 권한 확인이 준비되지 않았어요")
+	}
+	access, err := s.access.DeepAccess(ctx, app, puid, limit)
+	if err != nil {
+		return DeepAccessResult{}, err
+	}
+	unlocks := make([]DeepUnlock, 0, len(access.Unlocks))
+	for _, record := range access.Unlocks {
+		unlocks = append(unlocks, DeepUnlock{
+			ReadingKey: record.ReadingKey,
+			DeepKey:    record.DeepKey,
+			Year:       flowDeepKeyYear(record.DeepKey),
+			Source:     record.Source,
+			UnlockedAt: record.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return DeepAccessResult{Ticket: access.Ticket, Unlocks: unlocks}, nil
+}
+
+// flowDeepKey는 한 해의 세운과 12개월 월운을 같은 열람 단위로 묶는다.
+// 한 번의 광고 보상 또는 열람권 차감으로 둘을 함께 열기 위한 키다.
+func flowDeepKey(year int) string {
+	return fmt.Sprintf("flow:%d", year)
+}
+
+// flowDeepKeyYear는 deepKey에서 연도를 되뽑는다.
+//
+// 형식이 다르면 0을 준다. 표시용 값이라 여기서 실패로 만들지 않는다 —
+// 나중에 다른 종류의 deepKey가 생겨도 목록은 계속 그려져야 한다.
+func flowDeepKeyYear(deepKey string) int {
+	rest, ok := strings.CutPrefix(deepKey, "flow:")
+	if !ok {
+		return 0
+	}
+	year, err := strconv.Atoi(rest)
+	if err != nil || year < 1900 || year > 2200 {
+		return 0
+	}
+	return year
 }
 
 func validateSelectionRelease(release Release, selection Selection) error {
@@ -196,18 +345,14 @@ func (s *Service) Term(ctx context.Context, appID, puid, termID string) (TermRes
 	}
 	return TermResult{
 		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
-		Article: Article{ID: item.ID, Text: item.Text, Access: item.Access},
+		Article: Article{ID: item.ID, Text: item.Text, More: item.More, Access: item.Access},
 	}, nil
 }
 
 func (s *Service) release(ctx context.Context, appID string) (registry.App, Release, error) {
-	app, err := s.apps.GetUsable(ctx, appID)
+	app, err := s.contentApp(ctx, appID)
 	if err != nil {
 		return registry.App{}, Release{}, err
-	}
-	if !app.FeatureEnabled("content") {
-		return registry.App{}, Release{}, platformerr.New(platformerr.CodeContentNotEnabled,
-			"이 앱은 콘텐츠 API를 사용하지 않아요")
 	}
 	release, err := s.releases.Load(ctx, app)
 	if err != nil {
@@ -216,13 +361,27 @@ func (s *Service) release(ctx context.Context, appID string) (registry.App, Rele
 	return app, release, nil
 }
 
+// contentApp은 콘텐츠 기능이 켜진 사용 가능한 앱만 돌려준다. 릴리스를 읽기 전에 앱 단위
+// 거절(feature·킬 스위치)을 끝내야 GCS 장애가 403을 503으로 바꾸지 않는다.
+func (s *Service) contentApp(ctx context.Context, appID string) (registry.App, error) {
+	app, err := s.apps.GetUsable(ctx, appID)
+	if err != nil {
+		return registry.App{}, err
+	}
+	if !app.FeatureEnabled("content") {
+		return registry.App{}, platformerr.New(platformerr.CodeContentNotEnabled,
+			"이 앱은 콘텐츠 API를 사용하지 않아요")
+	}
+	return app, nil
+}
+
 func collectArticles(release Release, ids []string, want Access, into map[string]Article) error {
 	if err := validateItems(release, ids, want); err != nil {
 		return err
 	}
 	for _, id := range ids {
 		item := release.Items[id]
-		into[id] = Article{ID: item.ID, Text: item.Text, Access: item.Access}
+		into[id] = Article{ID: item.ID, Text: item.Text, More: item.More, Access: item.Access}
 	}
 	return nil
 }
@@ -233,7 +392,7 @@ func collectOptionalArticles(release Release, ids []string, want Access, into ma
 	}
 	for _, id := range ids {
 		if item, ok := release.Items[id]; ok {
-			into[id] = Article{ID: item.ID, Text: item.Text, Access: item.Access}
+			into[id] = Article{ID: item.ID, Text: item.Text, More: item.More, Access: item.Access}
 		}
 	}
 	return nil

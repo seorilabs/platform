@@ -13,6 +13,19 @@ type Unlocks interface {
 	GetUnlock(context.Context, string, string, string, string) (UnlockGrant, error)
 	BindReward(context.Context, string, string, string, string, string) error
 	RecordTicket(context.Context, string, string, string, string, string) error
+	ListUnlocks(context.Context, string, string, int) ([]UnlockRecord, error)
+}
+
+// UnlockRecord는 이미 열린 심화 항목 하나다.
+//
+// ReadingKey는 명식 파생값의 해시라 서버는 그것이 누구의 사주인지 모른다.
+// 사람이 읽을 이름을 붙이는 것은 로컬 프로필을 가진 앱의 일이다
+// (플랫폼에 PII를 저장하지 않는다는 원칙 그대로다).
+type UnlockRecord struct {
+	ReadingKey string
+	DeepKey    string
+	Source     string
+	CreatedAt  time.Time
 }
 
 type UnlockGrant struct {
@@ -30,6 +43,7 @@ type Entitlements interface {
 	Active(context.Context, registry.App, string, string) (bool, error)
 	SourceActive(context.Context, registry.App, string, string, string) (bool, error)
 	Consume(context.Context, registry.App, string, string, int, string) (string, error)
+	Remaining(context.Context, registry.App, string, string, int) (int, error)
 }
 
 type AccessService struct {
@@ -87,7 +101,9 @@ func (s *AccessService) Authorized(
 			}
 		}
 	}
-	if s.entitlements == nil {
+	// 궁합(deepKey "gunghap")은 연도와 무관하다. 시즌 entitlement는 한 해의 흐름을 여는
+	// 것이라 여기서 보면 시즌 구매자가 궁합까지 함께 열게 된다. year 0이 그 표시다.
+	if year == 0 || s.entitlements == nil {
 		return false, nil
 	}
 	entitlementID := app.Content.SeasonEntitlements[yearString(year)]
@@ -155,12 +171,14 @@ func (s *AccessService) verifiedRewardClaim(
 		return platformads.Claim{}, platformerr.Wrap(err, platformerr.CodeContentClaimInvalid,
 			"광고 보상을 확인할 수 없어요")
 	}
+	// 확정 판정은 provider가 정한다. 여기서 다시 적으면 AdMob 기준(server_verified)이
+	// AppsInToss에도 걸려, SSV가 없어 client_confirmed까지만 가는 AIT 보상이 확정된
+	// 뒤에도 영원히 거절된다 — 실기기에서 이 경로로 403을 받았다.
 	if claim.AppID != app.AppID || claim.PlatformUserID != puid ||
-		(claim.State != platformads.StateConfirmed && claim.State != platformads.StateDelivered) ||
-		claim.Assurance != platformads.AssuranceServerVerified ||
+		!platformads.SettledClaim(claim) ||
 		claim.Reward.Key != app.Content.RewardKey || claim.Reward.Amount <= 0 {
 		return platformads.Claim{}, platformerr.New(platformerr.CodeContentClaimInvalid,
-			"서버 검증된 광고 보상이 아니에요")
+			"확정된 광고 보상이 아니에요")
 	}
 	return claim, nil
 }
@@ -171,4 +189,53 @@ func yearString(year int) string {
 		byte('0' + year/1000%10), byte('0' + year/100%10),
 		byte('0' + year/10%10), byte('0' + year%10),
 	})
+}
+
+// DeepAccess는 사용자가 지금 무엇을 갖고 있고 무엇을 이미 열었는지 모은다.
+//
+// 화면이 이것 없이는 답할 수 없는 질문이 둘 있다 — "몇 장 남았나",
+// "어떤 사주를 이미 열었나". 서버 원장에만 있는 값이라 클라이언트가
+// 자기 캐시로 답하면 환불·기기 교체에서 어긋난다.
+func (s *AccessService) DeepAccess(
+	ctx context.Context,
+	app registry.App,
+	puid string,
+	limit int,
+) (DeepAccess, error) {
+	out := DeepAccess{Unlocks: []UnlockRecord{}}
+
+	if app.Content.TicketEntitlementID != "" && app.Content.TicketUnitsPerPurchase > 0 {
+		// 열람권을 운영하는 앱인데 원장 접합면이 없으면 조립이 잘못된 것이다.
+		// 조용히 ticket을 빼면 화면에는 "열람권 없는 앱"으로 보여 배선 버그가
+		// 사용자 쪽에서만 드러난다. Unlock의 ticket 경로와 같은 코드로 막는다.
+		if s.entitlements == nil {
+			return DeepAccess{}, platformerr.New(platformerr.CodeContentLocked,
+				"열람권이 운영 설정되지 않았어요")
+		}
+		remaining, err := s.entitlements.Remaining(
+			ctx, app, puid, app.Content.TicketEntitlementID, app.Content.TicketUnitsPerPurchase,
+		)
+		if err != nil {
+			return DeepAccess{}, err
+		}
+		out.Ticket = &TicketBalance{
+			EntitlementID:    app.Content.TicketEntitlementID,
+			Remaining:        remaining,
+			UnitsPerPurchase: app.Content.TicketUnitsPerPurchase,
+		}
+	}
+
+	if s.unlocks != nil {
+		records, err := s.unlocks.ListUnlocks(ctx, app.AppID, puid, limit)
+		if err != nil {
+			return DeepAccess{}, err
+		}
+		// nil을 그대로 흘리면 JSON이 []가 아니라 null이 된다. 스펙에서
+		// unlocks는 required 배열이라 엄격한 클라이언트가 응답을 통째로
+		// 거부한다 — 서버는 200인데 앱만 실패하는 형태다.
+		if records != nil {
+			out.Unlocks = records
+		}
+	}
+	return out, nil
 }

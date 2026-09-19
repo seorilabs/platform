@@ -66,6 +66,9 @@ type KeyProvider interface {
 // 서명키가 전 프로젝트 공통이므로 직접 검증하는 편이 단순하다.
 type FirebaseVerifier struct {
 	keys KeyProvider
+	// blocked는 차단 계정 조회다. 검증 직후 여기서 거르지 않으면
+	// 세션 발급 경로마다 같은 검사를 흩어 두게 된다.
+	blocked Blocklist
 	// baseOpts는 모든 검증에 공통인 옵션이다.
 	// aud와 iss는 앱마다 다르므로 요청 시점에 덧붙인다.
 	baseOpts []jwt.ParserOption
@@ -73,9 +76,10 @@ type FirebaseVerifier struct {
 }
 
 // NewFirebaseVerifier는 검증기를 만든다.
-func NewFirebaseVerifier(keys KeyProvider) *FirebaseVerifier {
+func NewFirebaseVerifier(keys KeyProvider, blocked Blocklist) *FirebaseVerifier {
 	return &FirebaseVerifier{
-		keys: keys,
+		keys:    keys,
+		blocked: blocked,
 		// 알고리즘·만료·발급시각 판정을 라이브러리에 위임한다.
 		// 직접 파싱하면 alg=none 혼동 같은 실수를 하기 쉽다.
 		baseOpts: []jwt.ParserOption{
@@ -156,7 +160,11 @@ func (v *FirebaseVerifier) Verify(ctx context.Context, tokenStr string, app regi
 		return Claims{}, platformerr.New(platformerr.CodeAuthInvalid, "토큰 인증 시각이 올바르지 않아요")
 	}
 
-	if app.UIDBlocked(claims.Subject) {
+	blocked, err := v.blocked.Blocked(ctx, app.AppID, claims.Subject)
+	if err != nil {
+		return Claims{}, err
+	}
+	if blocked {
 		return Claims{}, platformerr.New(platformerr.CodeUserBlocked, "이용이 제한된 계정이에요")
 	}
 

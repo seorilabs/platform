@@ -50,11 +50,19 @@ var (
 	eventContracts = map[string]eventContract{
 		"identity.created": {
 			prefix: "identity_", outcome: "created",
-			attributes: setOf("authType", "anonymous", "referrer"),
+			// 가입 코드와 Backoffice가 이미 사용하는 빌드 정보다. 여기서
+			// 거부하면 이벤트와 같은 트랜잭션에 있는 신규 가입도 취소된다.
+			attributes: setOf("authType", "signInProvider", "anonymous", "referrer", "appVersion", "runtime"),
+		},
+		"app.version.first_seen": {
+			prefix: "app_version_", outcome: "observed",
+			attributes: setOf("appVersion", "runtime", "sdk"),
 		},
 		"iap.granted": {
 			prefix: "iap_", outcome: "granted",
-			attributes: setOf("platform", "entitlementId"),
+			// isTestPurchase는 마켓 검증의 관측 사실이다. 키가 없으면 "미확인"이고
+			// 실거래로 추정하지 않는다 — AppsInToss는 provider가 이 값을 만들지 않는다.
+			attributes: setOf("platform", "entitlementId", "isTestPurchase"),
 		},
 		"ad.reward.delivered": {
 			prefix: "ad_reward_", outcome: "delivered",

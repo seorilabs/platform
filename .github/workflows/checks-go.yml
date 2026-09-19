@@ -26,20 +26,24 @@ on:
       - "server/**"
       - "spec/**"
       - "registry/**"
+      - "deploy/rpi/**"
       - "scripts/check_deploy_workflow.sh"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
       - ".github/workflows/deploy.yml"
+      - ".github/workflows/presence-edge.yml"
   push:
     branches: [main]
     paths:
       - "server/**"
       - "spec/**"
       - "registry/**"
+      - "deploy/rpi/**"
       - "scripts/check_deploy_workflow.sh"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
       - ".github/workflows/deploy.yml"
+      - ".github/workflows/presence-edge.yml"
 
 permissions:
   contents: read
@@ -58,10 +62,10 @@ jobs:
         working-directory: server
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
@@ -82,7 +86,7 @@ jobs:
       #
       # 이 단계가 잡지 못하는 것이 하나 있다. 파일이 옳아도 Firestore에
       # 적용되지 않았으면 런타임은 옛 값으로 돈다. regsync는 CI가 아니라
-      # 사람이 돌린다 — docs/06-release/go-live-checklist.md 참고.
+      # 사람이 돌린다 — Obsidian 프로젝트/platform/06-release/go-live-checklist.md 참고.
       - name: 레지스트리 검증
         run: go run ./cmd/regsync --dir=../registry/apps --dry-run
 
@@ -105,7 +109,7 @@ jobs:
       # 아무도 건드리지 않은 PR이 빨갛게 된다. v2.12.2에서 0 issues임을
       # 로컬에서 확인했다.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           working-directory: server
           version: v2.12.2

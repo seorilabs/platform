@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -47,8 +48,18 @@ type iapParts struct {
 	// appVerifiers는 webhook과 worker까지 앱 범위를 유지한다. verify
 	// 요청에서만 앱을 나누고 여기서 전역 검증기로 돌아가면 환불과 완료
 	// 처리가 lizard 설정으로 Happy Farm 주문을 호출하게 된다.
-	appVerifiers map[string]map[domain.Platform]verify.Verifier
-	apps         map[string]registry.App
+	appVerifiers           map[string]map[domain.Platform]verify.Verifier
+	apps                   map[string]registry.App
+	additionalEnvironments map[domain.Scope]iapEnvironment
+}
+
+// iapEnvironment는 기본 결제 서비스와 독립적인 추가 환경이다.
+// 검증 유스케이스는 재사용하고, 환경이 고정된 의존성만 별도로 조립한다.
+type iapEnvironment struct {
+	service   *verify.Service
+	ledger    *ledger.Ledger
+	verifiers map[domain.Platform]verify.Verifier
+	app       registry.App
 }
 
 // newIAPService는 결제 유스케이스를 조립한다.
@@ -74,6 +85,16 @@ func newIAPService(
 	verifiers, enabled, err := newVerifiers(ctx, ic)
 	if err != nil {
 		return nil, err
+	}
+
+	// AppsInToss 인증서는 role 단위로 한 번만 파싱한다. 앱마다 다시 읽으면
+	// 같은 인증서를 앱 수만큼 파싱하고, CN 충돌 같은 설정 오류도 앱 수만큼 난다.
+	aitCertificates := map[string]aitCertificate{}
+	if ic.Toss.Enabled() {
+		aitCertificates, err = aitCertificatesByApp(ic.Toss.Clients, "iap")
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(verifiers) == 0 {
 		return nil, fmt.Errorf("iap: 조립된 마켓 검증기가 하나도 없다")
@@ -127,7 +148,7 @@ func newIAPService(
 		appLedgerValues[app.AppID] = appLedger
 		appsByID[app.AppID] = app
 		appOutboxes[app.AppID] = appLedger
-		list, err := newVerifiersForApp(ctx, ic, app)
+		list, err := newVerifiersForApp(ctx, ic, app, aitCertificates)
 		if err != nil {
 			return nil, err
 		}
@@ -168,22 +189,74 @@ func newIAPService(
 		return nil, err
 	}
 
+	additional := make(map[domain.Scope]iapEnvironment)
+	for _, app := range apps {
+		if !app.IAP.AppleSandboxEnabled || !ic.Apple.Enabled() {
+			continue
+		}
+		part, err := newAppleSandboxEnvironment(ctx, cfg, st, app, cat, keyring, reg, col, opEvents)
+		if err != nil {
+			return nil, err
+		}
+		additional[domain.Scope{AppID: app.AppID, Environment: domain.EnvSandbox}] = part
+	}
+
 	slog.Info("결제 준비 완료",
 		"environment", ic.Environment,
 		"markets", enabled,
 		"entitlements", len(cat.IDs()),
+		"additional_environments", len(additional),
 	)
 	return &iapParts{
-		service:      svc,
-		ledger:       led,
-		catalog:      cat,
-		verifiers:    byPlatform,
-		enabled:      enabled,
-		refundKeys:   refundKeys,
-		appLedgers:   appLedgerValues,
-		appVerifiers: appVerifierMaps,
-		apps:         appsByID,
+		service:                svc,
+		ledger:                 led,
+		catalog:                cat,
+		verifiers:              byPlatform,
+		enabled:                enabled,
+		refundKeys:             refundKeys,
+		appLedgers:             appLedgerValues,
+		appVerifiers:           appVerifierMaps,
+		apps:                   appsByID,
+		additionalEnvironments: additional,
 	}, nil
+}
+
+func newAppleSandboxEnvironment(
+	ctx context.Context, cfg config.Config, st *store.Client, app registry.App,
+	cat *catalog.Catalog, keyring *binding.Keyring, reg *registry.Registry,
+	col *events.Collector, opEvents *operational.Repository,
+) (iapEnvironment, error) {
+	if !app.IAP.AppleSandboxEnabled || !app.IAPEnvironmentAllowed(registry.LedgerSandbox) {
+		return iapEnvironment{}, errors.New("추가 Apple sandbox가 허용되지 않은 앱이다")
+	}
+	// 복사본은 Apple 검증기 조립에만 쓴다. 기본 registry와 서비스의
+	// production 설정을 변경하지 않는다. 불변식 9, ADR 0027.
+	sandboxApp := app
+	sandboxApp.IAP.LedgerEnvironment = registry.LedgerSandbox
+	sandboxApp.IAP.Markets = []string{string(domain.PlatformAppStore)}
+	list, err := newVerifiersForApp(ctx, cfg.IAP, sandboxApp, nil)
+	if err != nil {
+		return iapEnvironment{}, err
+	}
+	if len(list) != 1 || list[0].Platform() != domain.PlatformAppStore {
+		return iapEnvironment{}, errors.New("추가 sandbox에는 Apple 검증기 하나가 필요하다")
+	}
+	if err := validateAppCatalog(cat, app, []domain.Platform{domain.PlatformAppStore}); err != nil {
+		return iapEnvironment{}, err
+	}
+	l := ledgerForRegistryApp(st, app, domain.EnvSandbox).WithOperationalEvents(opEvents)
+	svc, err := verify.New(verify.Config{
+		Verifiers: list, Ledger: l, Catalog: cat, Keyring: keyring, Outbox: l,
+		AppVerifiers: map[string][]verify.Verifier{app.AppID: list},
+		AppLedgers:   map[string]verify.Ledger{app.AppID: l},
+		AppOutboxes:  map[string]verify.OutboxWriter{app.AppID: l},
+		Apps:         reg, Auditor: auditAdapter{col: col},
+	})
+	if err != nil {
+		return iapEnvironment{}, err
+	}
+	return iapEnvironment{service: svc, ledger: l, app: app,
+		verifiers: map[domain.Platform]verify.Verifier{domain.PlatformAppStore: list[0]}}, nil
 }
 
 // validateAppCatalog는 실제 조립된 verifier의 SKU만 부팅 조건으로 삼는다.
@@ -214,7 +287,12 @@ func ledgerForRegistryApp(st *store.Client, app registry.App, env domain.Environ
 	return ledger.NewForApp(st, env, app.AppID)
 }
 
-func newVerifiersForApp(ctx context.Context, ic config.IAPConfig, app registry.App) ([]verify.Verifier, error) {
+func newVerifiersForApp(
+	ctx context.Context,
+	ic config.IAPConfig,
+	app registry.App,
+	aitCertificates map[string]aitCertificate,
+) ([]verify.Verifier, error) {
 	var out []verify.Verifier
 	if app.MarketEnabled(string(domain.PlatformGooglePlay)) && ic.Play.Enabled() {
 		client, err := newPlayHTTPClient(ctx, ic.Play)
@@ -239,11 +317,15 @@ func newVerifiersForApp(ctx context.Context, ic config.IAPConfig, app registry.A
 		out = append(out, v)
 	}
 	if app.MarketEnabled(string(domain.PlatformAppsInToss)) && ic.Toss.Enabled() {
-		cert, err := tls.X509KeyPair(ic.Toss.ClientCertPEM, ic.Toss.ClientKeyPEM)
-		if err != nil {
-			return nil, fmt.Errorf("iap: AppsInToss 인증서를 읽지 못했다: %w", err)
+		// 이 앱의 인증서가 없으면 AppsInToss provider만 건너뛴다. 다른 앱 인증서로
+		// 대신 검증하면 토스가 CN 불일치로 거절해 설정 오류가 결제 실패로 둔갑한다.
+		// 건너뛰는 선택은 validateAppCatalog의 계약과 같다.
+		certificate, ok := aitCertificates[app.AppID]
+		if !ok {
+			slog.Warn("AppsInToss 인증서가 없어 앱의 결제 검증을 건너뛴다", "app_id", app.AppID)
+			return out, nil
 		}
-		v, err := toss.New(toss.Config{ClientCert: cert, BaseURL: ic.Toss.BaseURL})
+		v, err := toss.New(toss.Config{ClientCert: certificate.Cert, BaseURL: ic.Toss.BaseURL})
 		if err != nil {
 			return nil, err
 		}
@@ -329,7 +411,10 @@ func newVerifiers(ctx context.Context, ic config.IAPConfig) ([]verify.Verifier, 
 	}
 
 	if ic.Toss.Enabled() {
-		cert, err := tls.X509KeyPair(ic.Toss.ClientCertPEM, ic.Toss.ClientKeyPEM)
+		// 앱 범위가 없는 legacy 경로다. 앱별 검증기(newVerifiersForApp)가 실제 판정을
+		// 맡고, 여기서는 기존 동작대로 첫 자격증명 하나만 세운다.
+		legacy := ic.Toss.Clients[0]
+		cert, err := tls.X509KeyPair(legacy.CertPEM, legacy.KeyPEM)
 		if err != nil {
 			return nil, nil, fmt.Errorf("iap: AppsInToss 인증서를 읽지 못했다: %w", err)
 		}

@@ -1,13 +1,20 @@
 # Seorilabs 플랫폼 GDScript SDK
 
 Godot 앱이 플랫폼을 쓰기 위한 애드온. 인증·이벤트·설정·결제와 보상 광고
-SSV adapter가 한 배포본에 있다. 원본 저장소는
-`https://github.com/seorilabs/platform/tree/main/sdk-gdscript`이고 vendored addon의
-`SOURCE`, `VERSION`, `CHECKSUM`으로 출처와 내용을 고정한다.
+SSV adapter가 한 배포본에 있다. 정식 배포본은
+`https://github.com/seorilabs/platform/releases/tag/v<VERSION>`의 고정 asset이며,
+vendored addon의 `SOURCE`, `VERSION`, `CHECKSUM`으로 출처와 전체 tree를 고정한다.
 
 ## 가져가기
 
-GDScript에는 패키지 매니저가 없다. **파일을 복사해 간다.**
+GDScript에는 패키지 매니저가 없다. 정식 소비자는 GitHub Release의
+`seorilabs-platform-gdscript-<VERSION>.tar.gz`와 같은 이름의 `.sha256`을 검증한
+뒤 Godot 프로젝트의 `addons/` 아래에 푼다. archive 안의 `SOURCE`는 `main`이 아니라
+다운로드한 Release asset URL을 가리킨다.
+
+아래 script는 Platform checkout의 미발행 source를 확인하는 로컬 개발용이다.
+clean checkout의 exact commit SHA를 `SOURCE`에 기록하므로 branch 이동에는 영향받지 않지만,
+GitHub Release asset과 checksum을 검증한 정식 release provenance로 사용하지 않는다.
 
 ```bash
 # 소비자 저장소에서. <platform>은 이 저장소의 checkout 경로다.
@@ -49,6 +56,10 @@ platform.configure({
             "appVersion": "1.2.3",
             "locale": "ko-KR",
         },
+    # 실행 환경. 관측 헤더로만 쓰며 생략해도 동작은 같다.
+    "runtime": "godot-native-android",
+    # 명시적으로 켠 앱만 별도 2초 timeout의 RPI heartbeat를 시작한다.
+    "presence_enabled": true,
 })
 add_child(platform)
 
@@ -77,6 +88,46 @@ platform.verify_purchase(
             _apply_entitlements(res["result"]["entitlements"])
 )
 ```
+
+### Google·Apple 계정 연결과 복원
+
+Firebase Custom Token 게스트는 `isAnonymous=false`여도 복구 가능한 연결
+계정은 아니다. 구매 허용은 서버의 `isLinkedAccount`와 앱 registry의
+`iap.require_linked_account`로 판정한다. Google·Apple·Kakao 연결은 등록된
+audience와 유효한 Firebase App Check 토큰이 필요하다.
+
+1. `identity.ensure_identity()`의 ID token으로 `platform.sign_in`한다.
+2. `platform.begin_account_link(provider, app_check_token, callback)`으로
+   challenge를 받는다. 네이티브 로그인에는 Google은 원본 nonce,
+   Apple은 nonce의 SHA-256 hex를 전달한다.
+3. 네이티브 SDK가 반환한 ID token과 **원본 nonce**를
+   `platform.complete_account_link(provider, id_token, nonce, app_check_token, callback)`에 보낸다.
+4. 성공 envelope의 `result`를 `await identity.adopt_account_link(result)`에
+   전달한다. 성공한 새 Firebase ID token으로 다시 `platform.sign_in`한다.
+   Custom Token과 ID token은 로그나 파일에 저장하지 않는다.
+
+처음 연결하면 UID를 유지한다. 미연결 기기에서 이미 연결된 계정을 인증하면
+`restored=true`와 기존 UID가 반환된다. 두 연결 계정의 자동 병합은 지원하지 않는다.
+연결 요청은 자동 재시도하지 않으며 로그아웃 뒤 도착한 응답은 폐기한다.
+Firebase 교환이나 디스크 저장 실패는 이전 Firebase 신원을 보존하고 Platform
+세션을 비운다. 재시도는 이전 신원으로 로그인하고 새 challenge를 받는 순서다.
+
+**게임 저장 전환은 앱의 책임이다.** 계정 연결을 시작하기 전에 진행을 보존하고
+원격 저장 업로드를 중단한다. `restored=true`이면 해당 UID의 원격 저장을 먼저
+확인·적용하고 원자적으로 저장한 뒤 업로드를 재개한다. 앱 종료 후에도 복원
+대기 상태를 식별할 수 있어야 한다. 일반 `ensure_identity()`의 토큰 갱신은
+UID 전환을 허용하지 않는다.
+
+### Apple 테스트 환경
+
+`iap_environment`에 `"production"`, `"sandbox"` 또는 그 문자열을 반환하는
+Callable을 설정할 수 있다. 구매 검증·권한 조회·계정 참조 요청에만
+`X-Seori-IAP-Environment` 헤더를 보내며 요청 시작 시 선택한 환경을 인증
+재전송까지 유지한다. 생략하면 기존 서버 기본 환경을 사용한다.
+
+iOS 앱은 StoreKit에서 확인한 실제 환경을 제공해야 한다. 명시적으로 설정한
+환경이 비었거나 잘못됐으면 네트워크 요청을 보내지 않는다. 클라이언트 설정은
+지급 증거가 아니며 서버의 앱별 환경 허용과 Apple 거래 검증이 필요하다.
 
 ### Firebase 인증과 AdMob SSV
 
@@ -142,6 +193,12 @@ fail-closed한다. `discard_unsettled_claim`은 광고를 보여 주지 못한 �
 들어간다. SDK는 OpenAPI에 선언된 `platform`, `appVersion`, `locale`,
 `ga4ClientId`만 보내고 `sdkVersion`은 배포본 버전으로 고정한다.
 
+SDK는 모든 요청에 `X-Seori-Sdk`를 붙이고, `event_context`의 `appVersion`과
+`runtime` 옵션이 있으면 `X-Seori-AppVer`, `X-Seori-Runtime`을 함께 붙인다.
+버전을 두 군데 설정하지 않도록 `event_context`의 값을 그대로 쓴다. 세션 발급에서
+처음 보는 `(앱, 런타임, 버전)` 조합은 서버가 새 빌드의 실유입 개시로 기록한다.
+32자를 넘거나 `A-Za-z0-9._/+-` 밖 문자가 섞인 값은 잘라 보내지 않고 그 축만 뺀다.
+
 `auth_base_url`은 Toss Login mTLS 자격증명이 격리된 `platform-iap`처럼
 세션 발급 role이 기본 API와 다를 때만 지정한다. 생략하면 `base_url`을 쓴다.
 
@@ -154,6 +211,59 @@ fail-closed한다. `discard_unsettled_claim`은 광고를 보여 주지 못한 �
 | `code` | 오류 코드. **분기는 이 값으로만 한다** |
 | `message` | 사람이 읽는 메시지. 분기에 쓰지 않는다 |
 | `local` | 로컬 판정인가. 서버에 닿지 못한 경우 |
+
+### 세션 만료와 IAP 인증 복구
+
+`current_session()["expiresAt"]`은 Unix epoch millisecond다. SDK는 기기
+sleep 중 멈출 수 있는 monotonic tick을 세션 만료 기준으로 쓰지 않으며,
+만료 60초 전부터 선제 refresh한다. session refresh 전송 자체는 proactive와
+strict IAP 경로 모두 일반 재시도 없이 한 번만 보낸다.
+
+`verify_purchase`, `list_entitlements`, `account_references`는 전송 계층의 일반
+재시도를 모두 끈다. 첫 응답이 정확히 `401 session_expired`일 때만 refresh를
+한 번 요청하고 새 토큰으로 원 요청을 한 번 replay한다. 그 refresh 요청도
+일반 재시도를 하지 않으며 refresh 실패, replay의 두 번째 401, 403, 5xx,
+timeout은 그대로 한 번 반환한다. 이 strict IAP 복구 경로는 refresh 401/403
+뒤 보관 자격증명으로 다시 로그인하지 않는다. 일반 `with_token`의 선제
+refresh는 기존 재로그인 정책을 유지한다.
+
+refresh 중 public `sign_in` 또는 `sign_out`이 호출되면 이전 인증 세대의
+waiter를 `auth_state_changed`로 한 번 끝내고, 늦게 도착한 refresh·내부
+재로그인 응답은 세션에 저장하거나 IAP 요청에 재사용하지 않는다. refresh
+실패 응답은 `http_status`, `local`, `valid`를 포함한 원래 envelope를 보존한다.
+
+### 업데이트 게이트
+
+로그인하면 서버가 설정을 응답에 얹어 준다. 부팅 왕복이 하나 준다.
+
+```gdscript
+platform.update_gate_changed.connect(func(_state: Dictionary) -> void:
+    platform.show_update_gate()
+)
+```
+
+**상태를 가리지 말고 항상 부른다.** `show_update_gate()`가 `ok`에서 떠
+있던 화면을 내린다. `kind != "ok"`일 때만 부르면, 강제나 점검이 해제돼도
+닫을 수 없는 화면이 재시작 전까지 남는다.
+
+`show_update_gate()`는 SDK 기본 오버레이를 띄운다. 자기 UI로 그리려면
+`update_gate_state()`가 준 Dictionary만 쓰면 된다.
+
+**버전을 비교하지 않는다.** 서버가 `X-Seori-AppVer`와 `X-Seori-Runtime`을
+보고 이미 판정했다.
+
+| kind | 화면 |
+| --- | --- |
+| `ok` | 아무것도 띄우지 않는다 |
+| `recommended` | 닫을 수 있는 안내. **하루 1회만** 뜬다 |
+| `required` | 닫기 수단을 만들지 않는다 |
+| `maintenance` | 닫을 수 없고 업데이트할 대상도 없다 |
+
+`update_url`이 없으면 업데이트 버튼을 그리지 않는다. 눌러도 아무 일 없는
+버튼을 만들면 유저가 갇힌 것으로 느낀다.
+
+기본 오버레이는 `PROCESS_MODE_ALWAYS`라 게임이 `get_tree().paused = true`를
+걸어도 버튼이 동작한다. 노출 이력은 `user://`에 남는다.
 
 ## 계약
 
@@ -180,8 +290,9 @@ lizard-tycoon의 기존 `iap_functions_client.gd`는 `_exact_keys()`로
 
 - **익명 신원은 결제할 수 없다.** `getAnonymousKey` 해시는 bearer
   자격증명이 아니라 타인 사칭이 가능하다. 조회와 이벤트는 익명도 된다.
-- **결제 검증은 자동 재시도하지 않는다.** 서버가 멱등이어도 응답을
-  기다리는 사이 사용자에게는 두 번 결제한 것처럼 보인다.
+- **결제 검증은 일반 오류에서 자동 재시도하지 않는다.** 인증 미들웨어의
+  첫 `401 session_expired`만 위 규칙으로 한 번 복구한다. 서버가 멱등이어도
+  다른 응답을 기다리는 사이 사용자에게는 두 번 결제한 것처럼 보인다.
 - HTTP 요청은 직렬로 흐른다. Godot의 `HTTPRequest`가 한 번에 하나만
   처리하기 때문이다. 플랫폼 호출은 빈도가 낮아 충분하다.
 - `Retry-After`는 초 단위 숫자만 읽는다. Godot에 HTTP-date 파서가 없다.

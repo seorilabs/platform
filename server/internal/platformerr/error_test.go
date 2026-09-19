@@ -64,7 +64,7 @@ func TestInvariantCodeStatuses(t *testing.T) {
 	}{
 		{CodePurchaseOwnedByAnotherUser, http.StatusConflict, "불변식 4 cross-uid 자동 이전 금지"},
 		{CodePurchaseReplayMismatch, http.StatusConflict, "replay 불일치"},
-		{CodeProductTypeMismatch, http.StatusUnprocessableEntity, "불변식 9 NON_CONSUMABLE 강제"},
+		{CodeProductTypeMismatch, http.StatusUnprocessableEntity, "카탈로그 상품 유형 대조"},
 		{CodeEnvironmentMismatch, http.StatusUnprocessableEntity, "불변식 9 환경 fallback 금지"},
 		{CodeProviderCompletionPending, http.StatusServiceUnavailable, "불변식 7 지급은 롤백하지 않는다"},
 		{CodeAnonymousNotAllowed, http.StatusForbidden, "anonymous 신원은 IAP 금지"},

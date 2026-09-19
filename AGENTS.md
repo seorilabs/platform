@@ -7,11 +7,11 @@
 - 애매한 부분은 상상해서 채우지 말고, 파일·로그·설정·실행 결과를 먼저 확인한다.
 - 사용자의 말이 사실과 다르거나 기술적으로 부정확하면 바로잡는다.
 - 복잡한 구조 설명은 가능하면 Mermaid로 도식화한다.
-- 대화 중 장기 지식으로 남길 만한 확인 사실은 문서화한다. 이 레포의 실행 원장은 `docs/`이고 Obsidian은 보조 지식베이스다.
+- 대화 중 장기 지식으로 남길 만한 확인 사실은 문서화한다. 이 레포의 실행 원장은 Obsidian vault의 `프로젝트/platform/`이다. 레포에는 코드와 계약만 둔다.
 
 ## Source Of Truth
 
-- 기획·의사결정·작업 로그·운영 절차의 원장은 `docs/`다.
+- 기획·의사결정·작업 로그·운영 절차의 원장은 Obsidian `프로젝트/platform/`이다. 레포에 문서 디렉토리를 다시 만들지 않는다.
 - **API 계약의 원장은 `spec/openapi.yaml`이다.** Go 타입도 TS 타입도 여기서 생성된 산출물이지 계약 자체가 아니다. 계약을 바꿀 때는 반드시 openapi.yaml을 먼저 고친다.
 - **앱 레지스트리의 원장은 `registry/apps/*.json`이다.** 콘솔이나 Firestore를 직접 수정하지 않는다.
 - 새 프로젝트에서 확정해야 하는 값은 `확정 필요`로 남기고 임의로 채우지 않는다.
@@ -28,7 +28,7 @@
 
 **새 패키지·계층·경계를 도입할 때는 코드를 쓰기 전에 설계를 문서로 제시하고 합의한다.** 구조를 먼저 정하지 않으면 리뷰가 "이미 쓰인 코드를 되돌리는 일"이 되어 비용이 커진다.
 
-- 패키지 배치와 의존성 규칙은 `docs/03-architecture/server-layout.md`에 누적한다
+- 패키지 배치와 의존성 규칙은 Obsidian `프로젝트/platform/03-architecture/server-layout.md`에 누적한다
 - 되돌리기 어려운 결정은 ADR로 남긴다
 - 기존 구조 안에서의 구현은 논의 없이 진행해도 된다
 
@@ -38,9 +38,9 @@
 
 - **커밋을 작게 나눈다.** 한 커밋에 한 관심사
 - **왜를 주석으로 남긴다.** 무엇을 하는지는 코드가 말하지만 왜 그렇게 했는지는 아니다
-- **불변식과 연결한다.** IAP 관련 코드는 `docs/03-architecture/iap.md`의 몇 번 불변식인지 주석에 적는다
+- **불변식과 연결한다.** IAP 관련 코드는 Obsidian `프로젝트/platform/03-architecture/iap.md`의 몇 번 불변식인지 주석에 적는다
 - **관용구가 낯설 만한 곳은 설명을 붙인다.** 암묵적 인터페이스 만족, `errors.As`, `defer`와 `os.Exit`의 관계 등
-- 새로 쓴 관용구나 밟은 함정은 `docs/09-knowledge/go/`에 기록한다
+- 새로 쓴 관용구나 밟은 함정은 Obsidian `프로젝트/platform/09-knowledge/go/`에 기록한다
 
 ### 여전히 에이전트가 하지 않는 것
 
@@ -49,7 +49,7 @@
 
 ## Go 규약
 
-- Go 1.24+. 라우팅은 **표준 `net/http`** — Go 1.22+ `ServeMux` 패턴으로 충분하므로 외부 라우터를 도입하지 않는다.
+- Go 1.25. 라우팅은 **표준 `net/http`** — Go 1.22+ `ServeMux` 패턴으로 충분하므로 외부 라우터를 도입하지 않는다.
 - 테스트는 **표준 `testing` + 테이블 드리븐**. assert 라이브러리를 도입하지 않는다.
 - ORM을 도입하지 않는다. Firestore·BigQuery 클라이언트를 repository 포트 뒤에 둔다.
 - `internal/`을 경계로 쓴다. 외부에서 import되면 안 되는 것은 전부 `internal/` 아래.
@@ -69,14 +69,15 @@
 
 ## IAP 불변식
 
-`docs/03-architecture/iap.md`의 불변식 12개는 **언어·저장소와 무관하게 보존한다.** 이를 바꾸는 변경은 ADR 없이 하지 않는다.
+Obsidian `프로젝트/platform/03-architecture/iap.md`의 불변식 12개는 **언어·저장소와 무관하게 보존한다.** 이를 바꾸는 변경은 ADR 없이 하지 않는다.
 
-## GitHub Actions / ARC
+## GitHub Actions
 
-- Seorilabs GitHub Actions 또는 ARC runner 라우팅을 작성·수정·진단할 때는 `seorilabs-arc-runners` 스킬을 사용한다.
-- 먼저 `/Users/syous/Workspace/kubectl/github-actions-runners/global-versions.yaml`을 확인한다.
-- action 버전은 GitHub 공식 repo/API 기준 최신 stable major를 확인한다. `@latest`나 branch 참조를 쓰지 않는다.
-- **Go는 크로스컴파일이 네이티브**라 ARC arm64 러너에서 `GOOS=linux GOARCH=amd64`로 Cloud Run용 amd64 바이너리를 QEMU 없이 빌드한다. Cloud Build 위임이 불필요하다.
+- 저장소는 public이다. 모든 job은 GitHub-hosted `ubuntu-latest`에서 돈다. self-hosted ARC 러너를 쓰지 않는다 — fork PR 코드가 클러스터에서 실행되고, RPI 레지스트리와 k8s API 모두 TLS로 공개 도달 가능해 hosted에서 붙을 수 있다.
+- 러너는 x64다. RPI에 배포하는 job이라도 러너에서 받는 CLI(kubectl 등)는 `linux/amd64` 빌드를 쓴다.
+- 컨테이너 이미지는 러너에서 buildx로 만든다. Cloud Build 위임은 없다. arm64 대상은 QEMU가 아니라 `FROM --platform=$BUILDPLATFORM` + `GOARCH=$TARGETARCH` 크로스컴파일이다. QEMU로 Go 컴파일러를 돌리면 segfault가 난다.
+- action 버전은 GitHub 공식 repo/API 기준 최신 stable major를 확인하고 SHA로 고정한다. `@latest`나 branch 참조를 쓰지 않는다.
+- `main` 병합은 곧 production 배포 파이프라인 시작이다. `deploy` job은 environment `production`의 required reviewer 승인에서 멈춘다.
 - 아티팩트는 `retention-days: 3`.
 
 ## PR

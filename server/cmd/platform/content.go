@@ -84,6 +84,17 @@ func (e *contentEntitlements) SourceActive(
 	return contentLedger(e.store, app).IsSourceActive(ctx, puid, entitlementID, sourceKey)
 }
 
+func (e *contentEntitlements) Remaining(
+	ctx context.Context,
+	app registry.App,
+	puid, entitlementID string,
+	unitsPerSource int,
+) (int, error) {
+	return contentLedger(e.store, app).ContentUnitsRemaining(
+		ctx, puid, entitlementID, unitsPerSource,
+	)
+}
+
 func (e *contentEntitlements) Consume(
 	ctx context.Context,
 	app registry.App,

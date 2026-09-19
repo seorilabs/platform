@@ -12,7 +12,8 @@ info:
     - **`/v1`은 영구히 깨지지 않는다.** 마켓 배포된 구버전 SDK가 2~3년 산다
     - 필드 **추가만** 허용한다. 제거와 의미 변경은 `/v2`
     - 양방향 forward-compat — 서버는 요청의 미지 필드를 무시하고, SDK는 응답의 미지 필드를 무시한다
-    - 모든 응답은 envelope로 감싼다. 성공은 `{ok:true, result}`, 실패는 `{ok:false, error}`
+    - 모든 Platform 클라이언트 응답은 envelope로 감싼다. 성공은 `{ok:true, result}`, 실패는 `{ok:false, error}`
+    - 외부 공급자 webhook 응답은 공급자 계약을 따르며 envelope 예외일 수 있다
     - 요청 본문 상한 64KiB. 제어문자 거부. 허용 필드 외 어떤 키도 400
 
     상태: **D0 초안.** 스키마 세부는 각 단계에서 확정한다.
@@ -28,6 +29,8 @@ tags:
     description: RemoteConfig
   - name: events
     description: 이벤트 수집
+  - name: presence
+    description: RPI Edge의 fail-open 최근 활성 세션
   - name: iap
     description: 인앱결제 검증과 entitlement
   - name: ads
@@ -129,6 +132,10 @@ paths:
       security: []
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+        - $ref: '#/components/parameters/SeoriSdk'
+        - $ref: '#/components/parameters/SeoriRuntime'
+        - $ref: '#/components/parameters/SeoriAppVer'
       requestBody:
         required: true
         content:
@@ -153,6 +160,216 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /auth/account-link-challenges:
+    post:
+      tags: [auth]
+      summary: 외부 계정 연결 challenge 발급
+      description: |
+        검증된 현재 Platform 세션에 공급자 OIDC nonce를 5분 동안 묶는다.
+        Firebase anonymous 로그인처럼 서버가 검증한 게스트 세션은 사용할 수 있지만,
+        클라이언트가 값을 고를 수 있는 anonymous credential 세션은 거부한다.
+      operationId: createAccountLinkChallenge
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountLinkChallengeRequest' }
+      responses:
+        '201':
+          description: challenge 발급 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountLinkChallenge' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/account-links:
+    post:
+      tags: [auth]
+      summary: 외부 계정 연결 또는 기존 계정 복원
+      description: |
+        공급자가 서명한 ID token의 issuer, audience, expiry, issued-at, signature와
+        challenge nonce를 검증한다. provider subject 원문과 이메일은 저장하지 않고
+        앱 및 공급자 범위의 SHA-256 매핑으로 Platform 사용자만 연결한다.
+
+        새 설치의 연결되지 않은 게스트가 기존 공급자 계정을 증명하면 기존 Platform
+        사용자로 전환한다. 서로 다른 두 연결 계정은 자동 병합하지 않고 409를 반환한다.
+      operationId: createAccountLink
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountLinkRequest' }
+      responses:
+        '200':
+          description: 연결 또는 복원 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountLink' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/webhooks/kakao/unlink:
+    post:
+      tags: [webhook]
+      summary: 카카오 연결 해제 알림 수신
+      description: |
+        카카오가 전달한 앱 ID, 사용자 ID, 연결 해제 사유를 검증하고 기존
+        `(app_id, kakao, subject_hash)` 매핑을 멱등하게 제거한다. 사용자 ID 원문은
+        저장하거나 로그에 남기지 않으며 IAP 감사 원장은 보존한다.
+
+        유효하고 인증된 알림은 내부 매핑이 이미 없거나 저장소 처리 오류가 발생해도
+        카카오 callback 계약에 따라 빈 200을 반환한다. 내부 오류는 비식별 운영 로그로 남긴다.
+      operationId: handleKakaoUnlinkWebhook
+      security: []
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          description: KakaoAK scheme과 앱 Primary Admin Key
+          schema:
+            type: string
+            pattern: '^KakaoAK .+$'
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [app_id, user_id, referrer_type]
+              properties:
+                app_id:
+                  type: string
+                  pattern: '^[0-9]+$'
+                user_id:
+                  type: string
+                  pattern: '^[0-9]{1,20}$'
+                referrer_type:
+                  type: string
+                  enum:
+                    - ACCOUNT_DELETE
+                    - FORCED_ACCOUNT_DELETE
+                    - UNLINK_FROM_ADMIN
+                    - UNLINK_FROM_APPS
+                    - INCOMPLETE_SIGN_UP
+                group_user_token:
+                  type: string
+                  maxLength: 256
+      responses:
+        '200':
+          description: 연결 해제 알림 수신 완료. 응답 본문은 비어 있다.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/account-deletions:
+    post:
+      tags: [auth]
+      summary: 인증된 Firebase 계정과 연결 데이터의 삭제 접수
+      description: |
+        account_deletion 기능이 등록된 앱만 사용한다. Firebase ID token의 uid가
+        삭제 대상이며 임의 사용자 ID는 받지 않는다. 클라이언트는 256비트 무작위
+        receiptToken을 먼저 안전하게 저장하고 동일 값으로 재시도한다.
+        접수 이후 해당 신원의 인증, 계측, 보상 광고를 차단하고 서버에서 이어서 처리한다.
+        기능 비활성화는 신규 접수만 막으며 이미 접수한 작업은 저장된 앱 대상에서 계속 처리한다.
+        Google 삭제 접수와 저장소 사본 정리는 별도 단계다. 지연 내보내기를 고려해
+        Firebase 삭제 확인 후 최소 4일 뒤 계정과 연결된 분석 사본을 함께 정리한다.
+        IAP 감사 원장은 삭제하지 않는다. 기존 firebase-account API의 의미는 유지한다.
+      operationId: requestAccountDeletion
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [appId, firebaseIdToken, receiptToken]
+              properties:
+                appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                firebaseIdToken: { type: string, minLength: 1, maxLength: 4096 }
+                receiptToken: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '202':
+          description: 삭제 접수 또는 동일 요청의 현재 상태. 처리 완료를 뜻하지 않는다.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountDeletionStatus' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/account-deletions/status:
+    post:
+      tags: [auth]
+      summary: 삭제 접수증으로 처리 상태 확인
+      description: |
+        Firebase 계정 삭제 후에도 저장한 접수증으로 확인한다. 접수증은 해당 요청만
+        조회할 수 있는 비밀값이며 URL, 분석 이벤트, 로그에 넣지 않는다.
+        완료 후 접수증은 30일간 확인할 수 있다.
+      operationId: getAccountDeletionStatus
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [appId, receiptToken]
+              properties:
+                appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                receiptToken: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '200':
+          description: 본인 삭제 요청 상태
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountDeletionStatus' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /auth/firebase-account:
     delete:
       tags: [auth]
@@ -161,6 +378,8 @@ paths:
         앱의 Firebase ID token을 검증하고 해당 uid의 Platform identity 매핑과
         PII 없는 사용자 문서를 삭제한다. Firebase Auth와 앱 데이터 삭제는 앱
         프로젝트가 이어서 수행한다. IAP 감사 원장은 삭제하지 않는다.
+        account_deletion 기능을 켠 앱에서는 403으로 거부한다. 연결 자료를 잃지
+        않도록 /auth/account-deletions로 전체 삭제를 접수해야 한다.
       operationId: deleteFirebaseAccount
       security: []
       parameters:
@@ -208,10 +427,16 @@ paths:
         ETag를 지원한다. 값 변경은 60초 이내에 반영된다.
 
         인증은 선택이다. anonymous 신원도 조회할 수 있다.
+
+        `platform`과 `appVersion`은 쿼리를 먼저 보고 없으면 헤더에서 유도한다.
+        **무효한 쿼리 값에 400을 주지 않는다.** 이 경로가 kill switch를 나르므로
+        이미 마켓에 나간 클라이언트의 오타 때문에 점검 안내조차 못 받으면 안 된다.
       operationId: getConfig
       security: []
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/SeoriRuntime'
+        - $ref: '#/components/parameters/SeoriAppVer'
         - name: appVersion
           in: query
           schema: { type: string, maxLength: 32 }
@@ -279,9 +504,16 @@ paths:
         생년월일, 출생시각, 장소, 프로필명은 받지 않는다. 앱이 보낸 파생 명식 사실을
         selector가 축별 enum, 개수, 중복, 고정 조합과 명식 관계로 다시 검증하고 해당
         좌표만 선택한다. 임의 article ID 배열은 받지 않는다.
+        주제별 종합 해설은 검증한 명식의 십성 묶음 개수를 서버가 직접 비교해
+        topic-context 좌표 6개를 선택한다. 주제와 연결되는 신살 사실이 있으면
+        topic-support 좌표를 최대 5개 선택한다. 비교하는 두 묶음이 겉글자에 모두 없을 때는
+        지장간을 별도로 집계해 실제 관계가 있는 topic-hidden 좌표를 함께 선택한다.
+        두 집계는 합산하지 않으며 세력 점수로 사용하지 않는다. 해당 원고가 없는 기존 릴리스에서는 생략하며,
+        요청 필드와 readingKey 및 심화 권한은 바뀌지 않는다.
 
         같은 파생 사실은 같은 `readingKey`를 만들며 재조회는 신규 명식 일일 한도에서
-        제외한다. `unlock`은 `reward_claim` 또는 `ticket`만 허용한다. 서버 권한 근거가
+        제외한다. `unlock`은 `reward_claim` 또는 `ticket`만 허용한다. 한 번 해금한
+        `flow:{year}`는 같은 명식의 세운과 12개월 월운을 함께 연다. 서버 권한 근거가
         없으면 오류로 우회하지 않고 해당 심화 섹션을 `locked`로 반환한다.
       operationId: resolveContentReading
       security: [{ PlatformToken: [] }]
@@ -305,6 +537,57 @@ paths:
                     required: [result]
                     properties:
                       result: { $ref: '#/components/schemas/ResolvedContentReading' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /content/pairings:resolve:
+    post:
+      tags: [content]
+      summary: 두 파생 명식에 성립하는 궁합 해설 선택
+      description: |
+        두 사람의 파생 명식(`a`, `b` — 종류와 기둥 간지)과 앱이 계산한 짝 사실(`pair`)을
+        받는다. 생년월일, 출생시각, 장소, 프로필명은 받지 않는다. 서버는 두 명식에서 일간
+        십성 양방향·천간합·일지 관계·오행 상태·마무리를 **전부 다시 유도**해 `pair`와
+        대조하고, 하나라도 다르면 `content_selector_invalid`로 거절한다. 임의 article ID
+        배열은 받지 않는다.
+
+        `pairKey`는 두 명식 해시를 정렬해 다시 해시한 값이라 A×B와 B×A가 같다. 재조회는
+        `readings:resolve`와 같은 신규 명식 일일 한도(`reading_daily_limit`)를 공유하며
+        같은 `pairKey`는 한도에서 제외한다.
+
+        궁합 본문은 전부 심화(`deep`)다. `unlock`(`reward_claim` 또는 `ticket`, 열람권
+        1장 = 궁합 1건)이 없거나 서버 권한 근거가 없으면 오류로 우회하지 않고 `locked`에
+        `gunghap` 하나를 돌려주며 `articles`는 비어 있다. 연도와 무관하므로 시즌
+        entitlement는 보지 않는다.
+
+        레지스트리 `content.pairing_enabled`가 꺼진 앱은 `content_not_enabled`(403)다.
+        앱은 이 응답과 404를 같은 뜻(궁합 미제공)으로 다룬다.
+      operationId: resolveContentPairing
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/ContentAppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveContentPairingRequest' }
+      responses:
+        '200':
+          description: 선택 결과. 잠긴 심화 본문은 articles에 포함하지 않는다.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result: { $ref: '#/components/schemas/ResolvedContentPairing' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -351,6 +634,157 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /content/deep-access:
+    get:
+      tags: [content]
+      summary: 심화 열람 현황 조회
+      description: |
+        남은 열람권과 이미 연 심화 항목을 함께 반환한다.
+
+        **표시 전용이다.** 열람 판정은 `readings:resolve`가 매번 서버에서
+        다시 한다. 이 응답을 캐시해 클라이언트가 스스로 열면 환불 뒤에도
+        열린 것처럼 보인다.
+
+        `readingKey`는 명식 파생값의 해시이며 플랫폼은 그것이 누구의
+        사주인지 모른다. 사람이 읽을 이름은 로컬 프로필을 가진 앱이 붙인다.
+
+        `ticket`은 레지스트리에 `content.ticket_entitlement_id`와
+        `content.ticket_units_per_purchase`가 설정된 앱에만 있다.
+      operationId: getContentDeepAccess
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/ContentAppCheck'
+      responses:
+        '200':
+          description: 심화 열람 현황
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [unlocks]
+                        properties:
+                          ticket:
+                            type: object
+                            required: [entitlementId, remaining, unitsPerPurchase]
+                            properties:
+                              entitlementId: { $ref: '#/components/schemas/EntitlementId' }
+                              remaining:
+                                type: integer
+                                minimum: 0
+                                description: 남은 열람 가능 수. 한 장이 한 명식의 한 해를 연다.
+                              unitsPerPurchase:
+                                type: integer
+                                minimum: 1
+                                description: 1회 구매로 생기는 열람 수. 화면이 분모로 쓴다.
+                          unlocks:
+                            type: array
+                            items:
+                              type: object
+                              required: [readingKey, deepKey, source, unlockedAt]
+                              properties:
+                                readingKey:
+                                  type: string
+                                  description: |
+                                    명식 파생값 해시. PII가 아니다. 리딩은 `rk_`, 궁합은
+                                    명식 쌍의 `pk_`(pairKey)다.
+                                deepKey:
+                                  type: string
+                                  description: |
+                                    열람 단위 키. `flow:<연도>`(같은 명식의 세운과 12개월 월운)
+                                    또는 `gunghap`(명식 쌍 하나의 궁합 전체)이다.
+                                year:
+                                  type: integer
+                                  description: deepKey에서 뽑은 연도. 형식이 다르면 생략된다.
+                                source:
+                                  type: string
+                                  enum: [ticket, reward_claim]
+                                unlockedAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /presence/token:
+    post:
+      tags: [presence]
+      summary: RPI Edge presence token 발급
+      description: |
+        앱이 만든 비식별 session ID를 Edge 전용 단기 token으로 교환한다.
+        기능이 꺼졌거나 발급기가 준비되지 않았으면 오류 대신 enabled=false를
+        반환한다. Presence 실패가 앱 동작이나 기존 이벤트 전송을 막아서는 안 된다.
+      operationId: createPresenceToken
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePresenceTokenRequest'
+      responses:
+        '200':
+          description: 활성화 상태와, 활성화된 경우 Edge token
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        $ref: '#/components/schemas/PresenceBootstrap'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /presence/heartbeat:
+    post:
+      servers:
+        - url: https://edge.vzyx.xyz/v1
+          description: vzyx-cluster RPI public Edge
+      tags: [presence]
+      summary: 최근 활성 세션 갱신
+      description: |
+        서버 수신 시각으로 150초 활성 TTL을 갱신한다. 클라이언트 시각은 받지
+        않는다. 네트워크·인증·Edge·DB 실패 시 같은 heartbeat를 재시도하거나
+        outbox에 넣지 않고 다음 주기에 새 heartbeat만 보낸다.
+      operationId: heartbeatPresence
+      security: [{ PresenceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresenceHeartbeatRequest'
+      responses:
+        '200':
+          description: 최신 상태 반영
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        required: [acceptedAt]
+                        additionalProperties: false
+                        properties:
+                          acceptedAt: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /events:
     post:
       tags: [events]
@@ -361,6 +795,9 @@ paths:
 
         레지스트리 allowlist에 없는 이벤트는 조용히 버린다.
         PII 키 이름을 가진 파라미터도 버린다.
+
+        account_deletion 기능이 켜진 앱은 인증된 세션을 요구한다. 삭제 또는 차단으로
+        거부된 토큰을 익명 수집으로 낮추지 않는다. 다른 앱의 익명 수집 계약은 유지한다.
 
         부분 수락이다. 일부 이벤트가 거부되어도 200을 반환한다.
       operationId: ingestEvents
@@ -401,6 +838,8 @@ paths:
                           accepted: { type: integer }
                           dropped: { type: integer }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
 
   /users/me:
@@ -412,6 +851,8 @@ paths:
         PII를 저장하지 않더라도 삭제 경로는 있어야 한다.
 
         **IAP 원장 문서는 삭제하지 않는다.** 소유자 참조만 끊는다.
+        account_deletion 기능을 켠 앱에서는 매핑만 지우지 않고 403으로 거부한다.
+        /auth/account-deletions로 전체 삭제를 접수해야 한다.
       operationId: deleteCurrentUser
       responses:
         '200':
@@ -428,6 +869,7 @@ paths:
                         properties:
                           deleted: { type: boolean }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # 마켓별 엔드포인트를 두지 않는다. 증빙 필드 이름도 마켓마다 다르지
   # 않고 token 하나다. 마켓이 늘 때마다 경로와 필드가 늘면 SDK가 마켓
@@ -439,13 +881,19 @@ paths:
       description: |
         마켓 3종을 한 엔드포인트로 받는다. `platform`이 어느 마켓인지 정한다.
 
-        **Apple은 NON_CONSUMABLE이 아닌 상품을 422로 거부한다.**
+        상품 유형은 서버 카탈로그가 정한다. Google Play 소모성은 지급 뒤 consume하고,
+        Apple은 `CONSUMABLE` 또는 `NON_CONSUMABLE` 거래가 카탈로그 유형과 일치해야 한다.
+        구독 상품은 422로 거부한다.
         **production과 sandbox 사이의 자동 fallback은 없다.**
+        선택 헤더로 요청한 환경의 검증기·원장·완료 대기열만 사용한다.
+        헤더가 없으면 앱 레지스트리의 기존 기본 환경을 유지한다.
+        추가 sandbox 환경은 명시적으로 허용한 앱의 App Store 거래만 받는다.
 
         응답의 `granted`와 `alreadyGranted`는 항상 배타적이다. 둘 다
         false인 조합은 존재하지 않는다 — 불변식 2다.
       operationId: verifyIapPurchase
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/SeoriApp'
         - $ref: '#/components/parameters/AppCheck'
       requestBody:
@@ -489,6 +937,7 @@ paths:
         마켓 SDK가 없어도 이 엔드포인트만으로 환불 projection을 반영할 수 있다.
       operationId: listEntitlements
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/SeoriApp'
       responses:
         '200':
@@ -512,6 +961,9 @@ paths:
                             type: array
                             items: { $ref: '#/components/schemas/EntitlementId' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /iap/account-references:
     post:
@@ -523,6 +975,7 @@ paths:
         HMAC keyring으로 생성한다. 첫 항목이 현재 키이고 나머지는 회전 검증용이다.
       operationId: getAccountReferences
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/SeoriApp'
       responses:
         '200':
@@ -544,16 +997,22 @@ paths:
                             type: string
                             format: uuid
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
 
   # 실제 라우트는 /v1/iap/webhooks/apple 이다. App Store Connect의 알림
   # URL에 이 값을 그대로 등록한다. 경로가 틀리면 404가 나고 환불·취소
   # 알림이 유실된다 — 마켓은 우리 원장을 대신 지켜주지 않는다.
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /iap/webhooks/apple:
     post:
       tags: [webhook]
       summary: App Store Server Notification v2 수신
       description: |
         **인증이 곧 JWS 서명 검증이다.** 별도 토큰이 없다.
+
+        검증된 알림의 environment와 거래의 environment가 일치해야 한다.
+        서버가 명시적으로 허용한 환경의 원장·검증기만 사용하며 자동 fallback은 없다.
 
         처리 대상은 ONE_TIME_CHARGE, REFUND, REFUND_DECLINED, REFUND_REVERSED, REVOKE.
         그 외는 무시한다.
@@ -644,6 +1103,8 @@ paths:
         신규 앱용 고정 appId 경로다. composition root가 registry의 appId와
         bundle ID, verifier, 앱 범위 원장을 결합하며 payload의 bundle ID도 다시 검증한다.
         기존 `/iap/webhooks/apple` 계약은 lizard-tycoon 호환을 위해 유지한다.
+        검증된 알림과 거래의 environment가 일치해야 하며, 해당 앱이 허용한
+        환경의 원장·검증기만 사용한다. 다른 환경으로 재시도하지 않는다.
       operationId: receiveAppStoreNotificationForApp
       security: []
       parameters:
@@ -729,6 +1190,8 @@ paths:
       summary: 플랫폼 운영 상태 조회
       operationId: getAdminHealth
       security: [{ AdminOidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
       responses:
         '200':
           description: 조회 성공
@@ -743,6 +1206,7 @@ paths:
                       result:
                         $ref: '#/components/schemas/AdminHealth'
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -792,6 +1256,7 @@ paths:
       operationId: listAdminRecentOrders
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminLimit'
       responses:
         '200':
@@ -816,6 +1281,7 @@ paths:
                             minimum: 0
                             description: 계약 위반으로 제외된 주문 수
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -867,6 +1333,7 @@ paths:
       operationId: listAdminUserEntitlements
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: puid
           in: path
           required: true
@@ -891,6 +1358,7 @@ paths:
                             type: array
                             items: { $ref: '#/components/schemas/AdminEntitlement' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -910,6 +1378,7 @@ paths:
       operationId: listAdminOperatorGrants
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminLimit'
       responses:
         '200':
@@ -942,6 +1411,7 @@ paths:
                             minimum: 0
                             description: 계약 위반으로 제외된 회수 기록 수
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -954,6 +1424,7 @@ paths:
       operationId: getAdminAppIapCatalog
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: appId
           in: path
           required: true
@@ -996,6 +1467,7 @@ paths:
       operationId: listAdminGooglePlayRefundReviews
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: appId
           in: path
           required: true
@@ -1047,6 +1519,7 @@ paths:
       operationId: decideAdminGooglePlayRefundReview
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: appId
           in: path
           required: true
@@ -1095,6 +1568,7 @@ paths:
       operationId: grantAdminEntitlement
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1125,6 +1599,7 @@ paths:
       operationId: revokeAdminEntitlement
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1162,6 +1637,7 @@ paths:
       operationId: resetAdminAppStoreSandbox
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1192,6 +1668,7 @@ paths:
       operationId: getAdminAppStoreSandboxReset
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: requestId
           in: path
           required: true
@@ -1229,6 +1706,7 @@ paths:
       operationId: resumeAdminAppStoreSandboxReset
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: requestId
           in: path
           required: true
@@ -1263,6 +1741,7 @@ paths:
       operationId: closeAdminAppStoreSandboxResetNotStarted
       security: [{ AdminOidc: [] }]
       parameters:
+        - $ref: '#/components/parameters/IapEnvironment'
         - name: requestId
           in: path
           required: true
@@ -1333,6 +1812,126 @@ paths:
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /admin/apps/{appId}/config/update-policy:
+    get:
+      tags: [admin]
+      summary: 업데이트 유도 정책 조회
+      description: |
+        현재 정책과 함께 **고를 수 있는 버전 후보**를 돌려준다.
+
+        콘솔은 `observedVersions`에서 고르게 해야 한다. 자유 입력을 두면
+        운영자가 손으로 타이핑하고, 그게 사고를 만든다.
+      operationId: getAdminUpdatePolicy
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/AdminActor'
+        - name: appId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        $ref: '#/components/schemas/UpdatePolicyView'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /admin/config/update-policy:
+    post:
+      tags: [admin]
+      summary: 업데이트 유도 정책 변경
+      description: |
+        **권장이 기본 모드이고 강제는 예외다.**
+
+        `recommendOverride`가 비어 있으면 관측된 최신 안정 버전을 자동 추종한다.
+        릴리스마다 손댈 필요가 없다.
+
+        `blockedVersions`에 적힌 버전만 강제한다. 임계값("X 미만 차단")을
+        지원하지 않는다. 숫자 하나 잘못 넣어 전원이 막히는 사고를 구조적으로
+        막기 위해서다.
+
+        강제 목록에 버전을 **새로 추가할 때만** `confirmation`과 관측 가드가
+        걸린다. 해제에는 둘 다 없다 — 되돌리기는 언제나 즉시 가능해야 한다.
+
+        관측 가드는 셋이다. 관측되지 않은 버전(오타), 탈출구 없음(더 높은 관측
+        버전이 없다), 전원 차단(관측된 안정 버전 전부를 덮는다).
+
+        검증한 정책이 그대로 현재일 때만 저장한다. 그 사이에 정책이 바뀌었으면
+        409다. 동시 요청이 안전 가드를 우회하는 것을 막는 경계이므로, 다시
+        읽고 다시 시도해야 한다.
+      operationId: setAdminUpdatePolicy
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/AdminActor'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appId, platforms]
+              additionalProperties: false
+              properties:
+                appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                platforms:
+                  type: object
+                  minProperties: 1
+                  maxProperties: 2
+                  additionalProperties:
+                    $ref: '#/components/schemas/UpdatePolicyEntry'
+                  description: 키는 android 또는 ios다. 설치본이 없는 ait·web은 400이다.
+                confirmation:
+                  type: string
+                  description: |
+                    강제 목록에 새로 추가할 때만 필요하다.
+                    `BLOCK <appId> <platform> <version>`을 플랫폼·버전 정렬 순으로
+                    `; `로 이어 붙인 문자열이다.
+      responses:
+        '200':
+          description: 변경 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [appId, outcome, platforms]
+                        properties:
+                          appId: { type: string }
+                          outcome:
+                            type: string
+                            enum: [cleared, recommended, blocked]
+                          platforms: { type: object }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /ads/policy:
     get:
       tags: [ads]
@@ -1351,10 +1950,16 @@ paths:
       tags: [ads]
       summary: 보상 광고 claim 생성
       operationId: createAdRewardClaim
+      description: |
+        앱 레지스트리의 request_cooldown_seconds가 설정된 placement는 사용자별 새 요청 사이의
+        간격을 서버 시각으로 제한한다. UTC 날짜 변경에도 간격을 유지한다. 동일 requestId의
+        재조회는 기존 claim을 반환하며 간격과 일일 지급 횟수를 추가로 소비하지 않는다.
+        미시청·취소 요청 생성은 일일 지급 횟수를 차감하지 않는다.
       parameters: [{ $ref: '#/components/parameters/SeoriApp' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateAdRewardClaimRequest' } } } }
       responses:
         '201': { description: 생성 또는 동일 requestId 결과, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
+        '429': { $ref: '#/components/responses/RateLimited' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Unprocessable' }
@@ -1434,6 +2039,108 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /admin/apps/{appId}/blocks:
+    get:
+      tags: [admin]
+      summary: 앱 차단 계정 목록 조회
+      description: |
+        차단 목록의 원장은 Firestore다. registry/apps/*.json에는 들어가지
+        않는다. 저장소가 public이고 사용자 식별자를 git에 남기지 않는다.
+      operationId: listAdminBlocks
+      security: [{ AdminOidc: [] }]
+      parameters: [{ name: appId, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' } }]
+      responses:
+        '200':
+          description: 차단 시각 내림차순 목록
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [appId, blocks]
+                        additionalProperties: false
+                        properties:
+                          appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                          blocks: { type: array, items: { $ref: '#/components/schemas/AdminBlockEntry' } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [admin]
+      summary: 앱 계정 차단
+      description: |
+        이미 차단된 계정을 다시 넣으면 사유와 시각을 갱신한다. 실패가
+        아니다. 사고 대응 중에 같은 조작을 반복하는 편이 정상이다.
+      operationId: createAdminBlock
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - { name: appId, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' } }
+        - $ref: '#/components/parameters/AdminActor'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uid]
+              additionalProperties: false
+              properties:
+                uid: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+                reason: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: 차단 기록
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result: { $ref: '#/components/schemas/AdminBlockEntry' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/apps/{appId}/blocks/{uid}:
+    delete:
+      tags: [admin]
+      summary: 앱 계정 차단 해제
+      description: |
+        차단돼 있지 않아도 200이다. 운영자가 원한 최종 상태는 같고,
+        404를 보면 다른 앱을 잘못 본 것으로 오해해 조작을 반복한다.
+      operationId: deleteAdminBlock
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - { name: appId, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' } }
+        - { name: uid, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' } }
+        - $ref: '#/components/parameters/AdminActor'
+      responses:
+        '200':
+          description: 해제 결과. removed가 false면 원래 차단돼 있지 않았다
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        type: object
+                        required: [appId, uid, removed]
+                        additionalProperties: false
+                        properties:
+                          appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                          uid: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+                          removed: { type: boolean }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /admin/apps/{appId}/ads/config:
     get:
@@ -1533,6 +2240,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: '`/auth/session`이 발급한 플랫폼 세션 토큰'
+    PresenceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: '`/presence/token`이 발급한 Edge 전용 Ed25519 token'
     PubSubOidc:
       type: http
       scheme: bearer
@@ -1547,6 +2259,17 @@ components:
         GET은 read 또는 write allowlist, mutation은 write allowlist만 허용한다.
 
   parameters:
+    IapEnvironment:
+      name: X-Seori-IAP-Environment
+      in: header
+      required: false
+      description: |
+        IAP 검증·조회·복원과 Admin IAP 작업의 환경 선택이다. 지급 증거가 아니다.
+        생략하면 앱 레지스트리 또는 Admin 서버의 기존 기본 환경을 사용한다.
+        잘못된 값·빈 값·중복 헤더와 앱에 허용되지 않은 환경은 거부한다.
+        추가 sandbox 환경은 App Store 거래만 받으며 다른 환경으로 재시도하지 않는다.
+        Admin 변경 요청의 expectedEnvironment는 선택한 환경과 같아야 한다.
+      schema: { $ref: '#/components/schemas/LedgerEnvironment' }
     SeoriApp:
       name: X-Seori-App
       in: header
@@ -1570,7 +2293,13 @@ components:
     SeoriAppVer:
       name: X-Seori-AppVer
       in: header
-      description: 앱 버전. RemoteConfig 타겟팅에 쓴다
+      description: |
+        앱 버전. RemoteConfig 타겟팅과 세션 경로의 버전 최초 관측에 쓴다.
+
+        세션 발급에서 이 값이 처음 보이는 (앱, 런타임, 버전) 조합은
+        `app.version.first_seen` 운영 이벤트가 된다. 마켓 업로드나 태그가 아니라
+        그 빌드로 실제 세션이 처음 열린 시각이다. 상한을 넘으면 관측만 빠지고
+        요청은 그대로 처리한다.
       schema: { type: string, maxLength: 32 }
     AppCheck:
       name: X-Firebase-AppCheck
@@ -1605,6 +2334,21 @@ components:
         pattern: '^[A-Za-z0-9-]{1,39}$'
 
   schemas:
+    AccountDeletionStatus:
+      type: object
+      additionalProperties: false
+      required: [state, requestedAt, googleAnalyticsDeletion]
+      properties:
+        state:
+          type: string
+          enum: [processing, completed]
+          description: completed는 Firebase 및 당사 저장소 삭제 완료다. Google 내부 완료 확인은 별도다.
+        requestedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        googleAnalyticsDeletion:
+          type: string
+          enum: [not_requested, accepted, not_collected]
+          description: accepted는 Google 삭제 요청 접수이며 Google 내부 삭제 완료를 증명하지 않는다.
     EnvelopeOk:
       type: object
       required: [ok]
@@ -1626,7 +2370,7 @@ components:
           properties:
             code:
               type: string
-              description: snake_case 에러 코드. 전체 목록은 docs/03-architecture/iap.md
+              description: snake_case 에러 코드. 전체 목록은 Obsidian 프로젝트/platform/03-architecture/iap.md
               example: purchase_owned_by_another_user
             message:
               type: string
@@ -1659,6 +2403,13 @@ components:
       properties:
         id: { type: string, pattern: '^[a-z0-9가-힣][a-z0-9가-힣._-]{0,127}$' }
         text: { type: string, minLength: 1, maxLength: 16384 }
+        more:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          description: |
+            같은 좌표의 두 번째 본문. `text`가 짧은 압축본일 때 앱이 `찬찬히 읽기`
+            접힘과 사전 본문으로 쓰는 원문이다. 릴리스에 없으면 생략한다.
         access: { $ref: '#/components/schemas/ContentAccess' }
 
     GanjiFact:
@@ -1861,9 +2612,147 @@ components:
             additionalProperties: false
             required: [deepKey, section, year]
             properties:
-              deepKey: { type: string, pattern: '^(seun|wolun):[0-9]{4}$' }
+              deepKey: { type: string, pattern: '^flow:[0-9]{4}$' }
               section: { type: string, enum: [seun, wolun] }
               year: { type: integer, minimum: 1900, maximum: 2200 }
+
+    PairingSideFacts:
+      type: object
+      additionalProperties: false
+      required: [kind, chart]
+      properties:
+        kind: { type: string, enum: [full, three_pillar] }
+        chart:
+          description: 시각 미상 three_pillar 명식에서는 hour가 없어야 한다.
+          type: object
+          additionalProperties: false
+          required: [year, month, day]
+          properties:
+            year: { $ref: '#/components/schemas/GanjiFact' }
+            month: { $ref: '#/components/schemas/GanjiFact' }
+            day: { $ref: '#/components/schemas/GanjiFact' }
+            hour: { $ref: '#/components/schemas/GanjiFact' }
+
+    PairBranchRelation:
+      type: string
+      enum: [yukhap, samhap, banghap, chung, hyeong, pa, hae, wonjin, gwimun]
+
+    PairOhaengFact:
+      type: object
+      additionalProperties: false
+      required: [name, a, b, kind]
+      properties:
+        name: { type: string, enum: [mok, hwa, to, geum, su] }
+        a: { $ref: '#/components/schemas/OhaengStateFact' }
+        b: { $ref: '#/components/schemas/OhaengStateFact' }
+        kind:
+          type: string
+          enum: [fill_a, fill_b, overlap, gap, plain]
+          description: '`fill_b`는 B가 A의 빈 자리를 채운다는 뜻. 과다×과다는 overlap, 부족×부족은 gap.'
+
+    PairFacts:
+      description: |
+        앱 계산 코어가 두 명식에서 뽑은 짝 사실. 서버가 같은 값을 다시 유도해 대조하므로
+        표기 규칙이 양쪽에서 같아야 한다 — `aToB`는 B의 일간에서 본 A의 일간 십성(A가 B에게
+        무엇인가), `ilji.tags`는 고정 순서(육합·삼합·방합·충·형·파·해·원진·귀문)의 두 일지
+        관계이며 삼합·방합은 두 글자 반합, 자형은 넣지 않는다. `primary`는 충 > 원진 > 귀문 >
+        형 > 육합 > 삼합 > 방합 > 파 > 해 우선순위의 대표 관계이고 태그가 없으면 같은 글자는
+        `same`, 아니면 `none`이다. `ohaeng`은 목·화·토·금·수 순서 다섯 줄이며 상태는 리딩과
+        같은 임계값(개수 4 이상 과다, 0 부족)이다. `close.stem`은 두 일간 오행의 갈래,
+        `close.branch`는 `primary`가 합 계열·same이면 hap, 부딪힘 계열이면 chung이다.
+      type: object
+      additionalProperties: false
+      required: [ilgan, ilji, ohaeng, close]
+      properties:
+        ilgan:
+          type: object
+          additionalProperties: false
+          required: [aToB, bToA, hap]
+          properties:
+            aToB: { $ref: '#/components/schemas/SipseongFact' }
+            bToA: { $ref: '#/components/schemas/SipseongFact' }
+            hap: { type: boolean, description: 두 일간의 천간합(甲己·乙庚·丙辛·丁壬·戊癸) }
+        ilji:
+          type: object
+          additionalProperties: false
+          required: [tags, primary]
+          properties:
+            tags:
+              type: array
+              maxItems: 3
+              uniqueItems: true
+              items: { $ref: '#/components/schemas/PairBranchRelation' }
+            primary:
+              type: string
+              enum: [yukhap, samhap, banghap, chung, hyeong, pa, hae, wonjin, gwimun, same, none]
+        ohaeng:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items: { $ref: '#/components/schemas/PairOhaengFact' }
+        close:
+          type: object
+          additionalProperties: false
+          required: [stem, branch]
+          properties:
+            stem: { type: string, enum: [bihwa, sangsaeng, sanggeuk] }
+            branch: { type: string, enum: [hap, chung, none] }
+
+    ResolveContentPairingRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, a, b, pair]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        a: { $ref: '#/components/schemas/PairingSideFacts' }
+        b: { $ref: '#/components/schemas/PairingSideFacts' }
+        pair: { $ref: '#/components/schemas/PairFacts' }
+        unlock:
+          oneOf:
+            - $ref: '#/components/schemas/RewardClaimPairingUnlock'
+            - $ref: '#/components/schemas/TicketPairingUnlock'
+
+    RewardClaimPairingUnlock:
+      type: object
+      additionalProperties: false
+      required: [section, kind, claimId]
+      properties:
+        section: { type: string, enum: [gunghap] }
+        kind: { type: string, enum: [reward_claim] }
+        claimId: { type: string, pattern: '^cl_[A-Za-z0-9._-]{1,128}$' }
+
+    TicketPairingUnlock:
+      type: object
+      additionalProperties: false
+      required: [section, kind]
+      properties:
+        section: { type: string, enum: [gunghap] }
+        kind: { type: string, enum: [ticket] }
+
+    ResolvedContentPairing:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, contentVersion, pairKey, articles, locked]
+      properties:
+        schemaVersion: { type: integer, minimum: 1 }
+        contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+        pairKey:
+          type: string
+          pattern: '^pk_[a-f0-9]{64}$'
+          description: 두 명식 해시를 정렬해 다시 해시한 값. A×B와 B×A가 같다.
+        articles:
+          type: array
+          items: { $ref: '#/components/schemas/ContentArticle' }
+        locked:
+          type: array
+          maxItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [deepKey, section]
+            properties:
+              deepKey: { type: string, enum: [gunghap] }
+              section: { type: string, enum: [gunghap] }
 
     ProductId:
       type: string
@@ -1901,6 +2790,53 @@ components:
               type: string
               enum: [DEFAULT, SANDBOX]
               description: ait-login에서만 필수인 appLogin referrer
+
+    CreatePresenceTokenRequest:
+      type: object
+      required: [sessionId, platform]
+      additionalProperties: false
+      properties:
+        sessionId:
+          type: string
+          minLength: 16
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: 클라이언트 실행마다 새로 만드는 비식별 난수. 서버는 SHA-256만 token에 넣는다
+        platform:
+          $ref: '#/components/schemas/ClientPlatform'
+        appVersion:
+          type: string
+          maxLength: 32
+
+    PresenceBootstrap:
+      type: object
+      required: [enabled, heartbeatIntervalSeconds]
+      additionalProperties: false
+      properties:
+        enabled: { type: boolean }
+        token:
+          type: string
+          description: enabled=true일 때만 존재하는 Edge 전용 token
+        expiresAt: { type: string, format: date-time }
+        expiresIn:
+          type: integer
+          minimum: 1
+          description: token 수명 초. 기기 wall clock이 틀려도 갱신 시점을 잡기 위한 값
+        edgeUrl: { type: string, format: uri, example: 'https://edge.vzyx.xyz' }
+        heartbeatIntervalSeconds: { type: integer, minimum: 60, maximum: 300 }
+
+    PresenceHeartbeatRequest:
+      type: object
+      required: [version, sequence, platform]
+      additionalProperties: false
+      properties:
+        version: { type: integer, enum: [1] }
+        sequence: { type: integer, minimum: 0 }
+        platform:
+          $ref: '#/components/schemas/ClientPlatform'
+        appVersion:
+          type: string
+          maxLength: 32
 
     AdsPolicy:
       type: object
@@ -2000,6 +2936,16 @@ components:
         key: { type: string }
         min_amount: { type: integer, minimum: 1 }
         max_amount: { type: integer, minimum: 1 }
+
+    AdminBlockEntry:
+      type: object
+      required: [uid, blockedAt]
+      additionalProperties: false
+      properties:
+        uid: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+        reason: { type: string, maxLength: 200 }
+        blockedBy: { type: string }
+        blockedAt: { type: string, format: date-time }
 
     AdminAdsConfig:
       type: object
@@ -2101,10 +3047,60 @@ components:
           maxLength: 128
           description: custom token의 Firebase uid. 기존 토큰을 보낸 경우 기존 uid와 같아야 한다
 
+    AccountProvider:
+      type: string
+      enum: [kakao, apple, google]
+      description: Google은 Credential Manager 또는 Google Sign-In의 서버 client ID와 원문 challenge nonce를 사용한다. Apple은 challenge nonce의 SHA-256을 사용한다.
+
+    CreateAccountLinkChallengeRequest:
+      type: object
+      required: [provider]
+      additionalProperties: false
+      properties:
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+
+    AccountLinkChallenge:
+      type: object
+      required: [provider, nonce, expiresAt]
+      additionalProperties: false
+      properties:
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+        nonce: { type: string, minLength: 43, maxLength: 128 }
+        expiresAt: { type: string, format: date-time }
+
+    CreateAccountLinkRequest:
+      type: object
+      required: [provider, idToken, nonce]
+      additionalProperties: false
+      properties:
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+        idToken:
+          type: string
+          minLength: 1
+          maxLength: 8192
+        nonce:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+    AccountLink:
+      type: object
+      required: [session, firebaseCustomToken, provider, restored]
+      additionalProperties: false
+      properties:
+        session: { $ref: '#/components/schemas/Session' }
+        firebaseCustomToken:
+          type: string
+          description: 연결된 사용자로 Firebase signInWithCustomToken에 한 번 사용한다
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+        restored:
+          type: boolean
+          description: 새 설치의 게스트 대신 기존 Platform 사용자를 복원했으면 true
+
     Session:
       type: object
       required:
-        [platformToken, refreshToken, platformUserId, supportCode, expiresIn, serverTimeUnix, features, sdk]
+        [platformToken, refreshToken, platformUserId, supportCode, isAnonymous, isLinkedAccount, expiresIn, serverTimeUnix]
       properties:
         platformToken: { type: string }
         refreshToken: { type: string }
@@ -2132,6 +3128,9 @@ components:
         isAnonymous:
           type: boolean
           description: true면 IAP 경로가 막힌다
+        isLinkedAccount:
+          type: boolean
+          description: 검증된 외부 계정 또는 AppsInToss 계정과 연결됐으면 true
         features:
           $ref: '#/components/schemas/Features'
         sdk:
@@ -2140,7 +3139,13 @@ components:
           $ref: '#/components/schemas/Maintenance'
         configEtag:
           type: string
-          description: 이 값이 그대로면 /config를 호출할 필요가 없다
+          description: |
+            이 값이 그대로면 /config를 호출할 필요가 없다.
+
+            `features`·`sdk`·`maintenance`·`configEtag` 넷은 함께 실리거나 함께
+            빠진다. 설정 조회가 실패해도 세션 발급은 막지 않으며, 그때는 네 필드가
+            모두 없다. **빈 값을 채워 보내지 않는다** — 클라이언트가 그걸 유효한
+            판정으로 오해하면 안 된다. 필드가 없으면 `/config`로 떨어지면 된다.
 
     Features:
       type: object
@@ -2159,11 +3164,96 @@ components:
           type: string
           enum: [ok, deprecated, blocked]
           description: |
-            **마켓 배포된 구버전 SDK를 서버에서 끄는 유일한 수단이다.**
-            blocked면 SDK가 이벤트만 남기고 나머지를 정지한다.
+            **서버가 `X-Seori-AppVer`와 `X-Seori-Runtime`을 보고 확정한다.
+            클라이언트는 버전을 비교하지 않는다.**
+
+            blocked는 업데이트 정책의 강제 대상 목록에 있거나 수동 kill switch가
+            켜진 경우다. 명시되지 않은 버전은 강제되지 않는다.
+            deprecated는 권장 기준 버전 미만이다. 닫을 수 있는 안내다.
+
+            **버전을 알 수 없으면 언제나 ok다.** 헤더를 보내지 않는 구버전을
+            막으면 안내조차 못 보는 상태가 된다.
         message: { type: string }
-        updateUrl: { type: string }
-        minSupportedVersion: { type: string }
+        updateUrl:
+          type: string
+          description: |
+            플랫폼에 맞는 스토어 주소. 레지스트리의 `store` 블록에서 온다.
+            설치본이 없는 ait·web에는 없다. 비어 있으면 클라이언트가 업데이트
+            버튼을 숨긴다.
+        minSupportedVersion:
+          type: string
+          description: 수동 kill switch가 설정했을 때만 채워진다.
+        recommendedVersion:
+          type: string
+          description: 유도할 목표 버전. 권장과 강제 화면 양쪽에서 쓴다.
+
+    UpdatePolicyEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        blockedVersions:
+          type: array
+          maxItems: 20
+          items: { type: string }
+          description: |
+            여기 적힌 버전만 강제한다. 빈 배열은 "강제를 푼다"는 유효한 값이다.
+            필드를 생략하면 그 항목을 건드리지 않는다.
+        recommendOverride:
+          type: string
+          description: |
+            비어 있으면 관측된 최신 안정 버전을 자동 추종한다.
+            자동 추종이 이상값을 잡았을 때의 탈출구이지 평상시 운영 수단이 아니다.
+
+    ObservedAppVersion:
+      type: object
+      required: [platform, version, firstSeenAt]
+      properties:
+        platform: { type: string }
+        version: { type: string }
+        runtime: { type: string }
+        firstSeenAt:
+          type: string
+          format: date-time
+          description: |
+            마켓 업로드나 태그가 아니라 **그 빌드로 실제 세션이 처음 열린 시각**이다.
+            "스토어에 이미 깔려 있다"에 가장 가까운 1차 신호다.
+
+    UpdatePolicyView:
+      type: object
+      required: [appId, platforms, observedVersions]
+      properties:
+        appId: { type: string }
+        platforms:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              configured:
+                type: boolean
+                description: |
+                  Firestore에 이 플랫폼의 정책 항목이 실제로 있는지.
+
+                  정책이 없어도 자동 추종 값이나 스토어 주소가 있으면 플랫폼이
+                  응답에 실린다. 둘을 구분하지 않으면 전체 대체 요청이 건드리지
+                  않은 플랫폼의 정책을 지운다.
+              blockedVersions:
+                type: array
+                items:
+                  type: object
+                  required: [version]
+                  properties:
+                    version: { type: string }
+                    blockedAt: { type: string, format: date-time }
+              recommendOverride: { type: string }
+              autoRecommendedVersion:
+                type: string
+                description: override가 없을 때 실제로 적용되는 값이다.
+              updateUrl:
+                type: string
+                description: 이 플랫폼의 유저가 실제로 열게 될 주소다.
+        observedVersions:
+          type: array
+          items: { $ref: '#/components/schemas/ObservedAppVersion' }
 
     Maintenance:
       type: object
@@ -2233,6 +3323,11 @@ components:
         ga4ClientId:
           type: string
           maxLength: 64
+        analyticsConsent:
+          type: boolean
+          description: |
+            사용자가 제품 분석 전송에 명시적으로 동의했을 때만 true다.
+            생략 또는 false이면 ingress 주소를 GA4 위치 파생에 전달하지 않는다.
         sdkVersion:
           type: string
           maxLength: 32
@@ -2498,7 +3593,7 @@ components:
     AdminOrder:
       type: object
       required:
-        [orderKey, appId, platformUserId, entitlementId, platform, productId, state, purchasedAt, observedAt, tombstone]
+        [orderKey, appId, platformUserId, entitlementId, platform, productId, state, purchasedAt, observedAt, tombstone, isTestPurchase, providerOrderIdPresent]
       additionalProperties: false
       properties:
         orderKey: { type: string, pattern: '^[0-9a-f]{64}$' }
@@ -2527,6 +3622,13 @@ components:
         purchasedAt: { type: string, format: date-time }
         observedAt: { type: string, format: date-time }
         tombstone: { type: boolean }
+        isTestPurchase:
+          type: boolean
+          nullable: true
+          description: 마켓 검증에서 확인한 테스트 여부. 기존 미관측 기록과 판별 불가 마켓은 null이며 실거래로 추정하지 않는다.
+        providerOrderIdPresent:
+          type: boolean
+          description: 마켓 재무 주문 식별자의 존재 여부만 노출. 운영자 지급은 false. 원문 식별자는 응답하지 않는다.
 
     AdminEntitlementSource:
       type: object

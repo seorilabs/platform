@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "purpose": "seorilabs-platform-release-bootstrap-base-v1",
+  "releaseTag": "v0.6.6",
+  "sourceSha": "97f046ce2d9df5d72bc7a49fc81bb7c366ebaa17"
+}

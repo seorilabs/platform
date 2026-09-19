@@ -1,0 +1,113 @@
+name: Publish GDScript SDK
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-sdk-gdscript-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sdk:
+    name: GDScript SDK 검증
+    uses: seorilabs/.github/.github/workflows/godot-checks.yml@main
+    with:
+      runs_on: ubuntu-latest
+      project_dir: sdk-gdscript
+      check_command: |
+        bash scripts/check_sdk_gdscript.sh
+
+  publish:
+    name: Platform SDK approval 대기 draft 준비
+    needs: sdk
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24.16.0"
+          check-latest: false
+
+      - name: Verify tag is on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test, typecheck, and build
+        run: |
+          pnpm test
+          pnpm typecheck
+          pnpm build
+
+      - name: Verify GDScript SDK
+        run: bash scripts/sdk_gdscript_checksum.sh --check
+
+      - name: Resolve approved release base
+        id: release-base
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="$(node scripts/resolve-platform-release-base.mjs)"
+          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Download published TypeScript SDK bytes
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/sdk-ts/package.json').version")"
+          tarball="$RUNNER_TEMP/seorilabs-platform-sdk-$version.tgz"
+          integrity="$(node scripts/typescript-registry-artifact.mjs fetch \
+            --version "$version" \
+            --output "$tarball")"
+          {
+            echo "tarball=$tarball"
+            echo "integrity=$integrity"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned oasdiff
+        run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"
+
+      - name: Build immutable release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/build-platform-release.mjs \
+            --release-tag "$GITHUB_REF_NAME" \
+            --source-sha "$GITHUB_SHA" \
+            --base-ref "${{ steps.release-base.outputs.sha }}" \
+            --typescript-artifact "${{ steps.pack.outputs.tarball }}" \
+            --typescript-registry-integrity "${{ steps.pack.outputs.integrity }}" \
+            --oasdiff "$RUNNER_TEMP/oasdiff" \
+            --output-dir "$RUNNER_TEMP/platform-release"
+
+      - name: Prepare immutable GitHub Release draft
+        run: node scripts/publish-platform-release.mjs "$RUNNER_TEMP/platform-release"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

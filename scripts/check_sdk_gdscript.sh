@@ -2,7 +2,7 @@
 #
 # GDScript SDK 검증.
 #
-# probe를 헤드리스로 돌리고 SCRIPT ERROR가 없는지 본다.
+# probe를 헤드리스로 돌리고 SCRIPT ERROR와 ERROR가 없는지 본다.
 #
 # exit code만 보면 놓친다. Godot은 스크립트 런타임 오류가 나도
 # 실행을 계속하므로, probe가 중간에 끊긴 채 "통과"를 출력하고
@@ -48,6 +48,12 @@ run_probe() {
   # SCRIPT ERROR는 exit code에 반영되지 않는다. 직접 잡는다.
   if grep -q "SCRIPT ERROR" "$log"; then
     echo "SCRIPT ERROR가 있다: $script" >&2
+    rm -f "$log"
+    return 1
+  fi
+
+  if grep -q "ERROR:" "$log"; then
+    echo "ERROR가 있다: $script" >&2
     rm -f "$log"
     return 1
   fi

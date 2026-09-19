@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "keys": [
+    {
+      "algorithm": "Ed25519",
+      "keyId": "platform-fleet-release-20260829-5458c56b",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAv9bZ2dkImHKEyU9O2Sr/DG0rcbf3nh0qH24DGsWl1xQ=\n-----END PUBLIC KEY-----\n",
+      "status": "ACTIVE"
+    }
+  ]
+}

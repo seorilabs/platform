@@ -1,17 +1,17 @@
 {
   "name": "@seorilabs/platform-sdk",
-  "version": "0.3.0",
+  "version": "0.5.1",
   "description": "Seorilabs 공통 플랫폼 클라이언트 SDK",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/seorilabs/platform.git",
     "directory": "packages/sdk-ts"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,6 +19,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./gate-dom": {
+      "types": "./dist/gate-dom.d.ts",
+      "default": "./dist/gate-dom.js"
     }
   },
   "files": [

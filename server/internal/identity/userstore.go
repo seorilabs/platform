@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -14,6 +15,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/remoteconfig"
 	"github.com/seorilabs/platform/server/internal/store"
 )
 
@@ -22,13 +24,19 @@ import (
 //	identities/{app_id}__{firebase_uid}  → platform_user_id 매핑
 //	users/{platform_user_id}             → 사용자 문서
 //	refresh_tokens/{sha256(token)}       → 갱신 토큰
+//	auth_link_challenges/{sha256(nonce)} → 일회성 provider nonce
+//	auth_provider_identities/{app}__{provider}__{sha256(subject)} → platform_user_id
+//	app_versions/{app_id}__{sha256(runtime, version)} → 버전 최초 관측 표시
 //
 // identities 문서 ID를 복합키로 만드는 이유는 쿼리가 아니라 직접 읽기로
 // 끝내기 위해서다. 인덱스가 필요 없고 읽기 1회로 해결된다.
 const (
-	identitiesCollection = "identities"
-	usersCollection      = "users"
-	refreshCollection    = "refresh_tokens"
+	identitiesCollection       = "identities"
+	usersCollection            = "users"
+	refreshCollection          = "refresh_tokens"
+	accountChallengeCollection = "auth_link_challenges"
+	providerIdentityCollection = "auth_provider_identities"
+	appVersionsCollection      = "app_versions"
 )
 
 type identityDoc struct {
@@ -41,14 +49,25 @@ type identityDoc struct {
 	LastSeenAt     time.Time `firestore:"lastSeenAt"`
 }
 
-type userDoc struct {
+// appVersionDoc은 이 조합을 처음 본 순간을 남긴다. 존재 자체가 "이미 알렸다"는
+// 표시이므로 나중에 값을 덮어쓰지 않는다.
+type appVersionDoc struct {
 	AppID       string    `firestore:"appId"`
-	AppUserID   string    `firestore:"appUserId"`
-	Anonymous   bool      `firestore:"anonymous"`
-	AuthType    string    `firestore:"authType,omitempty"`
-	CreatedAt   time.Time `firestore:"createdAt"`
-	LastSeenAt  time.Time `firestore:"lastSeenAt"`
-	SupportCode string    `firestore:"supportCode"`
+	AppVersion  string    `firestore:"appVersion"`
+	Runtime     string    `firestore:"runtime,omitempty"`
+	SDK         string    `firestore:"sdk,omitempty"`
+	FirstSeenAt time.Time `firestore:"firstSeenAt"`
+}
+
+type userDoc struct {
+	AppID           string            `firestore:"appId"`
+	AppUserID       string            `firestore:"appUserId"`
+	Anonymous       bool              `firestore:"anonymous"`
+	AuthType        string            `firestore:"authType,omitempty"`
+	CreatedAt       time.Time         `firestore:"createdAt"`
+	LastSeenAt      time.Time         `firestore:"lastSeenAt"`
+	SupportCode     string            `firestore:"supportCode"`
+	LinkedProviders map[string]string `firestore:"linkedProviders,omitempty"`
 }
 
 // SupportUser는 Admin API에 노출해도 되는 PII 없는 사용자 요약이다.
@@ -68,8 +87,29 @@ type refreshDoc struct {
 	AppID          string    `firestore:"appId"`
 	AppUserID      string    `firestore:"appUserId"`
 	Anonymous      bool      `firestore:"anonymous"`
+	LinkedAccount  bool      `firestore:"linkedAccount,omitempty"`
 	ExpiresAt      time.Time `firestore:"expiresAt"`
 	CreatedAt      time.Time `firestore:"createdAt"`
+}
+
+type accountChallengeDoc struct {
+	AppID          string    `firestore:"appId"`
+	PlatformUserID string    `firestore:"platformUserId"`
+	Provider       string    `firestore:"provider"`
+	ExpiresAt      time.Time `firestore:"expiresAt"`
+	CreatedAt      time.Time `firestore:"createdAt"`
+	ConsumedAt     time.Time `firestore:"consumedAt,omitempty"`
+	SubjectHash    string    `firestore:"subjectHash,omitempty"`
+	TargetUserID   string    `firestore:"targetPlatformUserId,omitempty"`
+	TTLAt          time.Time `firestore:"ttlAt"`
+}
+
+type providerIdentityDoc struct {
+	AppID          string    `firestore:"appId"`
+	Provider       string    `firestore:"provider"`
+	SubjectHash    string    `firestore:"subjectHash"`
+	PlatformUserID string    `firestore:"platformUserId"`
+	LinkedAt       time.Time `firestore:"linkedAt"`
 }
 
 // StoreRepository는 Firestore 기반 identity 저장소다.
@@ -77,6 +117,10 @@ type StoreRepository struct {
 	store       *store.Client
 	now         func() time.Time
 	operational *operational.Repository
+
+	// seenVersions는 이미 알린 (앱, 런타임, 버전) 조합이다. 세션 발급마다 도는
+	// 경로라 Firestore 왕복을 프로세스 안에서 끊는다. 정답은 app_versions 문서다.
+	seenVersions sync.Map
 }
 
 // WithOperationalEvents는 새 사용자 커밋과 같은 transaction에 운영 이벤트를 쌓는다.
@@ -112,6 +156,22 @@ func refreshPath(token string) (fspath.Path, error) {
 	return fspath.Parse(refreshCollection + "/" + hashHex(token))
 }
 
+func accountChallengePath(nonce string) (fspath.Path, error) {
+	return fspath.Parse(accountChallengeCollection + "/" + hashHex(nonce))
+}
+
+func providerIdentityPath(appID, provider, subjectHash string) (fspath.Path, error) {
+	return fspath.Parse(providerIdentityCollection + "/" + appID + "__" + provider + "__" + subjectHash)
+}
+
+func appVersionPath(appID, runtime, appVersion string) (fspath.Path, error) {
+	// 런타임과 버전은 클라이언트 문자열이라 경로에 그대로 넣지 않는다.
+	// 구분자를 함께 해시해 "1.2" + "4"와 "1.2.4"가 같은 문서가 되지 않게 한다.
+	return fspath.Parse(
+		appVersionsCollection + "/" + appID + "__" + hashHex(runtime+"\x00"+appVersion),
+	)
+}
+
 func hashHex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
@@ -126,11 +186,10 @@ func hashHex(s string) string {
 // 여러 개가 만들어지면 같은 사람의 결제 원장이 갈라진다.
 func (r *StoreRepository) EnsureUser(
 	ctx context.Context,
-	appID, uid string,
-	anonymous bool,
-	authType, referrer string,
+	appID string,
+	identity NewIdentity,
 ) (string, error) {
-	idPath, err := identityPath(appID, uid)
+	idPath, err := identityPath(appID, identity.UID)
 	if err != nil {
 		return "", platformerr.Wrap(err, platformerr.CodeInternal, "사용자를 확인하지 못했어요")
 	}
@@ -138,6 +197,9 @@ func (r *StoreRepository) EnsureUser(
 	var result string
 
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkDeletionTx(tx, appID, identity.UID); err != nil {
+			return err
+		}
 		now := r.now()
 
 		exists, snap, err := tx.Exists(idPath)
@@ -174,9 +236,9 @@ func (r *StoreRepository) EnsureUser(
 			// identity 매핑과 PII 없는 운영 조회 문서의 lastSeenAt을 같은
 			// 트랜잭션에서 갱신한다.
 			doc.LastSeenAt = now
-			doc.AuthType = authType
+			doc.AuthType = identity.AuthType
 			user.LastSeenAt = now
-			user.AuthType = authType
+			user.AuthType = identity.AuthType
 			if err := tx.Set(idPath, doc); err != nil {
 				return err
 			}
@@ -197,9 +259,9 @@ func (r *StoreRepository) EnsureUser(
 		if err := tx.Set(idPath, identityDoc{
 			PlatformUserID: puid,
 			AppID:          appID,
-			AppUserID:      uid,
-			Anonymous:      anonymous,
-			AuthType:       authType,
+			AppUserID:      identity.UID,
+			Anonymous:      identity.Anonymous,
+			AuthType:       identity.AuthType,
 			FirstSeenAt:    now,
 			LastSeenAt:     now,
 		}); err != nil {
@@ -208,9 +270,9 @@ func (r *StoreRepository) EnsureUser(
 
 		if err := tx.Set(uPath, userDoc{
 			AppID:       appID,
-			AppUserID:   uid,
-			Anonymous:   anonymous,
-			AuthType:    authType,
+			AppUserID:   identity.UID,
+			Anonymous:   identity.Anonymous,
+			AuthType:    identity.AuthType,
 			CreatedAt:   now,
 			LastSeenAt:  now,
 			SupportCode: NewSupportCode(appID, puid),
@@ -223,7 +285,7 @@ func (r *StoreRepository) EnsureUser(
 		return r.operational.EnqueueTx(tx, operational.Event{
 			EventID:    operational.StableEventID("identity", appID, puid),
 			OccurredAt: now.UTC(), Type: "identity.created", AppID: appID, Outcome: "created",
-			Attributes: identityEventAttributes(authType, anonymous, referrer),
+			Attributes: identityEventAttributes(identity),
 		})
 	})
 	if err != nil {
@@ -232,14 +294,154 @@ func (r *StoreRepository) EnsureUser(
 	return result, nil
 }
 
+// maxSignInProviderLen은 운영 이벤트 계약이 허용하는 문자열 상한이다.
+//
+// 이 이벤트는 계정을 만드는 트랜잭션 안에서 enqueue되므로 계약을 어긴 속성 하나가
+// 가입 자체를 되돌린다. 공급자 이름은 관측용이라 실을 수 없으면 뺀다.
+const maxSignInProviderLen = 120
+
 // identityEventAttributes는 신규 계정 이벤트에 실을 속성을 만든다.
 //
-// referrer는 AppsInToss 로그인에만 있다. 빈 값을 실어 보내면 알림에서 유입이
-// "없음"이라는 사실로 읽히므로 값이 있을 때만 넣는다.
-func identityEventAttributes(authType string, anonymous bool, referrer string) map[string]any {
-	attributes := map[string]any{"authType": authType, "anonymous": anonymous}
-	if referrer != "" {
-		attributes["referrer"] = referrer
+// referrer는 AppsInToss 로그인에만 있고 signInProvider는 Firebase ID token을 거친
+// 경로에만 있다. 빈 값을 실어 보내면 알림에서 유입이나 로그인 수단이 "없음"이라는
+// 사실로 읽히므로 값이 있을 때만 넣는다.
+func identityEventAttributes(identity NewIdentity) map[string]any {
+	attributes := map[string]any{
+		"authType":  identity.AuthType,
+		"anonymous": identity.Anonymous,
+	}
+	if identity.Referrer != "" {
+		attributes["referrer"] = identity.Referrer
+	}
+	if n := len(identity.SignInProvider); n > 0 && n <= maxSignInProviderLen {
+		attributes["signInProvider"] = identity.SignInProvider
+	}
+	if identity.Client.AppVersion != "" {
+		attributes["appVersion"] = identity.Client.AppVersion
+	}
+	if identity.Client.Runtime != "" {
+		attributes["runtime"] = identity.Client.Runtime
+	}
+	return attributes
+}
+
+// ObserveAppVersion은 (앱, 런타임, 버전) 조합을 처음 본 순간 한 번만 이벤트를 낸다.
+//
+// 세션 발급마다 불리므로 이미 본 조합은 프로세스 캐시에서 끊는다. 캐시는 프로세스
+// 수명 동안만 유효하고, 정답은 Firestore 문서가 쥔다. 새 pod가 뜨면 조합당 읽기
+// 한 번을 더 하지만 문서가 이미 있어 이벤트가 두 번 나가지는 않는다.
+func (r *StoreRepository) ObserveAppVersion(
+	ctx context.Context,
+	appID string,
+	client ClientInfo,
+) error {
+	if client.AppVersion == "" {
+		// 헤더를 보내지 않는 구버전 클라이언트다. 관측할 조합이 없다.
+		return nil
+	}
+	cacheKey := appID + "\x00" + client.Runtime + "\x00" + client.AppVersion
+	if _, seen := r.seenVersions.Load(cacheKey); seen {
+		return nil
+	}
+	path, err := appVersionPath(appID, client.Runtime, client.AppVersion)
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "앱 버전을 기록하지 못했어요")
+	}
+
+	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		exists, _, err := tx.Exists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+		now := r.now()
+		if err := tx.Create(path, appVersionDoc{
+			AppID:       appID,
+			AppVersion:  client.AppVersion,
+			Runtime:     client.Runtime,
+			SDK:         client.SDK,
+			FirstSeenAt: now,
+		}); err != nil {
+			return err
+		}
+		if r.operational == nil {
+			return nil
+		}
+		return r.operational.EnqueueTx(tx, operational.Event{
+			EventID: operational.StableEventID(
+				"app_version", appID, client.Runtime, client.AppVersion,
+			),
+			OccurredAt: now.UTC(),
+			Type:       "app.version.first_seen",
+			AppID:      appID,
+			Outcome:    "observed",
+			Attributes: appVersionEventAttributes(client),
+		})
+	})
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "앱 버전을 기록하지 못했어요")
+	}
+	r.seenVersions.Store(cacheKey, struct{}{})
+	return nil
+}
+
+// ListObservedAppVersions는 이 앱에서 관측된 (런타임, 버전) 조합을 돌려준다.
+//
+// 업데이트 정책의 근거다. 아직 아무도 실행하지 않은 버전을 강제 대상으로
+// 걸면 오타를 잡을 방법이 없고, 유저가 갈 곳이 있는지도 알 수 없다.
+//
+// 정렬을 걸지 않는다. appId 필터와 firstSeenAt 정렬을 함께 걸면 Firestore
+// 복합 인덱스가 필요하고, 인덱스 누락은 배포 후에야 500으로 드러난다.
+// 앱당 조합 수가 수십 단위라 호출자가 메모리에서 정리하는 편이 옳다.
+func (r *StoreRepository) ListObservedAppVersions(
+	ctx context.Context,
+	appID string,
+	limit int,
+) ([]remoteconfig.ObservedAppVersion, error) {
+	col, err := fspath.Parse(appVersionsCollection)
+	if err != nil {
+		return nil, platformerr.Wrap(err, platformerr.CodeInternal, "관측된 버전을 읽지 못했어요")
+	}
+	iter, err := r.store.Query(ctx, col, func(q firestore.Query) firestore.Query {
+		return q.Where("appId", "==", appID).Limit(limit)
+	})
+	if err != nil {
+		return nil, platformerr.Wrap(err, platformerr.CodeInternal, "관측된 버전을 읽지 못했어요")
+	}
+	defer iter.Stop()
+
+	out := make([]remoteconfig.ObservedAppVersion, 0, 32)
+	for {
+		snap, err := iter.Next()
+		if store.IsDone(err) {
+			break
+		}
+		if err != nil {
+			return nil, platformerr.Wrap(err, platformerr.CodeInternal, "관측된 버전을 읽지 못했어요")
+		}
+		var doc appVersionDoc
+		if err := snap.DataTo(&doc); err != nil {
+			return nil, platformerr.Wrap(err, platformerr.CodeInternal, "관측된 버전을 해석하지 못했어요")
+		}
+		out = append(out, remoteconfig.ObservedAppVersion{
+			Version:     doc.AppVersion,
+			Runtime:     doc.Runtime,
+			FirstSeenAt: doc.FirstSeenAt,
+		})
+	}
+	return out, nil
+}
+
+// appVersionEventAttributes는 버전 최초 관측 이벤트에 실을 속성을 만든다.
+func appVersionEventAttributes(client ClientInfo) map[string]any {
+	attributes := map[string]any{"appVersion": client.AppVersion}
+	if client.Runtime != "" {
+		attributes["runtime"] = client.Runtime
+	}
+	if client.SDK != "" {
+		attributes["sdk"] = client.SDK
 	}
 	return attributes
 }
@@ -474,6 +676,271 @@ func supportPrefix(appID string) string {
 	return string(out)
 }
 
+func (r *StoreRepository) CreateAccountLinkChallenge(
+	ctx context.Context,
+	appID, platformUserID, provider, nonce string,
+	expiresAt time.Time,
+) error {
+	path, err := accountChallengePath(nonce)
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "로그인 요청을 저장하지 못했어요")
+	}
+	now := r.now().UTC()
+	if err := r.store.Set(ctx, path, accountChallengeDoc{
+		AppID: appID, PlatformUserID: platformUserID, Provider: provider,
+		ExpiresAt: expiresAt.UTC(), CreatedAt: now, TTLAt: expiresAt.UTC().Add(24 * time.Hour),
+	}); err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "로그인 요청을 저장하지 못했어요")
+	}
+	return nil
+}
+
+func (r *StoreRepository) IsAccountLinked(
+	ctx context.Context,
+	appID, platformUserID string,
+) (bool, error) {
+	path, err := userPath(platformUserID)
+	if err != nil {
+		return false, platformerr.Wrap(err, platformerr.CodeInternal, "계정 연결을 확인하지 못했어요")
+	}
+	snap, err := r.store.Get(ctx, path)
+	if err != nil {
+		return false, platformerr.Wrap(err, platformerr.CodeInternal, "계정 연결을 확인하지 못했어요")
+	}
+	var user userDoc
+	if err := snap.DataTo(&user); err != nil || user.AppID != appID {
+		return false, platformerr.New(platformerr.CodeLedgerStateInvalid,
+			"계정 연결 정보가 올바르지 않아요")
+	}
+	return len(user.LinkedProviders) > 0, nil
+}
+
+func (r *StoreRepository) ConnectAccount(
+	ctx context.Context,
+	appID, currentPlatformUserID, provider, subject, nonce string,
+	now time.Time,
+) (ConnectedAccount, error) {
+	challengePath, err := accountChallengePath(nonce)
+	if err != nil {
+		return ConnectedAccount{}, platformerr.New(platformerr.CodeAuthInvalid, "로그인 요청이 올바르지 않아요")
+	}
+	subjectHash := hashHex(subject)
+	providerPath, err := providerIdentityPath(appID, provider, subjectHash)
+	if err != nil {
+		return ConnectedAccount{}, platformerr.New(platformerr.CodeAuthInvalid, "로그인 정보가 올바르지 않아요")
+	}
+	currentPath, err := userPath(currentPlatformUserID)
+	if err != nil {
+		return ConnectedAccount{}, platformerr.New(platformerr.CodeAuthInvalid, "현재 사용자가 올바르지 않아요")
+	}
+
+	var result ConnectedAccount
+	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		challengeExists, challengeSnap, err := tx.Exists(challengePath)
+		if err != nil {
+			return err
+		}
+		if !challengeExists {
+			return platformerr.New(platformerr.CodeAuthInvalid, "로그인 요청을 찾을 수 없어요")
+		}
+		var challenge accountChallengeDoc
+		if err := challengeSnap.DataTo(&challenge); err != nil {
+			return err
+		}
+		if challenge.AppID != appID || challenge.PlatformUserID != currentPlatformUserID ||
+			challenge.Provider != provider {
+			return platformerr.New(platformerr.CodeAuthInvalid, "다른 로그인 요청이에요")
+		}
+
+		if !challenge.ConsumedAt.IsZero() {
+			if challenge.SubjectHash != subjectHash || challenge.TargetUserID == "" {
+				return platformerr.New(platformerr.CodeAccountLinkConflict, "이미 사용한 로그인 요청이에요")
+			}
+			targetPath, err := userPath(challenge.TargetUserID)
+			if err != nil {
+				return err
+			}
+			targetExists, targetSnap, err := tx.Exists(targetPath)
+			if err != nil || !targetExists {
+				if err != nil {
+					return err
+				}
+				return platformerr.New(platformerr.CodeUserNotFound, "연결된 사용자를 찾을 수 없어요")
+			}
+			var target userDoc
+			if err := targetSnap.DataTo(&target); err != nil {
+				return err
+			}
+			result = ConnectedAccount{PlatformUserID: challenge.TargetUserID, AppUserID: target.AppUserID,
+				Provider: provider, Restored: challenge.TargetUserID != currentPlatformUserID}
+			return nil
+		}
+		if now.After(challenge.ExpiresAt) {
+			return platformerr.New(platformerr.CodeAuthInvalid, "로그인 요청이 만료됐어요")
+		}
+
+		currentExists, currentSnap, err := tx.Exists(currentPath)
+		if err != nil {
+			return err
+		}
+		if !currentExists {
+			return platformerr.New(platformerr.CodeUserNotFound, "현재 사용자를 찾을 수 없어요")
+		}
+		var current userDoc
+		if err := currentSnap.DataTo(&current); err != nil {
+			return err
+		}
+		if current.AppID != appID || current.AppUserID == "" {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid, "현재 사용자 정보가 올바르지 않아요")
+		}
+
+		providerExists, providerSnap, err := tx.Exists(providerPath)
+		if err != nil {
+			return err
+		}
+		targetID := currentPlatformUserID
+		target := current
+		restored := false
+		if providerExists {
+			var mapping providerIdentityDoc
+			if err := providerSnap.DataTo(&mapping); err != nil {
+				return err
+			}
+			if mapping.AppID != appID || mapping.Provider != provider || mapping.SubjectHash != subjectHash ||
+				mapping.PlatformUserID == "" {
+				return platformerr.New(platformerr.CodeLedgerStateInvalid, "공급자 계정 매핑이 올바르지 않아요")
+			}
+			targetID = mapping.PlatformUserID
+			if targetID != currentPlatformUserID {
+				if len(current.LinkedProviders) > 0 {
+					return platformerr.New(platformerr.CodeAccountLinkConflict,
+						"서로 다른 연결 계정을 합칠 수 없어요")
+				}
+				targetPath, err := userPath(targetID)
+				if err != nil {
+					return err
+				}
+				targetExists, targetSnap, err := tx.Exists(targetPath)
+				if err != nil {
+					return err
+				}
+				if !targetExists {
+					return platformerr.New(platformerr.CodeLedgerStateInvalid,
+						"연결 계정의 사용자가 없어요")
+				}
+				if err := targetSnap.DataTo(&target); err != nil {
+					return err
+				}
+				restored = true
+			}
+		} else {
+			if existing := current.LinkedProviders[provider]; existing != "" && existing != subjectHash {
+				return platformerr.New(platformerr.CodeAccountLinkConflict,
+					"이미 다른 공급자 계정이 연결돼 있어요")
+			}
+			if current.LinkedProviders == nil {
+				current.LinkedProviders = map[string]string{}
+			}
+			current.LinkedProviders[provider] = subjectHash
+			if err := tx.Set(providerPath, providerIdentityDoc{
+				AppID: appID, Provider: provider, SubjectHash: subjectHash,
+				PlatformUserID: currentPlatformUserID, LinkedAt: now,
+			}); err != nil {
+				return err
+			}
+			if err := tx.Set(currentPath, current); err != nil {
+				return err
+			}
+			target = current
+		}
+
+		if target.LinkedProviders[provider] != subjectHash {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"연결 계정의 공급자 정보가 올바르지 않아요")
+		}
+		challenge.ConsumedAt = now
+		challenge.SubjectHash = subjectHash
+		challenge.TargetUserID = targetID
+		if err := tx.Set(challengePath, challenge); err != nil {
+			return err
+		}
+		result = ConnectedAccount{PlatformUserID: targetID, AppUserID: target.AppUserID,
+			Provider: provider, Restored: restored}
+		return nil
+	})
+	if err != nil {
+		if platformerr.CodeOf(err) != platformerr.CodeInternal {
+			return ConnectedAccount{}, err
+		}
+		return ConnectedAccount{}, platformerr.Wrap(err, platformerr.CodeInternal,
+			"계정을 연결하지 못했어요")
+	}
+	return result, nil
+}
+
+// DisconnectAccount는 공급자 subject 매핑과 사용자 쪽 연결 표시를 함께 제거한다.
+// subject 원문은 이 함수 안에서만 해시되며 IAP 원장은 건드리지 않는다.
+func (r *StoreRepository) DisconnectAccount(
+	ctx context.Context,
+	appID, provider, subject string,
+) error {
+	subjectHash := hashHex(subject)
+	providerPath, err := providerIdentityPath(appID, provider, subjectHash)
+	if err != nil {
+		return platformerr.Wrap(err, platformerr.CodeInternal, "계정 연결을 해제하지 못했어요")
+	}
+
+	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		mappingExists, mappingSnap, err := tx.Exists(providerPath)
+		if err != nil {
+			return err
+		}
+		if !mappingExists {
+			return nil
+		}
+		var mapping providerIdentityDoc
+		if err := mappingSnap.DataTo(&mapping); err != nil {
+			return err
+		}
+		if mapping.AppID != appID || mapping.Provider != provider ||
+			mapping.SubjectHash != subjectHash || mapping.PlatformUserID == "" {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid,
+				"공급자 계정 매핑이 올바르지 않아요")
+		}
+
+		uPath, err := userPath(mapping.PlatformUserID)
+		if err != nil {
+			return err
+		}
+		userExists, userSnap, err := tx.Exists(uPath)
+		if err != nil {
+			return err
+		}
+		if userExists {
+			var user userDoc
+			if err := userSnap.DataTo(&user); err != nil {
+				return err
+			}
+			if user.AppID != appID || user.LinkedProviders[provider] != subjectHash {
+				return platformerr.New(platformerr.CodeLedgerStateInvalid,
+					"공급자 계정 매핑이 사용자와 일치하지 않아요")
+			}
+			delete(user.LinkedProviders, provider)
+			if err := tx.Set(uPath, user); err != nil {
+				return err
+			}
+		}
+		return tx.Delete(providerPath)
+	})
+	if err != nil {
+		if platformerr.CodeOf(err) != platformerr.CodeInternal {
+			return err
+		}
+		return platformerr.Wrap(err, platformerr.CodeInternal, "계정 연결을 해제하지 못했어요")
+	}
+	return nil
+}
+
 func (r *StoreRepository) SaveRefresh(
 	ctx context.Context,
 	token string,
@@ -485,13 +952,19 @@ func (r *StoreRepository) SaveRefresh(
 		return platformerr.Wrap(err, platformerr.CodeInternal, "세션을 저장하지 못했어요")
 	}
 
-	err = r.store.Set(ctx, p, refreshDoc{
-		PlatformUserID: sess.PlatformUserID,
-		AppID:          sess.AppID,
-		AppUserID:      sess.AppUserID,
-		Anonymous:      sess.IsAnonymous,
-		ExpiresAt:      expiresAt,
-		CreatedAt:      r.now(),
+	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := r.checkDeletionTx(tx, sess.AppID, sess.AppUserID); err != nil {
+			return err
+		}
+		return tx.Set(p, refreshDoc{
+			PlatformUserID: sess.PlatformUserID,
+			AppID:          sess.AppID,
+			AppUserID:      sess.AppUserID,
+			Anonymous:      sess.IsAnonymous,
+			LinkedAccount:  sess.IsLinkedAccount,
+			ExpiresAt:      expiresAt,
+			CreatedAt:      r.now(),
+		})
 	})
 	if err != nil {
 		return platformerr.Wrap(err, platformerr.CodeInternal, "세션을 저장하지 못했어요")
@@ -525,10 +998,11 @@ func (r *StoreRepository) LoadRefresh(ctx context.Context, token string) (Sessio
 	}
 
 	return Session{
-		PlatformUserID: doc.PlatformUserID,
-		AppID:          doc.AppID,
-		AppUserID:      doc.AppUserID,
-		IsAnonymous:    doc.Anonymous,
+		PlatformUserID:  doc.PlatformUserID,
+		AppID:           doc.AppID,
+		AppUserID:       doc.AppUserID,
+		IsAnonymous:     doc.Anonymous,
+		IsLinkedAccount: doc.LinkedAccount,
 	}, nil
 }
 
@@ -559,6 +1033,45 @@ func (r *StoreRepository) DeleteUser(ctx context.Context, appID, uid, puid strin
 	}
 
 	err = r.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
+		providerPaths := make([]fspath.Path, 0)
+		uExists, uSnap, err := tx.Exists(uPath)
+		if err != nil {
+			return err
+		}
+		if uExists {
+			var user userDoc
+			if err := uSnap.DataTo(&user); err != nil {
+				return err
+			}
+			for provider, subjectHash := range user.LinkedProviders {
+				providerPath, err := providerIdentityPath(appID, provider, subjectHash)
+				if err != nil {
+					return err
+				}
+				exists, snap, err := tx.Exists(providerPath)
+				if err != nil {
+					return err
+				}
+				if !exists {
+					continue
+				}
+				var mapping providerIdentityDoc
+				if err := snap.DataTo(&mapping); err != nil {
+					return err
+				}
+				if mapping.AppID != appID || mapping.Provider != provider ||
+					mapping.SubjectHash != subjectHash || mapping.PlatformUserID != puid {
+					return platformerr.New(platformerr.CodeLedgerStateInvalid,
+						"계정 연결 정보가 사용자와 일치하지 않아요")
+				}
+				providerPaths = append(providerPaths, providerPath)
+			}
+		}
+		for _, providerPath := range providerPaths {
+			if err := tx.Delete(providerPath); err != nil {
+				return err
+			}
+		}
 		if err := tx.Delete(idPath); err != nil {
 			return err
 		}

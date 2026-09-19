@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -215,5 +216,27 @@ func TestDecodeStrictRejectsTrailingJSON(t *testing.T) {
 	var active activePointer
 	if err := decodeStrict([]byte(`{"schemaVersion":1,"contentVersion":"x"}{}`), &active); err == nil {
 		t.Fatal("뒤에 붙은 JSON을 허용했다")
+	}
+}
+
+func TestValidateItemBoundsMore(t *testing.T) {
+	base := Item{ID: "ilju.gapja", Text: "압축본", Access: AccessFree, Contexts: []Context{ContextReading}}
+	if err := validateItem(base); err != nil {
+		t.Fatalf("more 없는 항목이 걸렸다: %v", err)
+	}
+	withMore := base
+	withMore.More = "원문"
+	if err := validateItem(withMore); err != nil {
+		t.Fatalf("more 있는 항목이 걸렸다: %v", err)
+	}
+	blank := base
+	blank.More = "   "
+	if err := validateItem(blank); err == nil {
+		t.Fatal("공백만 있는 more가 통과했다")
+	}
+	huge := base
+	huge.More = strings.Repeat("가", 16*1024+1)
+	if err := validateItem(huge); err == nil {
+		t.Fatal("16KB를 넘는 more가 통과했다")
 	}
 }

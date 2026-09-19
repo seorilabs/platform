@@ -37,19 +37,32 @@ func TestCrosswordPuzzleRegistryAuthBridgeContract(t *testing.T) {
 	}
 	// 힌트 잔량이 기기 로컬 저장소에 있어 서버가 지킬 재화가 없다. 보상형 광고가
 	// 있지만 ads(SSV)는 켜지 않는다. 힌트를 서버로 옮길 때 함께 검토한다.
-	for _, feature := range []string{"config", "events", "iap", "ads"} {
+	for _, feature := range []string{"events", "iap", "ads"} {
 		if app.FeatureEnabled(feature) {
 			t.Fatalf("%s 기능이 활성화됐다: %#v", feature, app.Features)
 		}
+	}
+	// config는 업데이트 유도 정책의 앱별 롤아웃 스위치다. 스토어 주소와 짝이다.
+	if !app.FeatureEnabled("config") {
+		t.Fatalf("config가 비활성이다: %#v", app.Features)
+	}
+	// registry와 앱 opt-in은 둘 다 켜져야 heartbeat가 돈다. registry만 꺼지면 token이
+	// enabled=false로 돌아가 이미 마켓에 나간 빌드의 동접이 통째로 사라진다.
+	if !app.FeatureEnabled("presence") {
+		t.Fatalf("presence가 비활성이다: %#v", app.Features)
 	}
 	if len(app.PlatformEventAllowlist) != 0 {
 		t.Fatalf("events가 비활성인데 allowlist가 있다: %#v", app.PlatformEventAllowlist)
 	}
 
 	// AIT WebView가 공개 bootstrap 경로를 호출하므로 서비스와 콘솔 QR origin이 모두 필요하다.
+	// SDK 3.x부터 호스트가 apps/private-apps에서 web/private-web으로 바뀐다. 2.x 번들이
+	// 라이브인 동안은 네 개를 모두 허용하고, 3.x 전환이 끝난 뒤 옛 두 개를 걷어낸다.
 	wantOrigins := map[string]bool{
 		"https://crossword-puzzle-game.apps.tossmini.com":         false,
 		"https://crossword-puzzle-game.private-apps.tossmini.com": false,
+		"https://crossword-puzzle-game.web.tossmini.com":          false,
+		"https://crossword-puzzle-game.private-web.tossmini.com":  false,
 	}
 	for _, origin := range app.CORSOrigins {
 		seen, ok := wantOrigins[origin]

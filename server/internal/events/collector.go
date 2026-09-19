@@ -86,7 +86,7 @@ func (r *Row) Save() (map[string]bigquery.Value, string, error) {
 
 // eventsSchema는 events 테이블 스키마다.
 //
-// docs/03-architecture/events.md의 정의와 같아야 한다.
+// Obsidian 프로젝트/platform/03-architecture/events.md의 정의와 같아야 한다.
 var eventsSchema = bigquery.Schema{
 	{Name: "event_id", Type: bigquery.StringFieldType, Required: true,
 		Description: "클라이언트 생성 ULID. at-least-once라 중복 제거는 쿼리에서"},

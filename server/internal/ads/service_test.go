@@ -25,7 +25,7 @@ type recordedSSVEvent struct {
 	event SSVEvent
 }
 
-func (f *fakeRepo) CreateClaim(_ context.Context, c Claim, _, _ int) (Claim, error) {
+func (f *fakeRepo) CreateClaim(_ context.Context, c Claim, _, _, _ int) (Claim, error) {
 	if f.createErr != nil {
 		return Claim{}, f.createErr
 	}

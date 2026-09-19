@@ -8,12 +8,11 @@
 //   - 비용 격벽: ingest 폭주가 max-instances 를 다 먹어 결제를 죽이면 안 된다
 //   - 동시성 튜닝이 정반대: ingest 는 I/O 바운드 write-only, api 는 캐시 + 읽기
 //
-// docs/03-architecture/overview.md 참고.
+// Obsidian 프로젝트/platform/03-architecture/overview.md 참고.
 package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,12 +23,16 @@ import (
 	"time"
 
 	platformads "github.com/seorilabs/platform/server/internal/ads"
+	"github.com/seorilabs/platform/server/internal/blocklist"
 	"github.com/seorilabs/platform/server/internal/config"
 	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/iap"
+	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/identity"
+	"github.com/seorilabs/platform/server/internal/identity/providers/oidc"
 	"github.com/seorilabs/platform/server/internal/operational"
+	"github.com/seorilabs/platform/server/internal/presence"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/remoteconfig"
 	"github.com/seorilabs/platform/server/internal/store"
@@ -86,19 +89,23 @@ func run() error {
 //
 // composition root에서만 조립한다. 패키지끼리 직접 조립하지 않는다.
 type deps struct {
-	store    *store.Client
-	registry *registry.Registry
-	identity *identity.Handler
+	deletions *identity.DeletionWorker
+	store     *store.Client
+	registry  *registry.Registry
+	identity  *identity.Handler
 	// adminUsers는 세션 issuer 없이 PII 없는 사용자 조회만 제공한다.
 	adminUsers      *identity.StoreRepository
+	blocklist       *blocklist.Service
 	keys            *identity.KeyCache
 	events          *events.Collector
+	ga4             *events.MeasurementProtocol
 	config          *remoteconfig.Service
 	iap             *iapParts
 	ads             *adsParts
 	content         *contentParts
 	operational     *operational.Dispatcher
 	operationalRepo *operational.Repository
+	presence        *presence.Handler
 }
 
 func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
@@ -118,6 +125,29 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		store:    st,
 		registry: reg,
 		config:   remoteconfig.NewService(st),
+		// 차단 목록은 레지스트리가 아니라 별도 컬렉션이다. regsync가
+		// 레지스트리 문서를 통째로 덮어써도 차단이 풀리지 않는다. ADR 0026.
+		//
+		// role과 무관하게 만든다. 세션을 발급하는 role은 차단을 읽고
+		// admin role은 차단을 쓴다.
+		blocklist: blocklist.NewService(blocklist.NewStoreSource(st)),
+	}
+	if cfg.Role == config.RoleIngest {
+		d.ga4 = events.NewMeasurementProtocol(cfg.GA4MeasurementProtocolSecrets, nil)
+		var issuer presence.TokenIssuer
+		if cfg.Presence.Enabled() {
+			privateKey, err := presence.ParsePrivateKey(cfg.Presence.PrivateKeyRaw)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			issuer, err = presence.NewIssuer(privateKey, presence.DefaultTokenTTL)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+		}
+		d.presence = presence.NewHandler(reg, issuer, cfg.Presence.EdgeURL)
 	}
 	if cfg.Operational.Enabled() {
 		repo := operational.NewRepository(st)
@@ -147,10 +177,17 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		users := identity.NewStoreRepository(st).WithOperationalEvents(d.operationalRepo)
 		svc := identity.NewService(
 			reg,
-			identity.NewFirebaseVerifier(keys),
+			identity.NewFirebaseVerifier(keys, d.blocklist),
 			users,
 			issuer,
+			d.blocklist,
 		)
+		// 버전 최초 관측은 세션 원장과 같은 Firestore·outbox 자원을 쓴다.
+		svc.WithAppVersionObserver(users)
+		svc.WithAccountDeletions(users)
+		// 세션 응답에 설정을 동봉해 부팅 왕복을 1회로 줄인다. Godot의
+		// HTTPRequest는 동시 1요청만 처리하므로 이게 실제로 값을 한다.
+		svc.WithConfigOverlay(d.config)
 		if cfg.Role == config.RoleAPI {
 			customTokens, err := identity.NewIAMCustomTokenIssuer(ctx)
 			if err != nil {
@@ -159,38 +196,57 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 			}
 			svc.WithCustomTokenIssuer(customTokens)
 			svc.WithAppCheckVerifier(identity.NewFirebaseAppCheckVerifier())
-		}
-		// Toss Login의 authorization code 교환도 AppsInToss mTLS를 쓴다.
-		// 결제 앱은 자격증명이 이미 격리된 iap role에서 세션을 열고,
-		// 광고 전용 앱은 ads role에서 같은 경계를 사용한다.
-		var aitCertPEM, aitKeyPEM []byte
-		var aitBaseURL, aitRoleName string
-		switch {
-		case cfg.Role == config.RoleIAP && cfg.IAP.Toss.Enabled():
-			aitCertPEM = cfg.IAP.Toss.ClientCertPEM
-			aitKeyPEM = cfg.IAP.Toss.ClientKeyPEM
-			aitBaseURL = cfg.IAP.Toss.BaseURL
-			aitRoleName = "iap"
-		case cfg.Role == config.RoleAds && cfg.Ads.AITLoginEnabled():
-			aitCertPEM = cfg.Ads.AITClientCertPEM
-			aitKeyPEM = cfg.Ads.AITClientKeyPEM
-			aitBaseURL = cfg.Ads.AITBaseURL
-			aitRoleName = "ads"
-		}
-		if len(aitCertPEM) > 0 {
-			cert, err := tls.X509KeyPair(aitCertPEM, aitKeyPEM)
-			if err != nil {
-				closeStore()
-				return nil, fmt.Errorf("%s: AppsInToss 로그인 인증서를 읽지 못했다: %w", aitRoleName, err)
-			}
-			client, err := identity.NewAITLoginClient(cert, aitBaseURL)
+			kakao, err := oidc.NewKakao(nil)
 			if err != nil {
 				closeStore()
 				return nil, err
 			}
-			svc.WithAITLoginVerifier(client)
+			apple, err := oidc.NewApple(nil)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			google, err := oidc.NewGoogle(nil)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			if err := svc.ConfigureAccountProviders(users, kakao, apple, google); err != nil {
+				closeStore()
+				return nil, err
+			}
+		}
+		// Toss Login의 authorization code 교환도 AppsInToss mTLS를 쓴다.
+		// 결제 앱은 자격증명이 이미 격리된 iap role에서 세션을 열고,
+		// 광고 전용 앱은 ads role에서 같은 경계를 사용한다.
+		var aitClients []config.TossClientCredential
+		var aitBaseURL, aitRoleName string
+		switch {
+		case cfg.Role == config.RoleIAP && cfg.IAP.Toss.Enabled():
+			aitClients = cfg.IAP.Toss.Clients
+			aitBaseURL = cfg.IAP.Toss.BaseURL
+			aitRoleName = "iap"
+		case cfg.Role == config.RoleAds && cfg.Ads.AITLoginEnabled():
+			aitClients = cfg.Ads.AITClients
+			aitBaseURL = cfg.Ads.AITBaseURL
+			aitRoleName = "ads"
+		}
+		if len(aitClients) > 0 {
+			verifiers, err := aitLoginVerifiers(aitClients, aitBaseURL, aitRoleName)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			svc.WithAITLoginVerifiers(verifiers)
 		}
 		d.identity = identity.NewHandler(svc)
+		if cfg.KakaoUnlink.Enabled() {
+			d.identity.WithKakaoUnlinkWebhook(identity.KakaoUnlinkWebhookConfig{
+				PlatformAppID: cfg.KakaoUnlink.PlatformAppID,
+				KakaoAppID:    cfg.KakaoUnlink.KakaoAppID,
+				AdminKey:      cfg.KakaoUnlink.AdminKey,
+			})
+		}
 		d.adminUsers = users
 		d.keys = keys
 	}
@@ -199,17 +255,27 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		// 필요한 저장소 포트만 조립하므로 PLATFORM_SESSION_SECRET이 필요 없다.
 		d.adminUsers = identity.NewStoreRepository(st)
 	}
+	if d.adminUsers != nil {
+		// 권장 안내의 자동 추종과 강제 업데이트 가드가 같은 관측 원장을 읽는다.
+		// 연결하지 않으면 자동 추종이 꺼지고 가드는 fail-closed로 거부한다.
+		d.config.WithAppVersions(d.adminUsers)
+	}
 
 	// 이벤트를 다루는 role만 BigQuery에 붙는다.
 	// api는 감사 원장을 남겨야 하므로 함께 연다.
 	if cfg.Role == config.RoleIngest || cfg.Role == config.RoleAPI ||
-		cfg.Role == config.RoleIAP || cfg.Role == config.RoleAdmin {
+		cfg.Role == config.RoleIAP || cfg.Role == config.RoleAdmin || cfg.Role == config.RoleWorker {
 		col, err := events.NewCollector(ctx, cfg.ProjectID, cfg.BigQueryDataset)
 		if err != nil {
 			closeStore()
 			return nil, err
 		}
 		d.events = col
+	}
+
+	if cfg.Role == config.RoleWorker {
+		users := identity.NewStoreRepository(st)
+		d.deletions = &identity.DeletionWorker{Queue: users, Registry: reg, Firebase: identity.FirebaseAccountDeleter{}, Ads: platformads.NewStoreRepository(st), Events: d.events, Identity: users}
 	}
 
 	// 마켓 자격증명은 iap와 worker role에만 마운트된다. R3다.
@@ -235,7 +301,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 	}
 
 	if cfg.Role == config.RoleAds || cfg.Role == config.RoleAdmin {
-		repo := platformads.NewStoreRepository(st).WithOperationalEvents(d.operationalRepo)
+		repo := platformads.NewStoreRepository(st).WithOperationalEvents(d.operationalRepo).WithAccounts(d.adminUsers)
 		entitlements := newAdsEntitlements(st)
 		service, err := platformads.NewService(repo, reg, entitlements, d.adminUsers)
 		if err != nil {
@@ -357,7 +423,12 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		// AIT 앱은 appLogin authorization code를 이 role의 mTLS
 		// 자격증명으로 교환한 뒤 같은 호스트에서 구매를 검증한다.
 		d.identity.RegisterSession(mux)
-		iap.NewHandler(d.iap.service, d.identity).Register(mux)
+		environmentServices := make(map[domain.Scope]iap.Service, len(d.iap.additionalEnvironments))
+		for scope, part := range d.iap.additionalEnvironments {
+			environmentServices[scope] = part.service
+		}
+		iap.NewHandler(d.iap.service, d.identity).WithApps(d.registry).
+			WithEnvironmentServices(environmentServices).Register(mux)
 
 		// 웹훅은 마켓별로 자격증명이 있을 때만 연다.
 		// 없는 마켓의 엔드포인트를 열면 인증도 못 하고 알림만 쌓인다.
@@ -382,7 +453,14 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		if d.identity != nil {
 			sessions = d.identity
 		}
-		events.NewHandler(d.events, d.registry, sessions).Register(mux)
+		events.NewHandler(d.events, d.registry, sessions).
+			WithGA4(d.ga4).
+			WithTrustedIngressProxyHops(cfg.GA4TrustedIngressProxyHops).
+			Register(mux)
+		if d.presence == nil {
+			return nil, errors.New("ingest role에 presence handler가 필요하다")
+		}
+		d.presence.Register(mux)
 
 	case config.RoleAdmin:
 		if d.iap == nil {
@@ -446,4 +524,27 @@ func serve(ctx context.Context, cfg config.Config, handler http.Handler) error {
 	}
 	slog.Info("정상 종료")
 	return nil
+}
+
+// aitLoginVerifiers는 mTLS 자격증명을 미니앱별 로그인 검증기로 묶는다.
+func aitLoginVerifiers(
+	credentials []config.TossClientCredential,
+	baseURL, roleName string,
+) (map[string]identity.AITLoginVerifier, error) {
+	byApp, err := aitCertificatesByApp(credentials, roleName)
+	if err != nil {
+		return nil, err
+	}
+	verifiers := make(map[string]identity.AITLoginVerifier, len(byApp))
+	for appID, certificate := range byApp {
+		client, err := identity.NewAITLoginClient(certificate.Cert, baseURL)
+		if err != nil {
+			return nil, err
+		}
+		verifiers[appID] = client
+		slog.Info("AppsInToss 로그인 인증서 등록",
+			"role", roleName, "app_id", appID, "source", certificate.Source,
+			"not_after", certificate.NotAfter.Format(time.RFC3339))
+	}
+	return verifiers, nil
 }

@@ -199,14 +199,16 @@ func (s *Service) VerifyPurchase(
 			"%s 결제는 아직 준비 중이에요", proof.Platform)
 	}
 
-	entID, err := s.catalog.EntitlementForApp(appID, proof.Platform, proof.ProductID)
+	product, err := s.catalog.ProductForApp(appID, proof.Platform, proof.ProductID)
 	if err != nil {
 		return Outcome{}, err
 	}
+	entID := product.EntitlementID
 	if s.apps != nil && (!app.EntitlementAllowed(entID) || !s.catalog.HasForApp(appID, entID)) {
 		return Outcome{}, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱에 허용되지 않은 상품이에요")
 	}
 	led := s.ledgerFor(appID)
+	proof.ProductType = product.Type
 
 	purchase, err := v.Verify(ctx, proof)
 	if err != nil {

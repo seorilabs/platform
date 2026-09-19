@@ -6,10 +6,12 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,6 +52,13 @@ type Config struct {
 	IAP         IAPConfig
 	Ads         AdsConfig
 	Operational OperationalConfig
+	KakaoUnlink KakaoUnlinkConfig
+	Presence    PresenceConfig
+	// Measurement Protocol api_secret은 ingest role에만 주입한다.
+	GA4MeasurementProtocolSecrets map[string]string
+	// GA4TrustedIngressProxyHops는 X-Forwarded-For의 오른쪽에서 신뢰할
+	// ingress hop 수다. 0이면 요청 주소를 GA4에 전달하지 않는다.
+	GA4TrustedIngressProxyHops int
 }
 
 // OperationalConfig는 확정 이벤트를 Backoffice에 서명해 전달하는 설정이다.
@@ -58,6 +67,27 @@ type OperationalConfig struct {
 	URL    string
 	Secret []byte
 }
+
+// KakaoUnlinkConfig는 카카오 연결 해제 webhook을 한 Platform 앱에 연결한다.
+// AdminKey는 API role에만 주입하고 저장소나 로그에 남기지 않는다.
+type KakaoUnlinkConfig struct {
+	PlatformAppID string
+	KakaoAppID    string
+	AdminKey      []byte
+}
+
+func (c KakaoUnlinkConfig) Enabled() bool {
+	return c.PlatformAppID != "" && c.KakaoAppID != "" && len(c.AdminKey) > 0
+}
+
+// PresenceConfig는 Cloud ingest가 RPI Edge 전용 token을 발급할 때만 쓴다.
+// 비공개키를 Edge에 복제하지 않고, Edge에는 대응 공개키만 둔다.
+type PresenceConfig struct {
+	EdgeURL       string
+	PrivateKeyRaw string
+}
+
+func (c PresenceConfig) Enabled() bool { return c.EdgeURL != "" && c.PrivateKeyRaw != "" }
 
 func (c OperationalConfig) Enabled() bool { return c.URL != "" && len(c.Secret) >= 32 }
 
@@ -130,8 +160,140 @@ func Load() (Config, error) {
 		}
 		c.Operational = operational
 	}
+	if role == RoleAPI {
+		kakaoUnlink, err := loadKakaoUnlink()
+		if err != nil {
+			return Config{}, err
+		}
+		c.KakaoUnlink = kakaoUnlink
+	}
+	if role == RoleIngest {
+		presence, err := loadPresence()
+		if err != nil {
+			return Config{}, err
+		}
+		c.Presence = presence
+		ga4Secrets, err := loadGA4MeasurementProtocolSecrets()
+		if err != nil {
+			return Config{}, err
+		}
+		c.GA4MeasurementProtocolSecrets = ga4Secrets
+		trustedProxyHops, err := loadGA4TrustedIngressProxyHops()
+		if err != nil {
+			return Config{}, err
+		}
+		c.GA4TrustedIngressProxyHops = trustedProxyHops
+	}
 
 	return c, nil
+}
+
+func loadGA4TrustedIngressProxyHops() (int, error) {
+	raw := strings.TrimSpace(os.Getenv("GA4_TRUSTED_INGRESS_PROXY_HOPS"))
+	if raw == "" {
+		return 0, nil
+	}
+	hops, err := strconv.Atoi(raw)
+	if err != nil || hops < 1 || hops > 5 {
+		return 0, errors.New("config: GA4 trusted ingress proxy hops는 1 이상 5 이하여야 한다")
+	}
+	return hops, nil
+}
+
+func loadGA4MeasurementProtocolSecrets() (map[string]string, error) {
+	raw := strings.TrimSpace(os.Getenv("GA4_MEASUREMENT_PROTOCOL_SECRETS_JSON"))
+	if raw == "" {
+		return map[string]string{}, nil
+	}
+	var secrets map[string]string
+	if err := json.Unmarshal([]byte(raw), &secrets); err != nil {
+		return nil, errors.New("config: GA4 Measurement Protocol secret JSON이 올바르지 않다")
+	}
+	if len(secrets) == 0 {
+		return nil, errors.New("config: GA4 Measurement Protocol secret JSON이 비어 있다")
+	}
+	for appID, secret := range secrets {
+		if !isLowerKebabID(appID) || strings.TrimSpace(secret) == "" || len(secret) > 256 {
+			return nil, fmt.Errorf("config: %q 앱의 GA4 Measurement Protocol secret 설정이 올바르지 않다", appID)
+		}
+	}
+	return secrets, nil
+}
+
+func loadKakaoUnlink() (KakaoUnlinkConfig, error) {
+	platformAppID := strings.TrimSpace(os.Getenv("KAKAO_UNLINK_PLATFORM_APP_ID"))
+	kakaoAppID := strings.TrimSpace(os.Getenv("KAKAO_UNLINK_APP_ID"))
+	adminKey := os.Getenv("KAKAO_UNLINK_ADMIN_KEY")
+	configured := 0
+	for _, value := range []string{platformAppID, kakaoAppID, adminKey} {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured == 0 {
+		return KakaoUnlinkConfig{}, nil
+	}
+	if configured != 3 {
+		return KakaoUnlinkConfig{}, errors.New(
+			"config: Kakao unlink platform app ID, Kakao app ID, Admin Key는 함께 필요하다",
+		)
+	}
+	if !isLowerKebabID(platformAppID) {
+		return KakaoUnlinkConfig{}, fmt.Errorf(
+			"config: KAKAO_UNLINK_PLATFORM_APP_ID가 올바르지 않다: %q", platformAppID,
+		)
+	}
+	if !isDigits(kakaoAppID) {
+		return KakaoUnlinkConfig{}, errors.New("config: KAKAO_UNLINK_APP_ID는 숫자여야 한다")
+	}
+	return KakaoUnlinkConfig{
+		PlatformAppID: platformAppID,
+		KakaoAppID:    kakaoAppID,
+		AdminKey:      []byte(adminKey),
+	}, nil
+}
+
+func isLowerKebabID(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for i, r := range value {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || i > 0 && r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func loadPresence() (PresenceConfig, error) {
+	rawURL := strings.TrimSpace(os.Getenv("PLATFORM_PRESENCE_EDGE_URL"))
+	rawKey := strings.TrimSpace(os.Getenv("PLATFORM_PRESENCE_PRIVATE_KEY"))
+	if rawURL == "" && rawKey == "" {
+		return PresenceConfig{}, nil
+	}
+	if rawURL == "" || rawKey == "" {
+		return PresenceConfig{}, errors.New("config: presence Edge URL과 비공개키는 함께 필요하다")
+	}
+	parsed, err := url.ParseRequestURI(rawURL)
+	loopbackHTTP := err == nil && parsed.Scheme == "http" &&
+		(parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1")
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !loopbackHTTP) {
+		return PresenceConfig{}, errors.New("config: PLATFORM_PRESENCE_EDGE_URL은 HTTPS 또는 loopback HTTP여야 한다")
+	}
+	return PresenceConfig{EdgeURL: strings.TrimRight(rawURL, "/"), PrivateKeyRaw: rawKey}, nil
 }
 
 func loadOperational() (OperationalConfig, error) {

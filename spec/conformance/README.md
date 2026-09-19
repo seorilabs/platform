@@ -25,6 +25,7 @@ OpenAPI로는 표현할 수 없는 **행동 규약**을 여기서 고정한다. 
 | `param-normalization.json` | 이벤트 파라미터 정규화 |
 | `backoff.json` | 재시도 백오프 스케줄 |
 | `envelope.json` | 응답 envelope 파싱 |
+| `update-gate.json` | 런타임 → 업데이트 정책 플랫폼 |
 
 ## 실행
 

@@ -10,12 +10,13 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && pwd)"
 
-python3 - "$repo_root/.github/workflows/deploy.yml" <<'PY'
+python3 - "$repo_root/.github/workflows/deploy.yml" "$repo_root/deploy/rpi/presence-edge.yaml" <<'PY'
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
+presence_manifest = Path(sys.argv[2]).read_text(encoding="utf-8")
 
 
 def require(condition: bool, message: str) -> None:
@@ -54,6 +55,15 @@ require(
     text.count("IAP_TOSS_CLIENT_KEY=ait-client-key:latest") == 2,
     "AIT 개인키 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
 )
+# 인증서는 미니앱마다 발급된다. 앱별 쌍도 같은 role 경계를 지켜야 한다.
+require(
+    text.count("IAP_TOSS_CLIENT_CERT_UNGEUL=ait-client-cert-ungeul:latest") == 2,
+    "운글 AIT 인증서 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
+)
+require(
+    text.count("IAP_TOSS_CLIENT_KEY_UNGEUL=ait-client-key-ungeul:latest") == 2,
+    "운글 AIT 개인키 secret은 IAP와 worker 두 대상에만 마운트해야 한다.",
+)
 
 
 def command_block(marker: str) -> str:
@@ -85,6 +95,39 @@ require(
     "platform-ingest runtime service account가 명시되지 않았다.",
 )
 require("Assert session secret boundary" in text, "세션 secret readback gate가 없다.")
+
+presence_url = "PLATFORM_PRESENCE_EDGE_URL=${PLATFORM_PRESENCE_EDGE_URL}"
+presence_secret = "PLATFORM_PRESENCE_PRIVATE_KEY=platform-presence-private-key:latest"
+require(presence_url in ingest_block, "platform-ingest에 Presence Edge URL이 없다.")
+require(presence_secret in ingest_block, "platform-ingest에 Presence 서명키가 없다.")
+require(text.count(presence_url) == 1, "Presence Edge URL은 ingest 한 곳에만 마운트해야 한다.")
+require(text.count(presence_secret) == 1, "Presence 서명키는 ingest 한 곳에만 마운트해야 한다.")
+require("Assert Presence secret boundary" in text, "Presence URL/secret readback gate가 없다.")
+require("runAsNonRoot: true" in presence_manifest, "Presence Edge가 non-root 실행을 강제하지 않는다.")
+require("runAsUser: 65532" in presence_manifest, "Presence Edge의 숫자 non-root UID가 없다.")
+require("runAsGroup: 65532" in presence_manifest, "Presence Edge의 숫자 non-root GID가 없다.")
+
+
+kakao_platform_app = "KAKAO_UNLINK_PLATFORM_APP_ID=${KAKAO_UNLINK_PLATFORM_APP_ID}"
+kakao_app = "KAKAO_UNLINK_APP_ID=${KAKAO_UNLINK_APP_ID}"
+kakao_secret = "KAKAO_UNLINK_ADMIN_KEY=ungeul-kakao-admin-key:latest"
+api_block = command_block("gcloud run deploy platform-api")
+require(kakao_platform_app in api_block, "platform-api에 Kakao unlink Platform app ID가 없다.")
+require(kakao_app in api_block, "platform-api에 Kakao app ID가 없다.")
+require(kakao_secret in api_block, "platform-api에 Kakao Admin Key secret이 없다.")
+
+for target in ("platform-iap", "platform-ingest", "platform-admin", "platform-ads"):
+    block = command_block(f"gcloud run deploy {target}")
+    require(kakao_platform_app not in block, f"{target}에 Kakao unlink Platform app ID를 마운트하면 안 된다.")
+    require(kakao_app not in block, f"{target}에 Kakao app ID를 마운트하면 안 된다.")
+    require(kakao_secret not in block, f"{target}에 Kakao Admin Key를 마운트하면 안 된다.")
+
+kakao_worker_block = command_block("gcloud run jobs update platform-worker")
+require(kakao_platform_app not in kakao_worker_block, "platform-worker에 Kakao unlink Platform app ID를 마운트하면 안 된다.")
+require(kakao_app not in kakao_worker_block, "platform-worker에 Kakao app ID를 마운트하면 안 된다.")
+require(kakao_secret not in kakao_worker_block, "platform-worker에 Kakao Admin Key를 마운트하면 안 된다.")
+require(text.count(kakao_secret) == 1, "Kakao Admin Key secret은 platform-api 한 곳에만 마운트해야 한다.")
+require("Assert Kakao unlink secret boundary" in text, "Kakao unlink secret readback gate가 없다.")
 
 
 operational_url = "BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}"

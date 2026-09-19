@@ -1,0 +1,20 @@
+{
+  "app_id": "reascend",
+  "display_name": "Reascend",
+  "firebase_project_id": "reascend",
+  "firebase_custom_token_service_account": "platform-auth@reascend.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": false,
+    "events": false,
+    "iap": false,
+    "ads": false,
+    "firebase_custom_token_bridge": true
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "platform_event_allowlist": [],
+  "cors_origins": []
+}

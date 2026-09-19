@@ -11,11 +11,12 @@ extends SceneTree
 const Normalizer := preload("res://addons/seorilabs_platform/core/param_normalizer.gd")
 const Backoff := preload("res://addons/seorilabs_platform/core/backoff.gd")
 const Envelope := preload("res://addons/seorilabs_platform/core/envelope.gd")
+const PlatformClient := preload("res://addons/seorilabs_platform/platform_client.gd")
 
 ## 최소 검사 수.
 ##
 ## 벡터가 늘면 이 값도 올린다. 줄어들면 무언가 조용히 빠진 것이다.
-const MIN_EXPECTED_CHECKS := 65
+const MIN_EXPECTED_CHECKS := 76
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -28,6 +29,7 @@ func _initialize() -> void:
 	_check_normalization(dir)
 	_check_backoff(dir)
 	_check_envelope(dir)
+	_check_update_gate(dir)
 
 	print("[conformance] 검사 %d건" % _checks)
 
@@ -250,6 +252,40 @@ func _dict_equals(got: Dictionary, want: Dictionary) -> bool:
 			return false
 
 	return true
+
+
+## 업데이트 게이트 판정은 TS와 GDScript가 같아야 한다.
+##
+## 여기가 갈라지면 같은 서버 응답에 대해 앱마다 다른 화면이 뜬다. 강제인데
+## 닫히거나, 정상인데 막히는 상황이 조용히 생긴다.
+func _check_update_gate(dir: String) -> void:
+	var vector: Variant = _load_vector(dir, "update-gate.json")
+	if vector == null:
+		return
+
+	var cases: Array = vector.get("gate_cases", [])
+	if cases.is_empty():
+		_fail("update-gate 케이스가 비었다")
+		return
+
+	for case in cases:
+		var got: Dictionary = PlatformClient._gate_state_of(case.get("config", {}))
+		var want: Dictionary = case["expect"] if case.has("expect") else case["gate"]
+
+		# 키 이름이 다르다. 벡터는 계약(JSON) 이름을, GDScript는 snake_case를 쓴다.
+		var normalized := {"kind": got.get("kind", "")}
+		if got.has("message"):
+			normalized["message"] = got["message"]
+		if got.has("update_url"):
+			normalized["updateUrl"] = got["update_url"]
+		if got.has("recommended_version"):
+			normalized["recommendedVersion"] = got["recommended_version"]
+		if got.has("until"):
+			normalized["until"] = got["until"]
+
+		if normalized != want:
+			_fail("update-gate '%s': got=%s want=%s" % [case["name"], normalized, want])
+		_checks += 1
 
 
 func _fail(message: String) -> void:
