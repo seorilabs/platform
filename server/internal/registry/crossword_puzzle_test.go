@@ -56,9 +56,13 @@ func TestCrosswordPuzzleRegistryAuthBridgeContract(t *testing.T) {
 	}
 
 	// AIT WebView가 공개 bootstrap 경로를 호출하므로 서비스와 콘솔 QR origin이 모두 필요하다.
+	// SDK 3.x부터 호스트가 apps/private-apps에서 web/private-web으로 바뀐다. 2.x 번들이
+	// 라이브인 동안은 네 개를 모두 허용하고, 3.x 전환이 끝난 뒤 옛 두 개를 걷어낸다.
 	wantOrigins := map[string]bool{
 		"https://crossword-puzzle-game.apps.tossmini.com":         false,
 		"https://crossword-puzzle-game.private-apps.tossmini.com": false,
+		"https://crossword-puzzle-game.web.tossmini.com":          false,
+		"https://crossword-puzzle-game.private-web.tossmini.com":  false,
 	}
 	for _, origin := range app.CORSOrigins {
 		seen, ok := wantOrigins[origin]
