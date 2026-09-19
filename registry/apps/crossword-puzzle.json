@@ -21,8 +21,6 @@
   },
   "platform_event_allowlist": [],
   "cors_origins": [
-    "https://crossword-puzzle-game.apps.tossmini.com",
-    "https://crossword-puzzle-game.private-apps.tossmini.com",
     "https://crossword-puzzle-game.web.tossmini.com",
     "https://crossword-puzzle-game.private-web.tossmini.com"
   ]
