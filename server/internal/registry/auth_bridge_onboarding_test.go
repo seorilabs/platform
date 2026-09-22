@@ -22,9 +22,15 @@ func TestAuthBridgeOnboardingRegistryContract(t *testing.T) {
 			displayName:       "버블 버블 거품 세차",
 			firebaseProjectID: "foam-party",
 			serviceAccount:    "platform-auth@foam-party.iam.gserviceaccount.com",
+			// AppsInToss web-framework 3.x는 미니앱을 *.web.tossmini.com 에서 서빙한다.
+			// 앱은 이미 3.x 번들로 나갔고 아직 Platform API를 부르지 않지만, 호출을
+			// 붙이는 시점에 preflight가 막히지 않도록 미리 등록해 둔다. 2.x 호스트는
+			// 롤백 여지가 남아 있는 동안 함께 유지한다.
 			corsOrigins: []string{
 				"https://foam-party.apps.tossmini.com",
 				"https://foam-party.private-apps.tossmini.com",
+				"https://foam-party.web.tossmini.com",
+				"https://foam-party.private-web.tossmini.com",
 			},
 		},
 		{

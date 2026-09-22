@@ -18,6 +18,8 @@
   "platform_event_allowlist": [],
   "cors_origins": [
     "https://foam-party.apps.tossmini.com",
-    "https://foam-party.private-apps.tossmini.com"
+    "https://foam-party.private-apps.tossmini.com",
+    "https://foam-party.web.tossmini.com",
+    "https://foam-party.private-web.tossmini.com"
   ]
 }
