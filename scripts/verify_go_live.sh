@@ -227,6 +227,18 @@ verify_ait() {
 # 완료 outbox를 처리하는 Job이 주기적으로 돌아야 한다. 멈추면
 # 마켓에 완료를 알리지 못하고, Play는 3일 뒤부터 자동 환불한다.
 # 유저는 산 물건을 잃고 우리는 매출을 잃는다.
+#
+# 주기는 15분이다. 5분으로 되돌리지 않는다.
+#
+# Cloud Run Job 은 gen2 전용이고 gen2 는 CPU 1 미만을 허용하지 않으며,
+# 인스턴스 수명을 최소 1분 단위로 과금한다. 실제 실행은 2초도 안 걸리는데
+# 호출 1회가 60 vCPU-초로 고정된다는 뜻이다. 5분 주기면 월 525,600 vCPU-초로
+# 무료 등급(240,000)의 2.2배를 쓰고 월 11,000원이 청구됐다.
+#
+# 이 워커는 사용자 결제 경로가 아니다. 검증과 지급은 platform-iap 가 요청
+# 자리에서 끝내고, 여기 쌓이는 건 "지급은 됐는데 마켓 acknowledge 를 못 보낸"
+# 주문이다. 마감은 Play acknowledge 3일, 환불 검토 24시간이고 outbox 백오프는
+# 최대 6시간까지 벌어진다. 5분과 15분의 차이는 첫 재시도 타이밍뿐이다.
 verify_worker() {
   echo "== 4. 완료 재시도 워커 =="
 
@@ -238,7 +250,7 @@ verify_worker() {
   ok "Job 존재"
 
   local state
-  state="$(gcloud scheduler jobs describe platform-worker-5m --project="$PROJECT" \
+  state="$(gcloud scheduler jobs describe platform-worker-15m --project="$PROJECT" \
     --location="$REGION" --format='value(state)' 2>/dev/null)"
   if [[ "$state" == "ENABLED" ]]; then
     ok "스케줄러 활성"
