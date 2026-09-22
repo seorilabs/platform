@@ -23,8 +23,11 @@
         "format": "rewarded",
         "providers": {
           "admob": {
-            "android_ad_unit_id": "ca-app-pub-2444587584524186/8793041426",
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/4587859068",
             "ios_ad_unit_id": "ca-app-pub-2444587584524186/2557921082",
+            "retired_android_ad_unit_ids": [
+              "ca-app-pub-2444587584524186/8793041426"
+            ],
             "reward_item": "deep_flow",
             "reward_amount": 1
           },

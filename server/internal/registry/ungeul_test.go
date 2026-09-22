@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -59,11 +60,24 @@ func TestUngeulAdsRegistryContract(t *testing.T) {
 	if !ok {
 		t.Fatal("AdMob provider 설정이 없다")
 	}
-	if provider.AndroidAdUnitID != "ca-app-pub-2444587584524186/8793041426" {
+	if provider.AndroidAdUnitID != "ca-app-pub-9932778305312246/4587859068" {
 		t.Fatalf("Android unit=%q", provider.AndroidAdUnitID)
 	}
+	// iOS 는 App Store 4.3(b) 로 경로가 닫혀 클라이언트가 없다. 옛 publisher 값이지만
+	// 그 unit 으로 들어올 콜백이 없고, 비우면 은퇴 목록도 둘 수 없어 그대로 둔다.
 	if provider.IOSAdUnitID != "ca-app-pub-2444587584524186/2557921082" {
 		t.Fatalf("iOS unit=%q", provider.IOSAdUnitID)
+	}
+	// 운글은 Google Play 에 이미 공개돼 있고(v1.0.32), 설치된 빌드는 전부 옛 unit 으로
+	// 광고를 재생한다. 유지 publisher 로 옮긴 새 unit 을 싣는 AAB 는 아직 출시되지
+	// 않았다. 이 목록을 지우면 구버전 사용자가 광고를 끝까지 보고도 ad_unit_mismatch 로
+	// 보상을 못 받는다. 구버전 소진을 확인한 뒤에 지운다.
+	wantRetiredAndroid := []string{"ca-app-pub-2444587584524186/8793041426"}
+	if !reflect.DeepEqual(provider.RetiredAndroidAdUnitIDs, wantRetiredAndroid) {
+		t.Fatalf("Android 은퇴 unit=%v, want %v", provider.RetiredAndroidAdUnitIDs, wantRetiredAndroid)
+	}
+	if len(provider.RetiredIOSAdUnitIDs) != 0 {
+		t.Fatalf("iOS 은퇴 unit=%v, want 없음", provider.RetiredIOSAdUnitIDs)
 	}
 	if provider.RewardItem != "deep_flow" || provider.RewardAmount != 1 {
 		t.Fatalf("AdMob reward=(%q,%d), want (deep_flow,1)", provider.RewardItem, provider.RewardAmount)
