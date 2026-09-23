@@ -628,3 +628,70 @@ func TestValidateAppSetCountsRetiredAdMobUnits(t *testing.T) {
 		t.Fatalf("ValidateAppSet() error = %v", err)
 	}
 }
+
+func TestAccountDeletionFeatureValidation(t *testing.T) {
+	deletionApp := func() App {
+		app := validAppForTest()
+		app.Features["firebase_custom_token_bridge"] = true
+		app.Features["account_deletion"] = true
+		app.FirebaseCustomTokenServiceAccount = "platform-auth@test-app.iam.gserviceaccount.com"
+		app.GA4.PropertyID = "123456789"
+		return app
+	}
+	tests := []struct {
+		name    string
+		mutate  func(*App)
+		wantErr string
+	}{
+		{
+			// 삭제 워커는 IAP 원장을 보존하므로 IAP 앱도 게스트 계정 삭제를 쓸 수 있다.
+			name:   "IAP 앱의 게스트 계정 삭제 허용",
+			mutate: func(app *App) {},
+		},
+		{
+			name:   "IAP 없는 게스트 앱 허용",
+			mutate: func(app *App) { app.Features["iap"] = false; app.IAP = IAPConfig{} },
+		},
+		{
+			name: "bridge 없으면 거부",
+			mutate: func(app *App) {
+				app.Features["firebase_custom_token_bridge"] = false
+				app.FirebaseCustomTokenServiceAccount = ""
+			},
+			wantErr: "account deletion supports Firebase guest apps",
+		},
+		{
+			name:    "content 앱 거부",
+			mutate:  func(app *App) { app.Features["content"] = true },
+			wantErr: "account deletion supports Firebase guest apps",
+		},
+		{
+			name: "외부 계정 연결 앱 거부",
+			mutate: func(app *App) {
+				app.Auth.AccountProviders = map[string]AuthProviderConfig{"kakao": {Audience: "kakao-app"}}
+			},
+			wantErr: "account deletion supports Firebase guest apps",
+		},
+		{
+			name:    "GA4 속성 없으면 거부",
+			mutate:  func(app *App) { app.GA4.PropertyID = "" },
+			wantErr: "needs a GA4 property",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := deletionApp()
+			tt.mutate(&app)
+			err := app.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
