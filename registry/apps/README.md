@@ -175,6 +175,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `lucid-reversi` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `lord-ledger` | 활성 | 미사용 | 핵심 게임·군량 보상 | 비활성 | 활성 | — |
 | `match-picture-app` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
+| `salt-compass` | 활성 | 미사용 | 항해·교역 퍼널 | 비활성 | 비활성 | — |
 | `slotmachine-game` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
 | `spiritgate-defenders` | 활성 | 미사용 | 활성 | 비활성 | 활성 | — |
 | `ungeul` | 활성 | production | 비활성 | 활성 | 활성 | `deep_reading_ticket` |
