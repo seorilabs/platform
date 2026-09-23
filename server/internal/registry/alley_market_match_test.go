@@ -58,7 +58,8 @@ func TestAlleyMarketMatchAdsRegistryContract(t *testing.T) {
 		rewardItem   string
 		rewardAmount int
 	}{
-		{"stage_retry_boost", "moves", 5, 5, 20, 30,
+		// 보상형 광고 하루 합계를 조직 rewarded-only 기준 10회(4+3+3)에 맞춘다.
+		{"stage_retry_boost", "moves", 5, 5, 4, 120,
 			"ca-app-pub-9932778305312246/3020251241", "ca-app-pub-9932778305312246/6934998415", "moves", 5},
 		// 게임의 한 판 최대 코인은 3별 20 + 챕터 복구 40 = 60 (alley-market-match godot/data/economy.json).
 		// 경제 수치를 올리면 max_amount 도 함께 올려야 2배 claim 이 거부되지 않는다.
