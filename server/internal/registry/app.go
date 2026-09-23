@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -274,8 +275,19 @@ func (a App) Validate() error {
 		return fmt.Errorf("%s: bridge가 비활성인데 custom token service account가 설정됐다", a.AppID)
 	}
 	if a.FeatureEnabled("account_deletion") {
-		if !a.FeatureEnabled("firebase_custom_token_bridge") || a.FeatureEnabled("iap") || a.FeatureEnabled("content") || len(a.Auth.AccountProviders) > 0 {
-			return fmt.Errorf("%s: account deletion supports Firebase guest apps without IAP or content only", a.AppID)
+		// IAP 앱은 허용한다. 삭제 워커는 IAP 원장(주문·이전·운영자 감사)을 건드리지 않고, 신원 삭제 뒤
+		// 원장에 남는 platform uid는 연결 자료가 없어 가명이 된다. 구매 토큰 재사용 방지도 주문 문서로
+		// 계속 동작한다(새 계정이 같은 토큰을 내면 소유권 이전 규칙을 따른다).
+		// content와 외부 계정 연결은 막는다. content 소비 기록은 platform uid로 남는데 워커가 처리하지 않고,
+		// 외부 계정 연결은 제공자 쪽 연결 해제와 연결 자료 정리가 워커에 없다.
+		if !a.FeatureEnabled("firebase_custom_token_bridge") || a.FeatureEnabled("content") || len(a.Auth.AccountProviders) > 0 {
+			return fmt.Errorf("%s: account deletion supports Firebase guest apps without content or account providers only", a.AppID)
+		}
+		// 삭제 접수는 Firebase ID token의 uid만 대상으로 삼는다. AppsInToss 로그인은 별도 "ait:" 신원을 만들고
+		// (identity.Service의 KindAITLogin) 그 신원은 이 경로로 지울 수 없다. 광고나 IAP가 AppsInToss를
+		// 쓰는 앱은 그 신원을 발급하므로 막는다.
+		if (a.FeatureEnabled("ads") && slices.Contains(a.Ads.Providers, "apps_in_toss")) || (a.FeatureEnabled("iap") && a.MarketEnabled("apps_in_toss")) {
+			return fmt.Errorf("%s: account deletion cannot delete AppsInToss login identities", a.AppID)
 		}
 		if _, err := strconv.ParseUint(a.GA4.PropertyID, 10, 64); err != nil || a.GA4.PropertyID == "0" {
 			return fmt.Errorf("%s: account deletion needs a GA4 property", a.AppID)
