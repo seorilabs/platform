@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -281,6 +282,12 @@ func (a App) Validate() error {
 		// 외부 계정 연결은 제공자 쪽 연결 해제와 연결 자료 정리가 워커에 없다.
 		if !a.FeatureEnabled("firebase_custom_token_bridge") || a.FeatureEnabled("content") || len(a.Auth.AccountProviders) > 0 {
 			return fmt.Errorf("%s: account deletion supports Firebase guest apps without content or account providers only", a.AppID)
+		}
+		// 삭제 접수는 Firebase ID token의 uid만 대상으로 삼는다. AppsInToss 로그인은 별도 "ait:" 신원을 만들고
+		// (identity.Service의 KindAITLogin) 그 신원은 이 경로로 지울 수 없다. 광고나 IAP가 AppsInToss를
+		// 쓰는 앱은 그 신원을 발급하므로 막는다.
+		if (a.FeatureEnabled("ads") && slices.Contains(a.Ads.Providers, "apps_in_toss")) || (a.FeatureEnabled("iap") && a.MarketEnabled("apps_in_toss")) {
+			return fmt.Errorf("%s: account deletion cannot delete AppsInToss login identities", a.AppID)
 		}
 		if _, err := strconv.ParseUint(a.GA4.PropertyID, 10, 64); err != nil || a.GA4.PropertyID == "0" {
 			return fmt.Errorf("%s: account deletion needs a GA4 property", a.AppID)

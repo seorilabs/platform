@@ -673,6 +673,21 @@ func TestAccountDeletionFeatureValidation(t *testing.T) {
 			wantErr: "account deletion supports Firebase guest apps",
 		},
 		{
+			name: "AppsInToss IAP 앱 거부",
+			mutate: func(app *App) {
+				app.IAP.Markets = append(app.IAP.Markets, "apps_in_toss")
+			},
+			wantErr: "cannot delete AppsInToss login identities",
+		},
+		{
+			name: "AppsInToss 광고 앱 거부",
+			mutate: func(app *App) {
+				app.Features["ads"] = true
+				app.Ads.Providers = []string{"admob", "apps_in_toss"}
+			},
+			wantErr: "cannot delete AppsInToss login identities",
+		},
+		{
 			name:    "GA4 속성 없으면 거부",
 			mutate:  func(app *App) { app.GA4.PropertyID = "" },
 			wantErr: "needs a GA4 property",

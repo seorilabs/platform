@@ -298,8 +298,9 @@ paths:
         Google 삭제 접수와 저장소 사본 정리는 별도 단계다. 지연 내보내기를 고려해
         Firebase 삭제 확인 후 최소 4일 뒤 계정과 연결된 분석 사본을 함께 정리한다.
         IAP 감사 원장은 삭제하지 않는다. IAP를 켠 앱도 사용할 수 있으며, 원장(주문·소유권 이전·운영자 감사)과
-        권한 문서는 남고 그 안의 platform uid는 신원 삭제 뒤 연결 자료가 없는 가명이 된다. 접수 이후
-        IAP 검증·목록 호출도 인증 단계에서 차단된다. content 기능이나 외부 계정 연결을 쓰는 앱은 지원하지 않는다.
+        권한 문서는 남는다. 신원 삭제 뒤 그 안의 platform uid는 매핑이 사라지지만, 같은 구매를 새 계정에서
+        복원하면 소유권 이전 기록이 이전 uid와 새 uid를 잇는다. 접수 이후 IAP 검증·목록 호출은 인증 단계에서
+        차단된다. content 기능, 외부 계정 연결, AppsInToss 로그인 신원을 쓰는 앱(AppsInToss 광고·IAP)은 지원하지 않는다.
         기존 firebase-account API의 의미는 유지한다.
       operationId: requestAccountDeletion
       security: []
