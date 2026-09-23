@@ -155,8 +155,14 @@ describe('Platform release workflow 계약', () => {
     ];
     for (const name of names) {
       const source = await workflow(name);
-      for (const match of source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)) {
-        assert.match(match[1], /^[0-9a-f]{40}$/u, `${name}: ${match[0]}`);
+      for (const match of source.matchAll(/uses:\s*([^@\s]+)@([^\s#]+)/gu)) {
+        // 조직 중앙 재사용 워크플로(seorilabs/.github)는 SHA 대신 main을 따른다(#156). 중앙에서 한 번
+        // 고치면 전 저장소에 반영되고, 되돌릴 때도 중앙 revert 한 번으로 끝나게 하려는 조직 결정이다.
+        // 그 밖의 action과 재사용 workflow는 계속 full SHA로 고정한다.
+        if (match[1].startsWith('seorilabs/.github/.github/workflows/') && match[2] === 'main') {
+          continue;
+        }
+        assert.match(match[2], /^[0-9a-f]{40}$/u, `${name}: ${match[0]}`);
       }
       assert.doesNotMatch(source, /secrets:\s*inherit/u, name);
     }
