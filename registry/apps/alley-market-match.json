@@ -35,6 +35,44 @@
         },
         "daily_limit": 20,
         "cooldown_seconds": 30
+      },
+      {
+        "id": "rewarded_result_bonus",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/7802918027",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/1904643959",
+            "reward_item": "coin_bonus",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "coins",
+          "min_amount": 1,
+          "max_amount": 60
+        },
+        "daily_limit": 3,
+        "cooldown_seconds": 60
+      },
+      {
+        "id": "rewarded_hurdle_skip",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/4790751034",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/3066605822",
+            "reward_item": "life",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "lives",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 3,
+        "cooldown_seconds": 180
       }
     ]
   },
