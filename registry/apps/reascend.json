@@ -7,7 +7,7 @@
   "features": {
     "config": false,
     "events": false,
-    "iap": false,
+    "iap": true,
     "ads": false,
     "firebase_custom_token_bridge": true,
     "account_deletion": true
@@ -18,5 +18,18 @@
     "property_id": "552912274"
   },
   "platform_event_allowlist": [],
-  "cors_origins": []
+  "cors_origins": [],
+  "iap": {
+    "ledger_environment": "production",
+    "markets": [
+      "google_play"
+    ],
+    "google_play_package_name": "com.seorilabs.reascend",
+    "entitlement_ids": [
+      "gems_starter",
+      "gems_small",
+      "gems_medium",
+      "gems_large"
+    ]
+  }
 }
