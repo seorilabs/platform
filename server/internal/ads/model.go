@@ -56,8 +56,10 @@ type Reward struct {
 }
 
 type Claim struct {
-	ClaimID         string     `json:"claimId" firestore:"claimId"`
-	RequestID       string     `json:"-" firestore:"requestId"`
+	ClaimID string `json:"claimId" firestore:"claimId"`
+	// 소유자에게만 응답한다(GetClaim이 앱·사용자를 대조한다). 게임은 세이브에 남긴 요청과 이 claim이 같은지
+	// 대조해, 한 claim을 다른 요청의 보상으로 다시 쓰는 것을 막는다.
+	RequestID       string     `json:"requestId" firestore:"requestId"`
 	AppID           string     `json:"appId" firestore:"appId"`
 	PlatformUserID  string     `json:"-" firestore:"platformUserId"`
 	SupportCode     string     `json:"-" firestore:"supportCode"`
