@@ -7,6 +7,11 @@ import (
 	"testing"
 )
 
+// 조물조물의 제품 이벤트는 2026-09-25(seorilabs/jomul ADR 0020)부터 Android·iOS 의 Firebase
+// Analytics SDK 와 AppsInToss 의 gtag.js 웹 스트림이 직접 보낸다. Platform ingest 의 GA4
+// Measurement Protocol 중계는 같은 동작을 두 번 적재하므로 끝냈다. 이미 마켓에 나간 구버전
+// 빌드는 계속 relay 로 이벤트를 보내므로, measurement_id 부재와 빈 allowlist 를 여기서 고정해
+// 그 배치가 GA4 에 중계되지도 BigQuery 에 적재되지도 않게 한다.
 func TestJomulAnalyticsRegistryContract(t *testing.T) {
 	source := NewFSSource(os.DirFS("../../../registry"), "apps")
 	apps, err := source.LoadApps(context.Background())
@@ -23,25 +28,19 @@ func TestJomulAnalyticsRegistryContract(t *testing.T) {
 	if jomul == nil {
 		t.Fatal("jomul registry가 없다")
 	}
+	// events 는 켜 둔다. 이미 마켓에 나간 구버전 빌드의 배치를 서버가 200 으로 받아 버려야 SDK
+	// outbox 가 같은 배치를 무한히 재시도하지 않는다. allowlist 가 비어 있어 적재는 0건이다.
 	if !jomul.FeatureEnabled("events") {
-		t.Fatal("조물조물 events 기능이 비활성이다")
+		t.Fatal("조물조물 events 기능이 꺼졌다 — 구버전 빌드의 배치가 403 으로 재시도된다")
 	}
-	if jomul.GA4.EventPrefix != "jomul_" || jomul.GA4.MeasurementID != "G-6PXDPK349G" {
-		t.Fatalf("조물조물 GA4 계약이 다르다: %#v", jomul.GA4)
+	if jomul.GA4.MeasurementID != "" {
+		t.Fatalf("조물조물 GA4 Measurement Protocol 중계가 남아 있다: %#v", jomul.GA4)
 	}
-	want := []string{
-		"session_start", "clock_rollback_detected", "merge_attempt", "element_discovered",
-		"recipe_discovered", "chapter_cleared", "chapter_complete", "chapter_unlocked",
-		"save_migrated", "hint_used", "hint_earned", "onboarding_start",
-		"onboarding_complete", "onboarding_skip", "rewarded_complete", "element_read",
-		"easter_egg_found", "rewarded_start", "rewarded_failed", "dictionary_open", "stuck",
-		"save_failed",
+	if len(jomul.PlatformEventAllowlist) != 0 {
+		t.Fatalf("조물조물 Platform 이벤트 allowlist가 남아 있다: %#v", jomul.PlatformEventAllowlist)
 	}
-	if !reflect.DeepEqual(jomul.PlatformEventAllowlist, want) {
-		t.Fatalf("조물조물 이벤트 allowlist가 다르다\n got: %#v\nwant: %#v", jomul.PlatformEventAllowlist, want)
-	}
-	if jomul.EventAllowed("email") || jomul.EventAllowed("screen_view") {
-		t.Fatal("등록하지 않은 이벤트가 허용됐다")
+	if jomul.EventAllowed("session_start") || jomul.EventAllowed("jomul_session_start") {
+		t.Fatal("비활성 앱의 이벤트가 허용됐다")
 	}
 }
 

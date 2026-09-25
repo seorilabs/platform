@@ -170,7 +170,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `cycle-pair` | 활성 | production | 비활성 | 비활성 | 비활성 | — |
 | `foam-party` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `happy-farm` | 비활성 | production | 활성 | 활성 | 활성 | `ad_free` |
-| `jomul` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |
+| `jomul` | 활성 | 미사용 | 비활성 · 제품 이벤트는 모바일 Firebase SDK와 AIT 웹 스트림 | 비활성 | 활성 | — |
 | `lizard-tycoon` | 비활성 | production | 활성 | 활성 | 비활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
 | `lucid-chess` | 활성 | 미사용 | 핵심 퍼널·전면 광고 | 비활성 | 비활성 | — |
 | `lucid-reversi` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |

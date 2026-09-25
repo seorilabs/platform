@@ -43,34 +43,7 @@
     ]
   },
   "require_app_check": false,
-  "ga4": {
-    "event_prefix": "jomul_",
-    "measurement_id": "G-6PXDPK349G"
-  },
-  "platform_event_allowlist": [
-    "session_start",
-    "clock_rollback_detected",
-    "merge_attempt",
-    "element_discovered",
-    "recipe_discovered",
-    "chapter_cleared",
-    "chapter_complete",
-    "chapter_unlocked",
-    "save_migrated",
-    "hint_used",
-    "hint_earned",
-    "onboarding_start",
-    "onboarding_complete",
-    "onboarding_skip",
-    "rewarded_complete",
-    "element_read",
-    "easter_egg_found",
-    "rewarded_start",
-    "rewarded_failed",
-    "dictionary_open",
-    "stuck",
-    "save_failed"
-  ],
+  "platform_event_allowlist": [],
   "cors_origins": [
     "https://jomul-game.apps.tossmini.com",
     "https://jomul-game.private-apps.tossmini.com",
