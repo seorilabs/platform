@@ -19,9 +19,17 @@ func (s environmentRegistrySource) LoadApps(context.Context) ([]registry.App, er
 }
 
 func TestAppleSandboxCompositionKeepsProductionDefault(t *testing.T) {
+	for _, legacy := range []bool{true, false} {
+		t.Run(map[bool]string{true: "legacy", false: "app-scoped"}[legacy], func(t *testing.T) {
+			testAppleSandboxComposition(t, legacy)
+		})
+	}
+}
+
+func testAppleSandboxComposition(t *testing.T, legacy bool) {
 	app := registry.App{AppID: "test-app", DisplayName: "Test app", FirebaseProjectID: "test-app", Status: registry.StatusActive,
 		Features: map[string]bool{"iap": true}, IAP: registry.IAPConfig{
-			LedgerEnvironment: registry.LedgerProduction, AppleSandboxEnabled: true, LegacyUnscopedLedger: true,
+			LedgerEnvironment: registry.LedgerProduction, AppleSandboxEnabled: true, LegacyUnscopedLedger: legacy,
 			Markets: []string{"app_store", "google_play"}, AppStoreBundleID: "com.seorilabs.testapp",
 			GooglePlayPackageName: "com.seorilabs.testapp", EntitlementIDs: []string{"premium"},
 		}}

@@ -12,8 +12,8 @@ import (
 
 func TestAdminEnvironmentBoundary(t *testing.T) {
 	for _, tc := range []struct {
-		name, header, identity, path, body, want string
-		allowed                                  bool
+		name, header, appHeader, identity, path, body, want string
+		allowed                                             bool
 	}{
 		{name: "legacy health", path: "/v1/admin/health", want: "production"},
 		{name: "sandbox health", header: "sandbox", path: "/v1/admin/health", want: "sandbox", allowed: true},
@@ -23,6 +23,10 @@ func TestAdminEnvironmentBoundary(t *testing.T) {
 		{name: "header body mismatch", header: "production", path: "/v1/admin/entitlements/grant", body: grantBody("g", testPUID, "sp_a", testGrantReason), want: "error", allowed: true},
 		{name: "unapproved app", header: "sandbox", path: "/v1/admin/entitlements/grant", body: grantBody("g", testPUID, "sp_a", testGrantReason), want: "error"},
 		{name: "read identity cannot grant", header: "sandbox", identity: backofficeReadSA, path: "/v1/admin/entitlements/grant", body: grantBody("g", testPUID, "sp_a", testGrantReason), want: "error", allowed: true},
+		{name: "scoped sandbox grant", header: "sandbox", appHeader: "a", path: "/v1/admin/entitlements/grant", body: grantBody("g", testPUID, "sp_a", testGrantReason), want: "grant", allowed: true},
+		{name: "scoped body mismatch", header: "sandbox", appHeader: "a", path: "/v1/admin/entitlements/grant", body: strings.ReplaceAll(grantBody("g", testPUID, "sp_a", testGrantReason), `"appId":"a"`, `"appId":"other"`), want: "error", allowed: true},
+		{name: "unknown scoped app", header: "sandbox", appHeader: "other", path: "/v1/admin/entitlements/grant", body: grantBody("g", testPUID, "sp_a", testGrantReason), want: "error", allowed: true},
+		{name: "unknown app default env", appHeader: "other", path: "/v1/admin/health", want: "error", allowed: true},
 		{name: "unknown environment", header: "staging", path: "/v1/admin/health", want: "error", allowed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,11 +46,17 @@ func TestAdminEnvironmentBoundary(t *testing.T) {
 			if err := h.WithEnvironmentHandlers(map[domain.Environment]*Handler{domain.EnvSandbox: other}); err != nil {
 				t.Fatal(err)
 			}
+			if err := h.WithAppHandlers(map[domain.Scope]*Handler{{AppID: "a", Environment: domain.EnvSandbox}: other}); err != nil {
+				t.Fatal(err)
+			}
 			method := http.MethodGet
 			if tc.body != "" {
 				method = http.MethodPost
 			}
 			r := httptest.NewRequest(method, tc.path, strings.NewReader(tc.body))
+			if tc.appHeader != "" {
+				r.Header.Set("X-Seori-App", tc.appHeader)
+			}
 			r.Header.Set("Content-Type", "application/json")
 			r.Header.Set("Authorization", "Bearer test-token")
 			r.Header.Set("X-Seori-Actor", "test-operator")
