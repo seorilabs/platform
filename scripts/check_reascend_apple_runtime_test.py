@@ -23,23 +23,10 @@ class RuntimeAuditTests(unittest.TestCase):
             audit.main()
         return output.getvalue()
 
-    def test_expected_products_without_private_material(self):
+    def test_expected_key_without_private_material(self):
         output = self.run_audit(*self.fixtures())
-        self.assertIn("com.seorilabs.reascend.gems.large", output)
+        self.assertIn("4N8V928LWA", output)
         self.assertNotIn("private-material", output)
-
-    def test_other_apps_catalog_cannot_supply_reascend_products(self):
-        service, catalog = self.fixtures()
-        catalog["apps"]["other"] = catalog["apps"].pop("reascend")
-        with self.assertRaises(SystemExit):
-            self.run_audit(service, catalog)
-
-    def test_product_mismatch_or_nonconsumable_blocks(self):
-        for change in ({"app_store": "com.other.app"}, {"type": "non_consumable"}):
-            service, catalog = self.fixtures()
-            catalog["apps"]["reascend"]["entitlements"]["gems_small"].update(change)
-            with self.assertRaises(SystemExit):
-                self.run_audit(service, catalog)
 
     def test_failed_read_reports_only_failure_category(self):
         response = audit.subprocess.CompletedProcess([], 1, "private-stdout", "PERMISSION_DENIED private-stderr")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""등록된 CI 배포 신원으로 공개 키 식별자와 Reascend SKU만 검증한다."""
+"""등록된 CI 배포 신원으로 공개 Apple 키 식별자만 검증한다."""
 import json
 import os
 import subprocess
@@ -25,17 +25,8 @@ def main():
     print(json.dumps({"appleKeyId": key_id, "appleIssuerId": issuer}))
     if key_id != "4N8V928LWA" or issuer != "69a6de86-a179-47e3-e053-5b8c7c11a4d1":
         raise SystemExit("등록된 공통 Apple IAP 키의 공개 identity와 운영 설정이 다릅니다.")
-    catalog = gcloud_json("secrets", "versions", "access", "latest", "--secret", "iap-catalog")
-    entries = catalog.get("apps", {}).get("reascend", {}).get("entitlements", {})
-    for suffix in ("starter", "small", "medium", "large"):
-        entitlement = "gems_" + suffix
-        entry = entries.get(entitlement, {})
-        expected = "com.seorilabs.reascend.gems." + suffix
-        # 카탈로그는 비밀값이 없지만 지정 앱의 공개 상품 ID와 유형만 출력한다.
-        print(json.dumps({"appId": "reascend", "entitlement": entitlement,
-                          "appStoreProductId": entry.get("app_store"), "type": entry.get("type")}))
-        if entry.get("app_store") != expected or entry.get("type") != "consumable":
-            raise SystemExit("Reascend Apple 상품 매핑 또는 소모품 유형이 운영 카탈로그와 다릅니다.")
+    # SKU 원장은 등록된 provisioner CLI로 배포 전후 재조회한다.
+    # CI 배포 신원에 Secret payload 조회 권한을 추가하지 않는다.
 
 
 if __name__ == "__main__":
