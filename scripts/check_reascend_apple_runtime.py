@@ -7,7 +7,12 @@ import subprocess
 
 def gcloud_json(*arguments):
     result = subprocess.run(["gcloud", *arguments, "--project", os.environ["PROJECT_ID"]],
-                            check=True, capture_output=True, text=True)
+                            capture_output=True, text=True)
+    if result.returncode:
+        # 공급자 오류의 원문/응답을 출력하지 않고 실패 종류만 남긴다.
+        reason = next((code for code in ("PERMISSION_DENIED", "NOT_FOUND", "UNAUTHENTICATED", "RESOURCE_EXHAUSTED")
+                       if code in result.stderr), "QUERY_FAILED")
+        raise SystemExit(f"gcloud {arguments[0]} query failed: {reason} (exit {result.returncode})")
     return json.loads(result.stdout)
 
 

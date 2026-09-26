@@ -41,6 +41,14 @@ class RuntimeAuditTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.run_audit(service, catalog)
 
+    def test_failed_read_reports_only_failure_category(self):
+        response = audit.subprocess.CompletedProcess([], 1, "private-stdout", "PERMISSION_DENIED private-stderr")
+        with patch.object(audit.subprocess, "run", return_value=response), patch.dict(audit.os.environ, {"PROJECT_ID": "test"}):
+            with self.assertRaises(SystemExit) as failure:
+                audit.gcloud_json("secrets", "versions", "access")
+        self.assertIn("PERMISSION_DENIED", str(failure.exception))
+        self.assertNotIn("private-", str(failure.exception))
+
     def test_wrong_key_blocks_before_catalog_read(self):
         service, catalog = self.fixtures()
         service["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"] = "OTHERKEY"
