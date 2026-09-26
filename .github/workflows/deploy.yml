@@ -208,6 +208,11 @@ jobs:
       # 서비스 이미지와 IAP 원장 환경을 함께 고정한다. 환경을 명시하지 않으면
       # 이전에 손으로 넣은 값이 다음 배포에도 남아 registry와 런타임이
       # 갈라질 수 있다.
+      # 판매를 열기 전에 공개 identity와 Apple 소모품 SKU를 고정한다.
+      # 로컬 provisioner에 없는 조회 권한을 기존 CI 배포 신원으로 사용한다.
+      - name: Assert Reascend Apple verifier and catalog
+        run: python3 scripts/check_reascend_apple_runtime.py
+
       - name: Deploy services
         run: |
           gcloud run deploy platform-api \

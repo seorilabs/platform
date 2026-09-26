@@ -164,3 +164,5 @@ require(
 
 print("production 배포 공개 IAM, IAP catalog, 운영 이벤트 경계가 일치한다.")
 PY
+
+python3 "$repo_root/scripts/check_reascend_apple_runtime_test.py"
