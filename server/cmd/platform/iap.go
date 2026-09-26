@@ -310,7 +310,11 @@ func newVerifiersForApp(
 		if err != nil {
 			return nil, err
 		}
-		v, err := apple.New(client, app.IAP.AppStoreBundleID, app.IAP.LedgerEnvironment == registry.LedgerSandbox)
+		var options []apple.Option
+		if app.IAP.AppStoreRequireAccountToken {
+			options = append(options, apple.WithStrictTransactionClaims())
+		}
+		v, err := apple.New(client, app.IAP.AppStoreBundleID, app.IAP.LedgerEnvironment == registry.LedgerSandbox, options...)
 		if err != nil {
 			return nil, err
 		}

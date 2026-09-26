@@ -490,3 +490,44 @@ func TestClientRequiresOCSPInProduction(t *testing.T) {
 		}
 	})
 }
+
+func TestReportedEnvironmentComesFromVerifiedTransaction(t *testing.T) {
+	for _, env := range []appstore.Environment{appstore.Production, appstore.Sandbox, ""} {
+		t.Run(string(env), func(t *testing.T) {
+			tx := validTx()
+			tx.Environment = env
+			v, err := New(&fakeSource{tx: tx}, testBundleID, env == appstore.Sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := v.Verify(context.Background(), appleProof())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := domain.Environment("")
+			if env == appstore.Production {
+				want = domain.EnvProduction
+			}
+			if env == appstore.Sandbox {
+				want = domain.EnvSandbox
+			}
+			if got.Environment != want {
+				t.Fatalf("environment %q, want %q", got.Environment, want)
+			}
+		})
+	}
+}
+
+func TestStrictClaimsRejectMissingBundleAndEnvironment(t *testing.T) {
+	for _, mutate := range []func(*appstore.JWSTransaction){func(tx *appstore.JWSTransaction) { tx.BundleID = "" }, func(tx *appstore.JWSTransaction) { tx.Environment = "" }} {
+		tx := validTx()
+		mutate(tx)
+		v, err := New(&fakeSource{tx: tx}, testBundleID, false, WithStrictTransactionClaims())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := v.Verify(context.Background(), appleProof()); err == nil {
+			t.Fatal("missing verified claims accepted")
+		}
+	}
+}

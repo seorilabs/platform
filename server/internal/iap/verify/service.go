@@ -49,13 +49,14 @@ type Auditor interface {
 
 // Outcome은 검증 결과다.
 type Outcome struct {
-	Status         string   `json:"status"` // verified | pending | revoked
-	EntitlementID  string   `json:"entitlementId"`
-	TransactionID  string   `json:"transactionId,omitempty"`
-	Granted        *bool    `json:"granted,omitempty"`
-	AlreadyGranted *bool    `json:"alreadyGranted,omitempty"`
-	Entitlements   []string `json:"entitlements"`
-	Completion     *Action  `json:"completion,omitempty"`
+	Environment    domain.Environment `json:"environment,omitempty"`
+	Status         string             `json:"status"` // verified | pending | revoked
+	EntitlementID  string             `json:"entitlementId"`
+	TransactionID  string             `json:"transactionId,omitempty"`
+	Granted        *bool              `json:"granted,omitempty"`
+	AlreadyGranted *bool              `json:"alreadyGranted,omitempty"`
+	Entitlements   []string           `json:"entitlements"`
+	Completion     *Action            `json:"completion,omitempty"`
 }
 
 // Action은 클라이언트가 할 후속 조치다.
@@ -219,6 +220,20 @@ func (s *Service) VerifyPurchase(
 		return Outcome{}, err
 	}
 
+	// 소모품 앱은 별도 정책으로 구매자 결합을 강제한다. ADR 0028.
+	// 키가 없으면 검증을 건너뛰지 않고 원장에 도달하기 전에 거부한다.
+	if proof.Platform == domain.PlatformAppStore && app.IAP.AppStoreRequireAccountToken {
+		if s.keyring == nil {
+			return Outcome{}, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "구매자 검증 설정이 준비되지 않았어요")
+		}
+		if !purchase.Environment.Valid() {
+			return Outcome{}, platformerr.New(platformerr.CodeEnvironmentMismatch, "거래 환경을 확인할 수 없어요")
+		}
+		if err := s.checkBinding(puid, purchase); err != nil {
+			return Outcome{}, err
+		}
+	}
+
 	// 계정 바인딩은 부정 신호로 남기되 지급을 막지는 않는다. ADR 0010
 	//
 	// 바인딩 참조는 마켓 계정 식별자가 아니라 우리가 platform_user_id로
@@ -260,6 +275,7 @@ func (s *Service) VerifyPurchase(
 			Status:        "pending",
 			EntitlementID: entID,
 			TransactionID: purchase.ProviderOrderID,
+			Environment:   purchase.Environment,
 			Entitlements:  orEmpty(list),
 		}, nil
 
@@ -276,11 +292,12 @@ func (s *Service) VerifyPurchase(
 			Status:        "revoked",
 			EntitlementID: entID,
 			TransactionID: purchase.ProviderOrderID,
+			Environment:   purchase.Environment,
 			Entitlements:  orEmpty(list),
 		}, nil
 
 	case domain.StateActive:
-		return s.grantAndComplete(ctx, appID, puid, v, led, in)
+		return s.grantAndComplete(ctx, appID, puid, v, led, in, app.IAP.AppStoreClientCompletion)
 
 	default:
 		return Outcome{}, platformerr.New(platformerr.CodePurchaseInvalid,
@@ -294,6 +311,7 @@ func (s *Service) grantAndComplete(
 	v Verifier,
 	led Ledger,
 	in ledger.GrantInput,
+	appleClientCompletion bool,
 ) (Outcome, error) {
 	res, err := led.Grant(ctx, in)
 	if err != nil {
@@ -320,13 +338,20 @@ func (s *Service) grantAndComplete(
 		Status:        "verified",
 		EntitlementID: in.EntitlementID,
 		TransactionID: in.Purchase.ProviderOrderID,
+		Environment:   in.Purchase.Environment,
 		Entitlements:  orEmpty(res.Entitlements),
 	}
 	granted, already := res.Granted, res.AlreadyGranted
 	out.Granted = &granted
 	out.AlreadyGranted = &already
 
-	action := s.completeGrant(ctx, appID, puid, v, in.Purchase)
+	var action Action
+	if appleClientCompletion && in.Purchase.Platform == domain.PlatformAppStore && in.Purchase.Completion == domain.CompletionAppleFinish {
+		// 앱 지갑의 별도 커밋 이후에만 기기가 완료한다. ADR 0028, 불변식 7.
+		action = Action{Action: domain.ActionAppStoreFinishTransaction, OrderID: in.Purchase.ProviderOrderID}
+	} else {
+		action = s.completeGrant(ctx, appID, puid, v, in.Purchase)
+	}
 	out.Completion = &action
 
 	return out, nil
@@ -388,6 +413,7 @@ func (s *Service) completeSandboxReset(
 		Status:        "revoked",
 		EntitlementID: in.EntitlementID,
 		TransactionID: in.Purchase.ProviderOrderID,
+		Environment:   in.Purchase.Environment,
 		Entitlements:  orEmpty(res.Entitlements),
 		Completion:    &Action{Action: domain.ActionAppStoreSyncAfterSandboxReset},
 	}, nil
