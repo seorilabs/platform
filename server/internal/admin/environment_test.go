@@ -97,3 +97,25 @@ func TestAdminEnvironmentBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestScopedCatalogPreservesExistingReadRoute(t *testing.T) {
+	ledger := &fakeLedger{env: domain.EnvProduction}
+	h := newHandler(t, ledger, &fakeValidator{email: backofficeReadSA}, &fakeAuditor{})
+	h.apps = &fakeApps{app: registry.App{AppID: "a", Status: registry.StatusActive, Features: map[string]bool{"iap": true},
+		IAP: registry.IAPConfig{LedgerEnvironment: registry.LedgerProduction, Markets: []string{"app_store"}, EntitlementIDs: []string{"sp_a"}}}}
+	if err := h.WithAppHandlers(map[domain.Scope]*Handler{{AppID: "a", Environment: domain.EnvProduction}: h}); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+	r := httptest.NewRequest(http.MethodGet, "/v1/admin/apps/a/iap/catalog", nil)
+	r.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("existing catalog read rejected: %d %s", w.Code, w.Body.String())
+	}
+	if len(ledger.grantCalls)+len(ledger.resetCalls) != 0 {
+		t.Fatal("catalog read touched a ledger")
+	}
+}

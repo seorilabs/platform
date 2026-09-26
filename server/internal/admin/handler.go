@@ -293,9 +293,7 @@ func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, 
 	if err := app.EnsureUsable(); err != nil {
 		return nil, err
 	}
-	if len(h.appHandlers) > 0 && !app.IAP.LegacyUnscopedLedger {
-		return nil, platformerr.New(platformerr.CodeEnvironmentMismatch, "앱 범위 원장은 X-Seori-App 헤더가 필요해요")
-	}
+	// 카탈로그는 원장을 읽거나 변경하지 않는다. 기존 appId 경로 조회를 보존한다.
 	if !app.FeatureEnabled("iap") || len(app.IAP.EntitlementIDs) == 0 {
 		return nil, platformerr.New(platformerr.CodeAuthForbidden,
 			"이 앱은 IAP 관리가 활성화되지 않았어요")

@@ -25,6 +25,12 @@ func TestReascendLaunchMonetizationContract(t *testing.T) {
 	if err := app.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	if !app.MarketEnabled("app_store") || !app.MarketEnabled("google_play") ||
+		app.IAP.AppStoreBundleID != "com.seorilabs.reascend" ||
+		!app.IAP.AppleSandboxEnabled || !app.IAP.AppStoreClientCompletion || !app.IAP.AppStoreRequireAccountToken ||
+		app.IAP.LegacyUnscopedLedger || app.IAP.LedgerEnvironment != LedgerProduction {
+		t.Fatalf("Reascend Apple 소모품의 구매자·환경·앱 완료 경계가 다르다: %#v", app.IAP)
+	}
 	// 클라이언트 판매 스위치는 꺼도, 서버 IAP 원장은 과거 구매 복원을 위해 유지한다.
 	if !app.FeatureEnabled("iap") || !app.FeatureEnabled("ads") {
 		t.Fatalf("복원과 보상형 광고 기능 경계가 다르다: %#v", app.Features)
