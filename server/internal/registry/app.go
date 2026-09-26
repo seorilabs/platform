@@ -100,6 +100,13 @@ type GA4Config struct {
 }
 
 type IAPConfig struct {
+	// AppStoreClientCompletion는 앱 지갑 적립 뒤 StoreKit에서 거래를 완료한다.
+	// Platform entitlement 커밋만으로 앱의 소모품 지급을 완료하지 않는다.
+	AppStoreClientCompletion bool `json:"app_store_client_completion,omitempty" firestore:"app_store_client_completion,omitempty"`
+	// AppStoreRequireAccountToken는 거래의 appAccountToken과 현재 신원을 강제한다.
+	// 기존 비소모품 복원 정책은 기본 false로 보존한다.
+	AppStoreRequireAccountToken bool `json:"app_store_require_account_token,omitempty" firestore:"app_store_require_account_token,omitempty"`
+
 	LedgerEnvironment LedgerEnvironment `json:"ledger_environment" firestore:"ledger_environment"`
 	// LegacyUnscopedLedger는 다중 앱 이전에 생성된 원장 경로를 유지한다.
 	// 신규 앱에서는 사용하지 않는다. lizard의 기존 IAP 데이터/SDK 회귀용이다.
@@ -112,7 +119,7 @@ type IAPConfig struct {
 	// provider 전역 환경변수에 두면 여러 앱을 한 서비스에서 검증할 수 없다.
 	AppStoreBundleID string `json:"app_store_bundle_id,omitempty" firestore:"app_store_bundle_id,omitempty"`
 	// AppleSandboxEnabled는 기존 기본 환경과 별도로 Apple 테스트 거래만
-	// 허용한다. 기존 공용 원장을 쓰는 앱만 대상이며 앱 범위 원장은 거부한다.
+	// 허용한다. 앱 범위와 기존 공용 원장을 각각 고정된 서비스로 조립한다.
 	// 검증기·원장·worker·Admin 모두 이 허용 범위를 따른다. ADR 0027.
 	AppleSandboxEnabled bool `json:"apple_sandbox_enabled,omitempty" firestore:"apple_sandbox_enabled,omitempty"`
 	// EntitlementIDs는 이 앱에 지급할 수 있는 entitlement allowlist다.
@@ -130,7 +137,7 @@ func (a App) IAPEnvironmentAllowed(env LedgerEnvironment) bool {
 		return false
 	}
 	return env == a.IAP.LedgerEnvironment ||
-		(env == LedgerSandbox && a.IAP.AppleSandboxEnabled && a.IAP.LegacyUnscopedLedger && a.FeatureEnabled("iap") && a.MarketEnabled("app_store"))
+		(env == LedgerSandbox && a.IAP.AppleSandboxEnabled && a.FeatureEnabled("iap") && a.MarketEnabled("app_store"))
 }
 
 type AuthConfig struct {
@@ -325,11 +332,6 @@ func (a App) Validate() error {
 	}
 	if a.IAP.AppleSandboxEnabled && (!a.FeatureEnabled("iap") || !a.MarketEnabled("app_store") || a.IAP.LedgerEnvironment != LedgerProduction) {
 		return fmt.Errorf("%s: 추가 Apple sandbox에는 production 기본 환경과 활성 App Store IAP가 필요하다", a.AppID)
-	}
-	// Admin의 기존 공용 원장 조작과 같은 배치를 보장한다. 앱 범위 원장을
-	// 지원한다고 선언만 하고 서로 다른 원장을 읽고 쓰는 설정은 받지 않는다.
-	if a.IAP.AppleSandboxEnabled && !a.IAP.LegacyUnscopedLedger {
-		return fmt.Errorf("%s: 추가 Apple sandbox는 기존 공용 원장 앱에서만 지원한다", a.AppID)
 	}
 	if a.FeatureEnabled("iap") && a.MarketEnabled("google_play") {
 		if !androidPackagePattern.MatchString(a.IAP.GooglePlayPackageName) ||

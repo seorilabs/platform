@@ -116,6 +116,8 @@ type CompletionAction string
 
 const (
 	ActionNone CompletionAction = "none"
+	// ActionAppStoreFinishTransaction은 앱 지급 커밋 뒤 기기 StoreKit에서 완료한다.
+	ActionAppStoreFinishTransaction CompletionAction = "app_store_finish_transaction"
 	// ActionRetryServerCompletion은 지급이 이미 커밋됐고 마켓 완료만 실패했다는 뜻이다.
 	//
 	// 불변식 7이다. 지급을 롤백하지 않는다.
@@ -145,8 +147,10 @@ type Proof struct {
 
 // VerifiedPurchase는 마켓 검증을 통과한 구매다.
 type VerifiedPurchase struct {
-	Platform  Platform
-	ProductID string
+	// Environment는 마켓 검증으로 확인한 환경이다. 요청값으로 채우지 않는다.
+	Environment Environment
+	Platform    Platform
+	ProductID   string
 
 	// CanonicalID는 멱등키의 재료다. 마켓마다 다르다.
 	//   Play:      purchaseToken

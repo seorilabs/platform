@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"github.com/seorilabs/platform/server/internal/registry"
 	"log/slog"
 	"net/http"
 	"os"
@@ -71,6 +73,30 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		if err := handler.WithEnvironmentHandlers(map[domain.Environment]*admin.Handler{domain.EnvSandbox: sandboxHandler}); err != nil {
 			return err
 		}
+	}
+	apps, err := d.registry.List(context.Background())
+	if err != nil {
+		return err
+	}
+	appHandlers := map[domain.Scope]*admin.Handler{}
+	for _, app := range apps {
+		if !app.FeatureEnabled("iap") {
+			continue
+		}
+		environments := []domain.Environment{domain.Environment(app.IAP.LedgerEnvironment)}
+		if app.IAP.AppleSandboxEnabled && app.IAP.LedgerEnvironment == registry.LedgerProduction {
+			environments = append(environments, domain.EnvSandbox)
+		}
+		for _, env := range environments {
+			scoped, err := admin.NewHandler(ledgerForRegistryApp(d.store, app, env), d.config, d.adminUsers, d.registry, d.iap.catalog, auth, auditAdapter{col: d.events})
+			if err != nil {
+				return err
+			}
+			appHandlers[domain.Scope{AppID: app.AppID, Environment: env}] = scoped
+		}
+	}
+	if err := handler.WithAppHandlers(appHandlers); err != nil {
+		return err
 	}
 	handler.Register(mux)
 	if d.ads == nil {

@@ -10,7 +10,7 @@ func TestAppleSandboxRequiresExplicitProductionApp(t *testing.T) {
 	}{
 		{"legacy production", func(a *App) { a.IAP.AppleSandboxEnabled = false }, true, false},
 		{"explicit Apple sandbox", func(*App) {}, true, true},
-		{"app scoped ledger rejected", func(a *App) { a.IAP.LegacyUnscopedLedger = false }, false, false},
+		{"app scoped ledger allowed", func(a *App) { a.IAP.LegacyUnscopedLedger = false }, true, true},
 		{"IAP disabled", func(a *App) { a.Features["iap"] = false }, false, false},
 		{"Apple disabled", func(a *App) { a.IAP.Markets = nil }, false, false},
 		{"sandbox default with extra flag", func(a *App) { a.IAP.LedgerEnvironment = LedgerSandbox }, false, true},

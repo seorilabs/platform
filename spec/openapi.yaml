@@ -1196,6 +1196,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
       responses:
         '200':
           description: 조회 성공
@@ -1261,6 +1262,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - $ref: '#/components/parameters/AdminLimit'
       responses:
         '200':
@@ -1338,6 +1340,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - name: puid
           in: path
           required: true
@@ -1383,6 +1386,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - $ref: '#/components/parameters/AdminLimit'
       responses:
         '200':
@@ -1429,6 +1433,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - name: appId
           in: path
           required: true
@@ -1472,6 +1477,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - name: appId
           in: path
           required: true
@@ -1524,6 +1530,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - name: appId
           in: path
           required: true
@@ -1573,6 +1580,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1604,6 +1612,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1642,6 +1651,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - $ref: '#/components/parameters/AdminActor'
       requestBody:
         required: true
@@ -1673,6 +1683,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - name: requestId
           in: path
           required: true
@@ -1711,6 +1722,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - name: requestId
           in: path
           required: true
@@ -1746,6 +1758,7 @@ paths:
       security: [{ AdminOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'
+        - $ref: '#/components/parameters/AdminIapApp'
         - name: requestId
           in: path
           required: true
@@ -2263,6 +2276,14 @@ components:
         GET은 read 또는 write allowlist, mutation은 write allowlist만 허용한다.
 
   parameters:
+    AdminIapApp:
+      name: X-Seori-App
+      in: header
+      required: false
+      description: |
+        Admin IAP의 앱 범위 원장 선택. 사용자와 본문 appId가 선택한 앱과 다르면 거부한다.
+        생략하면 기존 공용 원장을 유지한다.
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
     IapEnvironment:
       name: X-Seori-IAP-Environment
       in: header
@@ -3345,6 +3366,12 @@ components:
           enum: [verified, pending, revoked]
         entitlementId:
           $ref: '#/components/schemas/EntitlementId'
+        environment:
+          type: string
+          enum: [production, sandbox]
+          description: |
+            마켓 검증기가 확인한 거래 환경. 요청 헤더는 검증기 선택용이며
+            이 값의 근거가 아니다. 확인하지 못한 환경은 생략한다.
         transactionId:
           type: string
           maxLength: 256
@@ -3379,12 +3406,13 @@ components:
             - retry_server_completion
             - apps_in_toss_complete_product_grant
             - app_store_sync_after_sandbox_reset
+            - app_store_finish_transaction
           description: |
             retry_server_completion은 **지급이 이미 커밋된 상태**를 뜻한다.
             마켓 완료 호출만 실패했고 서버 outbox가 재시도한다. 롤백하지 않는다.
         orderId:
           type: string
-          description: apps_in_toss_complete_product_grant일 때만
+          description: apps_in_toss_complete_product_grant 또는 app_store_finish_transaction일 때 완료할 마켓 거래 ID
 
     WebhookOutcome:
       type: object

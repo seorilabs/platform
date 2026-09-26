@@ -33,14 +33,21 @@ type transactionSource interface {
 
 // Verifier는 App Store 구매 검증기다.
 type Verifier struct {
-	src         transactionSource
-	bundleID    string
-	environment appstore.Environment
-	now         func() time.Time
+	src          transactionSource
+	bundleID     string
+	environment  appstore.Environment
+	now          func() time.Time
+	strictClaims bool
 }
 
 // Option은 검증기 설정이다.
 type Option func(*Verifier)
+
+// WithStrictTransactionClaims는 소모품 지급에 필요한 앱·환경 증거 누락을 거절한다.
+// 기존 비소모품 복원 앱의 동작은 명시적으로 활성화하지 않으면 보존한다.
+func WithStrictTransactionClaims() Option {
+	return func(v *Verifier) { v.strictClaims = true }
+}
 
 // WithClock은 시계를 주입한다.
 func WithClock(now func() time.Time) Option {
@@ -119,6 +126,9 @@ func (v *Verifier) mapTransaction(
 	proof domain.Proof,
 	observedAt time.Time,
 ) (domain.VerifiedPurchase, error) {
+	if v.strictClaims && (tx.BundleID == "" || tx.Environment == "") {
+		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeProviderResponseInvalid, "구매의 앱과 환경을 확인할 수 없어요")
+	}
 	// 다른 앱의 거래를 우리 앱 구매로 인정하면 안 된다.
 	if tx.BundleID != "" && tx.BundleID != v.bundleID {
 		return domain.VerifiedPurchase{}, platformerr.New(platformerr.CodeBundleMismatch,
@@ -178,9 +188,19 @@ func (v *Verifier) mapTransaction(
 		completion = domain.CompletionNone
 	}
 
+	var environment domain.Environment
+	// 서명된 환경이 누락된 기존 거래는 확인된 환경으로 보고하지 않는다.
+	// 불변식 9: 요청 헤더나 부팅 설정만으로 거래 환경을 단정하지 않는다.
+	switch tx.Environment {
+	case appstore.Production:
+		environment = domain.EnvProduction
+	case appstore.Sandbox:
+		environment = domain.EnvSandbox
+	}
 	isTestPurchase := v.environment == appstore.Sandbox
 	return domain.VerifiedPurchase{
 		Platform:          domain.PlatformAppStore,
+		Environment:       environment,
 		ProductID:         tx.ProductID,
 		CanonicalID:       canonicalID,
 		ProviderOrderID:   tx.TransactionID,

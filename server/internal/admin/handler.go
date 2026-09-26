@@ -98,7 +98,39 @@ type Handler struct {
 	auth                  *Authenticator
 	now                   func() time.Time
 	environments          map[domain.Environment]*Handler
+	appHandlers           map[domain.Scope]*Handler
 	additionalEnvironment bool
+}
+
+// WithAppHandlers는 요청마다 고정된 앱·환경 원장을 선택한다. ADR 0027.
+func (h *Handler) WithAppHandlers(handlers map[domain.Scope]*Handler) error {
+	for scope, handler := range handlers {
+		if !adminAppIDPattern.MatchString(scope.AppID) || !scope.Environment.Valid() || handler == nil || handler.auth != h.auth || handler.ledger.Environment() != scope.Environment {
+			return platformerr.New(platformerr.CodeRuntimeConfigInvalid, "Admin 앱 원장 설정이 올바르지 않아요")
+		}
+		handler.apps = adminAppScope{Apps: handler.apps, appID: scope.AppID}
+	}
+	h.appHandlers = handlers
+	return nil
+}
+
+type adminAppScope struct {
+	Apps
+	appID string
+}
+
+func (s adminAppScope) Get(ctx context.Context, appID string) (registry.App, error) {
+	if appID != s.appID {
+		return registry.App{}, platformerr.New(platformerr.CodeAuthForbidden, "선택한 앱과 요청 앱이 달라요")
+	}
+	return s.Apps.Get(ctx, appID)
+}
+func (s adminAppScope) List(ctx context.Context) ([]registry.App, error) {
+	app, err := s.Get(ctx, s.appID)
+	if err != nil {
+		return nil, err
+	}
+	return []registry.App{app}, nil
 }
 
 // WithEnvironmentHandlers는 같은 인증 경계 아래 별도 원장을 연결한다.
@@ -120,6 +152,21 @@ func (h *Handler) environmentHandler(r *http.Request) (*Handler, error) {
 	value, err := httpx.OptionalEnumHeader(r, "X-Seori-IAP-Environment", []string{"production", "sandbox"}, platformerr.CodeEnvironmentMismatch)
 	if err != nil {
 		return nil, err
+	}
+	appValues := r.Header.Values("X-Seori-App")
+	if len(appValues) != 0 {
+		if len(appValues) != 1 || !adminAppIDPattern.MatchString(appValues[0]) {
+			return nil, platformerr.New(platformerr.CodeRequestInvalid, "Admin 앱 헤더가 올바르지 않아요")
+		}
+		env := domain.Environment(value)
+		if value == "" {
+			env = h.ledger.Environment()
+		}
+		selected := h.appHandlers[domain.Scope{AppID: appValues[0], Environment: env}]
+		if selected == nil {
+			return nil, platformerr.New(platformerr.CodeEnvironmentMismatch, "요청한 앱 원장이 준비되지 않았어요")
+		}
+		return selected, nil
 	}
 	if value == "" || domain.Environment(value) == h.ledger.Environment() {
 		return h, nil
@@ -245,6 +292,9 @@ func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, 
 	}
 	if err := app.EnsureUsable(); err != nil {
 		return nil, err
+	}
+	if len(h.appHandlers) > 0 && !app.IAP.LegacyUnscopedLedger {
+		return nil, platformerr.New(platformerr.CodeEnvironmentMismatch, "앱 범위 원장은 X-Seori-App 헤더가 필요해요")
 	}
 	if !app.FeatureEnabled("iap") || len(app.IAP.EntitlementIDs) == 0 {
 		return nil, platformerr.New(platformerr.CodeAuthForbidden,
@@ -1157,6 +1207,9 @@ func (h *Handler) validateIAPContext(
 	}
 	if err := app.EnsureUsable(); err != nil {
 		return registry.App{}, err
+	}
+	if len(h.appHandlers) > 0 && !app.IAP.LegacyUnscopedLedger {
+		return registry.App{}, platformerr.New(platformerr.CodeEnvironmentMismatch, "앱 범위 원장은 X-Seori-App 헤더가 필요해요")
 	}
 	if !app.FeatureEnabled("iap") || len(app.IAP.EntitlementIDs) == 0 {
 		return registry.App{}, platformerr.New(platformerr.CodeAuthForbidden,
