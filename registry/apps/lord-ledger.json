@@ -53,16 +53,22 @@
         "format": "rewarded",
         "providers": {
           "admob": {
-            "android_ad_unit_id": "ca-app-pub-2444587584524186/5352255759",
-            "ios_ad_unit_id": "ca-app-pub-2444587584524186/5673383051",
-            "reward_item": "food",
-            "reward_amount": 1000
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/7930533236",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/3795847101",
+            "reward_item": "gold",
+            "reward_amount": 300,
+            "retired_android_ad_unit_ids": [
+              "ca-app-pub-2444587584524186/5352255759"
+            ],
+            "retired_ios_ad_unit_ids": [
+              "ca-app-pub-2444587584524186/5673383051"
+            ]
           }
         },
         "reward": {
-          "key": "food",
-          "min_amount": 1000,
-          "max_amount": 1000
+          "key": "gold",
+          "min_amount": 300,
+          "max_amount": 300
         },
         "daily_limit": 3,
         "cooldown_seconds": 30,
