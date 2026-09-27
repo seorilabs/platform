@@ -30,6 +30,8 @@ func TestLizardTycoonRegistryEventContract(t *testing.T) {
 		"sp_moonlight_crested", "sp_gargoyle_gecko", "sp_uromastyx",
 		"ft_rack_pack_1", "ft_rack_pack_2", "th_night_sky_terrarium",
 		"ck_starlight_accessory_set",
+		"crystal_300", "crystal_1000", "crystal_3200",
+		"crystal_5500", "crystal_starter",
 	}
 	if !reflect.DeepEqual(lizardTycoon.IAP.EntitlementIDs, wantEntitlements) {
 		t.Fatalf("도마뱀 IAP 허용 목록 불일치: %v", lizardTycoon.IAP.EntitlementIDs)
