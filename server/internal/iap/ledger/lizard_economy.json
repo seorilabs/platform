@@ -1,0 +1,592 @@
+{
+  "version": "2026-09-v1",
+  "enabled": false,
+  "app_id": "lizard-tycoon",
+  "purchase_markets": [
+    "google_play",
+    "app_store"
+  ],
+  "draw_cost": 100,
+  "pity_limit": 30,
+  "choice_cost": 60,
+  "weights": {
+    "common": 7500,
+    "rare": 2200,
+    "legendary": 300
+  },
+  "duplicate_shards": {
+    "common": 10,
+    "rare": 30,
+    "legendary": 100
+  },
+  "research_costs": [
+    20,
+    40,
+    80,
+    160,
+    320
+  ],
+  "shard_pack_cost": 100,
+  "shard_pack_amount": 100,
+  "weekly_crystals": 300,
+  "weekly_shards": 100,
+  "weekly_expeditions": 3,
+  "expedition_seconds": 1800,
+  "expedition_shards": 20,
+  "packs": {
+    "crystal_300": {
+      "crystals": 300,
+      "price_krw": 3300,
+      "once": false
+    },
+    "crystal_1000": {
+      "crystals": 1000,
+      "price_krw": 11000,
+      "once": false
+    },
+    "crystal_3200": {
+      "crystals": 3200,
+      "price_krw": 33000,
+      "once": false
+    },
+    "crystal_5500": {
+      "crystals": 5500,
+      "price_krw": 55000,
+      "once": false
+    },
+    "crystal_starter": {
+      "crystals": 300,
+      "price_krw": 3300,
+      "once": true,
+      "common_choice": 1
+    }
+  },
+  "collections": [
+    {
+      "id": "tidal",
+      "name": "Tidal",
+      "release_offset_days": 0,
+      "morphs": [
+        {
+          "id": "tidal_dew",
+          "name": "Dew",
+          "rarity": "common",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.0
+        },
+        {
+          "id": "tidal_lagoon",
+          "name": "Lagoon",
+          "rarity": "common",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.026
+        },
+        {
+          "id": "tidal_reef",
+          "name": "Reef",
+          "rarity": "common",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.052
+        },
+        {
+          "id": "tidal_seafoam",
+          "name": "Seafoam",
+          "rarity": "common",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.078
+        },
+        {
+          "id": "tidal_rain",
+          "name": "Rain",
+          "rarity": "common",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.104
+        },
+        {
+          "id": "tidal_tide",
+          "name": "Tide",
+          "rarity": "common",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.13
+        },
+        {
+          "id": "tidal_opal",
+          "name": "Opal",
+          "rarity": "rare",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.156
+        },
+        {
+          "id": "tidal_glacier",
+          "name": "Glacier",
+          "rarity": "rare",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.182
+        },
+        {
+          "id": "tidal_prism",
+          "name": "Prism",
+          "rarity": "rare",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.208
+        },
+        {
+          "id": "tidal_moonpool",
+          "name": "Moonpool",
+          "rarity": "rare",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.23399999999999999
+        },
+        {
+          "id": "tidal_celestial",
+          "name": "Celestial",
+          "rarity": "legendary",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.26
+        },
+        {
+          "id": "tidal_nebula",
+          "name": "Nebula",
+          "rarity": "legendary",
+          "palette": [
+            "#547c80",
+            "#95cfd0",
+            "#f2f6dc",
+            "#397a9e",
+            "#f6ce71",
+            "#65a9b7"
+          ],
+          "hue_shift": 0.286
+        }
+      ]
+    },
+    {
+      "id": "orchid",
+      "name": "Orchid",
+      "release_offset_days": 28,
+      "morphs": [
+        {
+          "id": "orchid_petal",
+          "name": "Petal",
+          "rarity": "common",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.0
+        },
+        {
+          "id": "orchid_lavender",
+          "name": "Lavender",
+          "rarity": "common",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.026
+        },
+        {
+          "id": "orchid_lilac",
+          "name": "Lilac",
+          "rarity": "common",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.052
+        },
+        {
+          "id": "orchid_orchid",
+          "name": "Orchid",
+          "rarity": "common",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.078
+        },
+        {
+          "id": "orchid_rose",
+          "name": "Rose",
+          "rarity": "common",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.104
+        },
+        {
+          "id": "orchid_heather",
+          "name": "Heather",
+          "rarity": "common",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.13
+        },
+        {
+          "id": "orchid_amethyst",
+          "name": "Amethyst",
+          "rarity": "rare",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.156
+        },
+        {
+          "id": "orchid_twilight",
+          "name": "Twilight",
+          "rarity": "rare",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.182
+        },
+        {
+          "id": "orchid_iris",
+          "name": "Iris",
+          "rarity": "rare",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.208
+        },
+        {
+          "id": "orchid_stardust",
+          "name": "Stardust",
+          "rarity": "rare",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.23399999999999999
+        },
+        {
+          "id": "orchid_eclipse",
+          "name": "Eclipse",
+          "rarity": "legendary",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.26
+        },
+        {
+          "id": "orchid_supernova",
+          "name": "Supernova",
+          "rarity": "legendary",
+          "palette": [
+            "#7e638d",
+            "#c8a2cf",
+            "#faf0db",
+            "#685388",
+            "#f2ba91",
+            "#ad8dbb"
+          ],
+          "hue_shift": 0.286
+        }
+      ]
+    },
+    {
+      "id": "canopy",
+      "name": "Canopy",
+      "release_offset_days": 56,
+      "morphs": [
+        {
+          "id": "canopy_fern",
+          "name": "Fern",
+          "rarity": "common",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.0
+        },
+        {
+          "id": "canopy_moss",
+          "name": "Moss",
+          "rarity": "common",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.026
+        },
+        {
+          "id": "canopy_olive",
+          "name": "Olive",
+          "rarity": "common",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.052
+        },
+        {
+          "id": "canopy_meadow",
+          "name": "Meadow",
+          "rarity": "common",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.078
+        },
+        {
+          "id": "canopy_sage",
+          "name": "Sage",
+          "rarity": "common",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.104
+        },
+        {
+          "id": "canopy_clover",
+          "name": "Clover",
+          "rarity": "common",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.13
+        },
+        {
+          "id": "canopy_amber",
+          "name": "Amber",
+          "rarity": "rare",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.156
+        },
+        {
+          "id": "canopy_copper",
+          "name": "Copper",
+          "rarity": "rare",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.182
+        },
+        {
+          "id": "canopy_jade",
+          "name": "Jade",
+          "rarity": "rare",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.208
+        },
+        {
+          "id": "canopy_firefly",
+          "name": "Firefly",
+          "rarity": "rare",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.23399999999999999
+        },
+        {
+          "id": "canopy_solstice",
+          "name": "Solstice",
+          "rarity": "legendary",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.26
+        },
+        {
+          "id": "canopy_equinox",
+          "name": "Equinox",
+          "rarity": "legendary",
+          "palette": [
+            "#65794b",
+            "#b3cd83",
+            "#fff1d0",
+            "#5b7c52",
+            "#eca667",
+            "#8aa65e"
+          ],
+          "hue_shift": 0.286
+        }
+      ]
+    }
+  ],
+  "launch_at": 0
+}

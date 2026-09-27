@@ -204,6 +204,13 @@ func (s *Service) VerifyPurchase(
 	if err != nil {
 		return Outcome{}, err
 	}
+	requiresRecovery, err := s.RequiresLinkedAccount(appID, proof.Platform, proof.ProductID)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if requiresRecovery && s.keyring == nil {
+		return Outcome{}, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "새 재화 구매자의 검증 설정이 준비되지 않았어요")
+	}
 	entID := product.EntitlementID
 	if s.apps != nil && (!app.EntitlementAllowed(entID) || !s.catalog.HasForApp(appID, entID)) {
 		return Outcome{}, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱에 허용되지 않은 상품이에요")
@@ -251,6 +258,9 @@ func (s *Service) VerifyPurchase(
 	// 둔다. 불일치를 거부 사유로 쓰라고 하지 않는다.
 	if s.keyring != nil && binding.RequiresBinding(proof.Platform) {
 		if err := s.checkBinding(puid, purchase); err != nil {
+			if requiresRecovery {
+				return Outcome{}, err
+			}
 			s.audit(ctx, "iap.binding_mismatch", appID, puid,
 				string(platformerr.CodeOf(err)), map[string]any{
 					"platform":   string(proof.Platform),

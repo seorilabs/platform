@@ -96,6 +96,8 @@ func (h *Handler) serviceFor(r *http.Request, sess identity.Session) (Service, e
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/iap/economy", httpx.Wrap(h.economySnapshot))
+	mux.HandleFunc("POST /v1/iap/economy/transactions", httpx.Wrap(h.economyTransaction))
 	mux.HandleFunc("POST /v1/iap/verify", httpx.Wrap(h.verifyPurchase))
 	mux.HandleFunc("GET /v1/iap/entitlements", httpx.Wrap(h.listEntitlements))
 	mux.HandleFunc("POST /v1/iap/account-references", httpx.Wrap(h.accountReferences))
@@ -139,6 +141,15 @@ func (h *Handler) verifyPurchase(w http.ResponseWriter, r *http.Request) error {
 			"구매 정보가 비어 있어요")
 	}
 
+	if es, ok := svc.(economyService); ok {
+		required, err := es.RequiresLinkedAccount(sess.AppID, platform, req.ProductID)
+		if err != nil {
+			return err
+		}
+		if required && !sess.IsLinkedAccount {
+			return platformerr.New(platformerr.CodeAccountLinkRequired, "새 재화 구매 전에 계정을 연결해 주세요")
+		}
+	}
 	proof := domain.Proof{
 		Platform:  platform,
 		ProductID: req.ProductID,
