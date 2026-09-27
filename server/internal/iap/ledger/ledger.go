@@ -17,6 +17,11 @@ import (
 
 // orderDoc은 주문 원장 문서다. 불변식 5에 따라 삭제하지 않는다.
 type orderDoc struct {
+	EconomyGranted  bool   `firestore:"economyGranted,omitempty"`
+	EconomyRefunded bool   `firestore:"economyRefunded,omitempty"`
+	EconomyCredits  int64  `firestore:"economyCredits,omitempty"`
+	EconomyVersion  string `firestore:"economyVersion,omitempty"`
+
 	PlatformUserID string `firestore:"platformUserId"`
 	EntitlementID  string `firestore:"entitlementId"`
 
@@ -130,6 +135,8 @@ type GrantInput struct {
 
 // Ledger는 Firestore 기반 entitlement 원장이다.
 type Ledger struct {
+	economy *EconomyCatalog
+
 	store       *store.Client
 	paths       pathBuilder
 	env         domain.Environment
@@ -217,6 +224,12 @@ func (l *Ledger) grant(
 	in GrantInput,
 	expectedOwner string,
 ) (domain.GrantResult, error) {
+	if l.isEconomyPack(in.EntitlementID) {
+		if in.PlatformUserID == "" || !in.Purchase.Platform.IsMarket() || in.Purchase.CanonicalID == "" {
+			return domain.GrantResult{}, economyError("구매 정보를 확인할 수 없어요")
+		}
+		return l.grantEconomyPurchase(ctx, in)
+	}
 	if in.PlatformUserID == "" || in.EntitlementID == "" {
 		return domain.GrantResult{}, platformerr.New(platformerr.CodeInternal, "지급 정보가 올바르지 않아요")
 	}
@@ -1984,6 +1997,15 @@ func (l *Ledger) RevokeByCanonicalID(
 			return tx.Set(orderPath, order)
 		}
 
+		if order.EconomyGranted {
+			if err := l.revokeEconomyOrder(tx, &order, orderKey, now); err != nil {
+				return err
+			}
+			order.State = domain.StateRevoked
+			order.ObservedAt = observedAt
+			order.UpdatedAt = now
+			return tx.Set(orderPath, order)
+		}
 		intPath, err := l.paths.internalEntitlement(order.PlatformUserID, order.EntitlementID)
 		if err != nil {
 			return err

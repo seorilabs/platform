@@ -878,6 +878,92 @@ paths:
   # 마켓별 엔드포인트를 두지 않는다. 증빙 필드 이름도 마켓마다 다르지
   # 않고 token 하나다. 마켓이 늘 때마다 경로와 필드가 늘면 SDK가 마켓
   # 개수만큼 갈라지고, 그 갈라짐은 지급 여부가 걸린 자리에서 드러난다.
+  /admin/apps/{appId}/iap/economy/{puid}:
+    get:
+      tags: [admin, iap]
+      summary: 사용자 수집 지갑 조회
+      operationId: adminCollectionEconomy
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SeoriApp' }
+        - { name: appId, in: path, required: true, schema: { type: string } }
+        - { name: puid, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IapEnvironment' }
+      responses:
+        '200':
+          description: 지갑의 존재 여부와 잔액. 없는 지갑을 생성하지 않는다.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  result:
+                    type: object
+                    properties:
+                      found: { type: boolean }
+                      state: { $ref: '#/components/schemas/CollectionEconomyState' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /iap/economy:
+    get:
+      tags: [iap]
+      summary: 수집 경제의 서버 상태와 버전별 카탈로그 조회
+      operationId: getCollectionEconomy
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      responses:
+        '200':
+          description: 잔액, 해금, 연구, 보장 횟수와 카탈로그
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/CollectionEconomySnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /iap/economy/transactions:
+    post:
+      tags: [iap]
+      summary: 가챠, 확정 교환, 연구, 탐사와 주간 보상의 멱등 거래
+      operationId: transactCollectionEconomy
+      description: |
+        계정, 시간, 금액과 추첨은 서버가 결정한다. 동일 requestId와 동일 내용은
+        최초 결과를 반환하고 다른 내용 재사용은 거절한다. 연결 계정만 소비할 수 있다.
+        원 주문 적립과 환불은 기존 IAP 검증·웹훅으로 처리하며 이 API로 적립하지 않는다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CollectionEconomyTransaction' }
+      responses:
+        '200':
+          description: 최초 거래 결과 및 해당 커밋의 상태
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/CollectionEconomyReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /iap/verify:
     post:
       tags: [iap]
@@ -2359,6 +2445,64 @@ components:
         pattern: '^[A-Za-z0-9-]{1,39}$'
 
   schemas:
+    CollectionEconomyTransaction:
+      type: object
+      additionalProperties: false
+      required: [requestId, action]
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9_-]{16,96}$' }
+        action: { type: string, enum: [draw, exchange, research, shards, expedition_start, expedition_claim, weekly, starter_choice] }
+        collectionId: { type: string, maxLength: 64 }
+        targetId: { type: string, maxLength: 64 }
+        count: { type: integer, enum: [1, 10], default: 1 }
+    CollectionEconomySnapshot:
+      type: object
+      required: [state, catalog, linked, enabled, availableCollections, serverTime]
+      properties:
+        availableCollections: { type: array, items: { type: string } }
+        serverTime: { type: integer, format: int64, description: "UTC Unix seconds from the server" }
+        linked: { type: boolean }
+        enabled: { type: boolean }
+        catalog: { type: object, additionalProperties: true, description: '불변 버전 카탈로그. 가격은 참고 KRW이며 결제 UI는 마켓 현지가격을 사용한다.' }
+        state: { $ref: '#/components/schemas/CollectionEconomyState' }
+    CollectionEconomyState:
+      type: object
+      required: [version, paid, free, shards, tokens, pity, unlocked, research]
+      properties:
+        version: { type: integer, format: int64 }
+        paid: { type: integer, format: int64, description: '환불 뒤 음수는 부채다. 새 소비를 차단한다.' }
+        free: { type: integer, format: int64, minimum: 0 }
+        shards: { type: integer, format: int64, minimum: 0 }
+        tokens: { type: integer, format: int64, minimum: 0 }
+        pity: { type: integer, minimum: 0, maximum: 29 }
+        unlocked: { type: object, additionalProperties: { type: boolean } }
+        research: { type: object, additionalProperties: { type: integer, minimum: 0, maximum: 5 } }
+        starterPurchased: { type: boolean }
+        starterChoices: { type: integer, minimum: 0 }
+        expeditionCollection: { type: string }
+        expeditionReturnAt: { type: integer, format: int64 }
+        weeklyKey: { type: string }
+        weeklyExpeditions: { type: integer, minimum: 0 }
+        weeklyClaimed: { type: boolean }
+    CollectionEconomyReceipt:
+      type: object
+      required: [requestId, action, catalogVersion, state, draws]
+      properties:
+        requestId: { type: string }
+        action: { type: string }
+        catalogVersion: { type: string }
+        state: { $ref: '#/components/schemas/CollectionEconomyState' }
+        draws:
+          type: array
+          items:
+            type: object
+            required: [morphId, rarity, duplicate, shards]
+            properties:
+              morphId: { type: string }
+              rarity: { type: string, enum: [common, rare, legendary] }
+              duplicate: { type: boolean }
+              shards: { type: integer, minimum: 0 }
+
     AccountDeletionStatus:
       type: object
       additionalProperties: false

@@ -232,6 +232,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"GET /v1/admin/users/{reference}":                 (*Handler).user,
 		"GET /v1/admin/users/{puid}/entitlements":         (*Handler).userEntitlements,
 		"GET /v1/admin/operator-grants":                   (*Handler).operatorGrants,
+		"GET /v1/admin/apps/{appId}/iap/economy/{puid}":   (*Handler).collectionEconomy,
 		"GET /v1/admin/apps/{appId}/iap/catalog":          (*Handler).iapCatalog,
 		"GET /v1/admin/apps/{appId}/iap/refund-reviews":   (*Handler).refundReviews,
 		"GET /v1/admin/iap/sandbox-resets/{requestId}":    (*Handler).sandboxResetStatus,
