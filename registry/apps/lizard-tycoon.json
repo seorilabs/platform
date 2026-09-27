@@ -35,7 +35,12 @@
       "ft_rack_pack_1",
       "ft_rack_pack_2",
       "th_night_sky_terrarium",
-      "ck_starlight_accessory_set"
+      "ck_starlight_accessory_set",
+      "crystal_300",
+      "crystal_1000",
+      "crystal_3200",
+      "crystal_5500",
+      "crystal_starter"
     ]
   },
   "platform_event_allowlist": [
