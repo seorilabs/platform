@@ -1888,6 +1888,15 @@ func checkReplay(order orderDoc, in GrantInput) error {
 // pending이 확정 상태를 덮으면 안 된다.
 func (l *Ledger) RecordPending(ctx context.Context, in GrantInput) error {
 	orderKey := in.Purchase.Key()
+	var economyCatalog EconomyCatalog
+	testEconomy := l.isEconomyTestPurchase(in.Purchase)
+	if l.isEconomyPack(in.EntitlementID) {
+		var err error
+		economyCatalog, err = l.economyCatalogFor(testEconomy)
+		if err != nil {
+			return err
+		}
+	}
 
 	return l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
 		now := l.now()
@@ -1907,6 +1916,9 @@ func (l *Ledger) RecordPending(ctx context.Context, in GrantInput) error {
 			if err := snap.DataTo(&order); err != nil {
 				return platformerr.Wrap(err, platformerr.CodeLedgerStateInvalid, "원장을 읽지 못했어요")
 			}
+			if economyCatalog.AppID != "" && order.IsTestPurchase != nil && *order.IsTestPurchase != testEconomy {
+				return platformerr.New(platformerr.CodePurchaseReplayMismatch, "시험 주문 상태가 이전 구매와 달라요")
+			}
 			// 확정된 상태는 건드리지 않는다.
 			if order.State == domain.StateActive || order.State == domain.StateRevoked {
 				return nil
@@ -1915,6 +1927,20 @@ func (l *Ledger) RecordPending(ctx context.Context, in GrantInput) error {
 				order.PlatformUserID != in.PlatformUserID {
 				return platformerr.New(platformerr.CodePurchaseOwnedByAnotherUser,
 					"다른 계정에서 구매한 상품이에요")
+			}
+		}
+		// Do not let a fresh delayed purchase bypass the closed sale gate.
+		// A previously recorded pending order remains eligible for completion.
+		if economyCatalog.AppID != "" && !exists && (!economyCatalog.Enabled || economyCatalog.LaunchAt <= 0) {
+			return economyError("재화 상품은 아직 준비 중이에요")
+		}
+		if economyCatalog.AppID != "" && testEconomy && !exists {
+			enrolled, err := l.economyTesterInTx(tx, in.PlatformUserID)
+			if err != nil {
+				return err
+			}
+			if !enrolled {
+				return economyError("등록된 시험 계정에서만 시험 구매를 사용할 수 있어요")
 			}
 		}
 

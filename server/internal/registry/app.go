@@ -142,6 +142,9 @@ func (a App) IAPEnvironmentAllowed(env LedgerEnvironment) bool {
 
 type AuthConfig struct {
 	AccountProviders map[string]AuthProviderConfig `json:"account_providers,omitempty" firestore:"account_providers,omitempty"`
+	// RequireAccountLinkAppCheck limits attestation to the two account-link endpoints.
+	// Older session and IAP clients keep their existing app-wide policy.
+	RequireAccountLinkAppCheck bool `json:"require_account_link_app_check,omitempty" firestore:"require_account_link_app_check,omitempty"`
 }
 
 type AuthProviderConfig struct {
@@ -387,9 +390,12 @@ func (a App) Validate() error {
 
 func (a App) validateAuth() error {
 	if len(a.Auth.AccountProviders) == 0 {
+		if a.Auth.RequireAccountLinkAppCheck {
+			return fmt.Errorf("%s: account-link App Check에는 auth provider가 필요하다", a.AppID)
+		}
 		return nil
 	}
-	if !a.RequireAppCheck || !a.FeatureEnabled("firebase_custom_token_bridge") {
+	if (!a.RequireAppCheck && !a.Auth.RequireAccountLinkAppCheck) || !a.FeatureEnabled("firebase_custom_token_bridge") {
 		return fmt.Errorf("%s: 외부 계정 연결에는 App Check와 firebase custom token bridge가 필요하다", a.AppID)
 	}
 	for provider, cfg := range a.Auth.AccountProviders {

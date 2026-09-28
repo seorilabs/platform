@@ -167,8 +167,17 @@ func TestAccountLinkHandlers(t *testing.T) {
 	provider := &fakeAccountProvider{name: "kakao", subject: "provider-subject"}
 	customTokens := &fakeCustomTokenIssuer{token: "firebase-custom-token"}
 	service := newAccountTestService(t, accounts, provider, customTokens)
+	app := testApp()
+	app.Features = map[string]bool{"firebase_custom_token_bridge": true}
+	app.FirebaseCustomTokenServiceAccount = "platform-auth@lizard-tycoon.iam.gserviceaccount.com"
+	app.Auth.AccountProviders = map[string]registry.AuthProviderConfig{"kakao": {Audience: "kakao-client-id"}}
+	app.Auth.RequireAccountLinkAppCheck = true
+	service.registry = registry.New(fakeSource{apps: []registry.App{app}})
 	appCheck := &fakeAppCheckVerifier{}
 	service.WithAppCheckVerifier(appCheck)
+	if err := service.VerifyAppCheck(context.Background(), "lizard-tycoon", ""); err != nil {
+		t.Fatalf("legacy session App Check policy changed: %v", err)
+	}
 
 	guest, err := service.CreateSession(context.Background(), "lizard-tycoon", Credential{
 		Kind: KindFirebaseIDToken, Value: "firebase-anonymous-uid",
@@ -179,6 +188,23 @@ func TestAccountLinkHandlers(t *testing.T) {
 	accounts.mu.Lock()
 	accounts.users[guest.PlatformUserID] = guest.AppUserID
 	accounts.mu.Unlock()
+	for _, path := range []string{"/v1/auth/account-link-challenges", "/v1/auth/account-links"} {
+		body := `{"provider":"kakao"}`
+		if path == "/v1/auth/account-links" {
+			body = `{"provider":"kakao","idToken":"proof","nonce":"nonce"}`
+		}
+		request := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		request.Header.Set(AppHeader, "lizard-tycoon")
+		request.Header.Set("Authorization", "Bearer "+guest.PlatformToken)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		mux := http.NewServeMux()
+		NewHandler(service).Register(mux)
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized || !bytes.Contains(response.Body.Bytes(), []byte("app_check_required")) {
+			t.Fatalf("%s without attestation: %d %s", path, response.Code, response.Body.String())
+		}
+	}
 
 	mux := http.NewServeMux()
 	NewHandler(service).Register(mux)

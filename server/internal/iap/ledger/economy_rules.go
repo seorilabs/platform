@@ -17,8 +17,10 @@ var economyFiles embed.FS
 // EconomyCatalog is versioned with purchase receipts. It is never supplied by a client.
 type EconomyCatalog struct {
 	LaunchAt          int64                  `json:"launch_at"`
+	TestLaunchAt      int64                  `json:"test_launch_at,omitempty"`
 	Version           string                 `json:"version"`
 	Enabled           bool                   `json:"enabled"`
+	TestEnabled       bool                   `json:"test_enabled,omitempty"`
 	AppID             string                 `json:"app_id"`
 	PurchaseMarkets   []string               `json:"purchase_markets"`
 	DrawCost          int64                  `json:"draw_cost"`
@@ -108,7 +110,7 @@ func LizardEconomyCatalog() (EconomyCatalog, error) {
 	return c, c.validate()
 }
 func (c EconomyCatalog) validate() error {
-	if c.AppID != "lizard-tycoon" || c.Version == "" || c.DrawCost <= 0 || c.DrawCost > 1000000 || (c.Enabled && c.LaunchAt <= 0) || c.ShardPackCost <= 0 || c.ShardPackAmount <= 0 || c.WeeklyCrystals < 0 || c.WeeklyShards < 0 || c.WeeklyExpeditions < 1 || c.ExpeditionShards < 1 || c.PityLimit < 1 || c.ChoiceCost < 1 || c.Weights["common"]+c.Weights["rare"]+c.Weights["legendary"] != 10000 || len(c.ResearchCosts) != 5 || c.ExpeditionSeconds <= 0 {
+	if c.AppID != "lizard-tycoon" || c.Version == "" || c.DrawCost <= 0 || c.DrawCost > 1000000 || (c.Enabled && c.LaunchAt <= 0) || (c.TestEnabled && c.TestLaunchAt <= 0) || c.ShardPackCost <= 0 || c.ShardPackAmount <= 0 || c.WeeklyCrystals < 0 || c.WeeklyShards < 0 || c.WeeklyExpeditions < 1 || c.ExpeditionShards < 1 || c.PityLimit < 1 || c.ChoiceCost < 1 || c.Weights["common"]+c.Weights["rare"]+c.Weights["legendary"] != 10000 || len(c.ResearchCosts) != 5 || c.ExpeditionSeconds <= 0 {
 		return economyError("경제 설정이 올바르지 않아요")
 	}
 	ids := map[string]bool{}

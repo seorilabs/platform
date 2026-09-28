@@ -2,19 +2,27 @@
   "app_id": "lizard-tycoon",
   "display_name": "도마뱀 테라리움",
   "firebase_project_id": "lizard-tycoon",
+  "firebase_custom_token_service_account": "platform-auth@lizard-tycoon.iam.gserviceaccount.com",
   "status": "active",
   "features": {
     "config": true,
     "events": true,
     "iap": true,
     "ads": false,
-    "presence": true
+    "presence": true,
+    "firebase_custom_token_bridge": true
   },
   "store": {
     "google_play_url": "https://play.google.com/store/apps/details?id=com.seorilabs.lizardtycoon",
     "app_store_url": "https://apps.apple.com/app/id6786516830"
   },
   "require_app_check": false,
+  "auth": {
+    "require_account_link_app_check": true,
+    "account_providers": {
+      "google": {"audience": "647782357004-mlnsme6h6rd1s8m1p88blj24e4nni1f9.apps.googleusercontent.com"}
+    }
+  },
   "ga4": {
     "event_prefix": ""
   },

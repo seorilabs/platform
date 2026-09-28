@@ -45,6 +45,11 @@ func TestLizardTycoonRegistryEventContract(t *testing.T) {
 	if !lizardTycoon.FeatureEnabled("presence") {
 		t.Fatal("v1.1.12 canary 후보의 presence가 활성화되지 않았다")
 	}
+	if lizardTycoon.RequireAppCheck || !lizardTycoon.Auth.RequireAccountLinkAppCheck ||
+		!lizardTycoon.FeatureEnabled("firebase_custom_token_bridge") ||
+		lizardTycoon.Auth.AccountProviders["google"].Audience != "647782357004-mlnsme6h6rd1s8m1p88blj24e4nni1f9.apps.googleusercontent.com" {
+		t.Fatal("연결 계정만 App Check를 요구하고 검증된 Google audience를 써야 한다")
+	}
 
 	wantAllowlist := []string{
 		"lizard_adopted",
