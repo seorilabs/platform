@@ -20,7 +20,8 @@
   "auth": {
     "require_account_link_app_check": true,
     "account_providers": {
-      "google": {"audience": "647782357004-mlnsme6h6rd1s8m1p88blj24e4nni1f9.apps.googleusercontent.com"}
+      "google": {"audience": "647782357004-mlnsme6h6rd1s8m1p88blj24e4nni1f9.apps.googleusercontent.com"},
+      "apple": {"audience": "com.seorilabs.lizardtycoon"}
     }
   },
   "ga4": {
