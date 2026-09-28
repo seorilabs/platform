@@ -8,6 +8,9 @@ const old = Object.fromEntries(Object.entries(candidate.apps['lizard-tycoon'].en
 const current = {version: 2, apps: {'other-game': {entitlements: {old_item: {type: 'non_consumable', google_play: 'old_item'}}}, 'lizard-tycoon': {entitlements: old}}};
 
 test('adds five crystals while preserving every other app and legacy product', () => {
+  for (const entry of Object.values(old)) {
+    assert.deepEqual(Object.keys(entry).sort(), ['app_store', 'apps_in_toss', 'google_play']);
+  }
   const result = mergeLizardIapCatalog(current, candidate);
   assert.deepEqual(result.apps['other-game'], current.apps['other-game']);
   assert.deepEqual(result.apps['lizard-tycoon'], candidate.apps['lizard-tycoon']);
