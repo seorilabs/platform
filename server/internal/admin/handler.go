@@ -62,6 +62,7 @@ type Ledger interface {
 // Users는 PII 없는 고객지원 사용자 조회 포트다.
 type Users interface {
 	LookupSupportUser(ctx context.Context, reference string) (identity.SupportUser, error)
+	IsAccountLinked(ctx context.Context, appID, platformUserID string) (bool, error)
 	// CountUsers는 개별 사용자를 특정하지 않는 집계다. 운영자가 지금
 	// 보고 있는 플랫폼의 규모를 알아야 한 건짜리 조회 결과를 해석할 수
 	// 있다.
@@ -228,19 +229,21 @@ func NewHandler(
 func (h *Handler) Register(mux *http.ServeMux) {
 	readRoutes := map[string]adminRoute{
 		// 조회 — 등급 A
-		"GET /v1/admin/orders/recent":                     (*Handler).recentOrders,
-		"GET /v1/admin/users/{reference}":                 (*Handler).user,
-		"GET /v1/admin/users/{puid}/entitlements":         (*Handler).userEntitlements,
-		"GET /v1/admin/operator-grants":                   (*Handler).operatorGrants,
-		"GET /v1/admin/apps/{appId}/iap/economy/{puid}":   (*Handler).collectionEconomy,
-		"GET /v1/admin/apps/{appId}/iap/catalog":          (*Handler).iapCatalog,
-		"GET /v1/admin/apps/{appId}/iap/refund-reviews":   (*Handler).refundReviews,
-		"GET /v1/admin/iap/sandbox-resets/{requestId}":    (*Handler).sandboxResetStatus,
-		"GET /v1/admin/health":                            (*Handler).health,
-		"GET /v1/admin/metrics":                           (*Handler).metrics,
-		"GET /v1/admin/apps/{appId}/config/update-policy": (*Handler).updatePolicy,
+		"GET /v1/admin/orders/recent":                          (*Handler).recentOrders,
+		"GET /v1/admin/users/{reference}":                      (*Handler).user,
+		"GET /v1/admin/users/{puid}/entitlements":              (*Handler).userEntitlements,
+		"GET /v1/admin/operator-grants":                        (*Handler).operatorGrants,
+		"GET /v1/admin/apps/{appId}/iap/economy/{puid}":        (*Handler).collectionEconomy,
+		"GET /v1/admin/apps/{appId}/iap/economy/{puid}/tester": (*Handler).collectionEconomyTester,
+		"GET /v1/admin/apps/{appId}/iap/catalog":               (*Handler).iapCatalog,
+		"GET /v1/admin/apps/{appId}/iap/refund-reviews":        (*Handler).refundReviews,
+		"GET /v1/admin/iap/sandbox-resets/{requestId}":         (*Handler).sandboxResetStatus,
+		"GET /v1/admin/health":                                 (*Handler).health,
+		"GET /v1/admin/metrics":                                (*Handler).metrics,
+		"GET /v1/admin/apps/{appId}/config/update-policy":      (*Handler).updatePolicy,
 	}
 	writeRoutes := map[string]adminRoute{
+		"POST /v1/admin/apps/{appId}/iap/economy/{puid}/tester": (*Handler).setCollectionEconomyTester,
 		// 조작 — 등급 C. reason과 requestId가 필수다
 		"POST /v1/admin/entitlements/grant":  (*Handler).grantEntitlement,
 		"POST /v1/admin/entitlements/revoke": (*Handler).revokeEntitlement,

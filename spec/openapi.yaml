@@ -903,7 +903,71 @@ paths:
                     properties:
                       found: { type: boolean }
                       state: { $ref: '#/components/schemas/CollectionEconomyState' }
+                      testFound: { type: boolean }
+                      testState: { $ref: '#/components/schemas/CollectionEconomyState' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/apps/{appId}/iap/economy/{puid}/tester:
+    get:
+      tags: [admin, iap]
+      summary: 운영 시험 계정 등록 상태 조회
+      operationId: adminGetCollectionEconomyTester
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SeoriApp' }
+        - { name: appId, in: path, required: true, schema: { type: string } }
+        - { name: puid, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: 등록 상태
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  result:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
+                      actor: { type: string }
+                      updatedAt: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [admin, iap]
+      summary: 운영 시험 계정 등록 또는 중지
+      operationId: adminSetCollectionEconomyTester
+      security: [{ AdminOidc: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SeoriApp' }
+        - { name: appId, in: path, required: true, schema: { type: string } }
+        - { name: puid, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: 저장 후 재조회한 등록 상태
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  result:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
+                      actor: { type: string }
+                      updatedAt: { type: string, format: date-time }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /iap/economy:

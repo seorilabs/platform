@@ -213,6 +213,24 @@ func TestFirebaseCustomTokenBridgeConfigValidation(t *testing.T) {
 	}
 }
 
+func TestAccountLinkOnlyAppCheckAllowsLegacySessions(t *testing.T) {
+	app := validAppForTest()
+	app.Features["firebase_custom_token_bridge"] = true
+	app.FirebaseCustomTokenServiceAccount = "platform-auth@test-app.iam.gserviceaccount.com"
+	app.Auth.AccountProviders = map[string]AuthProviderConfig{"google": {Audience: "example.apps.googleusercontent.com"}}
+	app.Auth.RequireAccountLinkAppCheck = true
+	if err := app.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if app.RequireAppCheck {
+		t.Fatal("account-link policy enabled global App Check")
+	}
+	app.Auth.RequireAccountLinkAppCheck = false
+	if err := app.Validate(); err == nil {
+		t.Fatal("external account accepted without an App Check boundary")
+	}
+}
+
 func TestAccountProviderAndLinkedIAPValidation(t *testing.T) {
 	validAccountApp := func() App {
 		app := validAppForTest()

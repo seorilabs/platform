@@ -46,6 +46,8 @@ func (f *fakeValidator) Validate(context.Context, string) (string, error) {
 
 // fakeLedger는 원장을 대신한다.
 type fakeLedger struct {
+	economyTester       ledger.EconomyTesterEnrollment
+	economyTesterWrites int
 	orders              []ledger.OrderSummary
 	entitlements        []ledger.UserEntitlement
 	grants              []ledger.OperatorRecord
@@ -90,6 +92,15 @@ type fakeLedger struct {
 	hiddenRevocations int
 	// env가 비어 있으면 sandbox로 본다. production 거부를 볼 때만 채운다.
 	env domain.Environment
+}
+
+func (f *fakeLedger) EconomyTester(context.Context, string) (ledger.EconomyTesterEnrollment, error) {
+	return f.economyTester, f.err
+}
+func (f *fakeLedger) SetEconomyTester(_ context.Context, _ string, actor string, enabled bool) (ledger.EconomyTesterEnrollment, error) {
+	f.economyTesterWrites++
+	f.economyTester = ledger.EconomyTesterEnrollment{Enabled: enabled, Actor: actor}
+	return f.economyTester, f.err
 }
 
 func (f *fakeLedger) ListRecentOrders(context.Context, int) ([]ledger.OrderSummary, error) {
@@ -234,10 +245,15 @@ type fakeUsers struct {
 	user       identity.SupportUser
 	err        error
 	references []string
+	linked     bool
 
 	counts    identity.UserCounts
 	countErr  error
 	countedAt []time.Time
+}
+
+func (f *fakeUsers) IsAccountLinked(context.Context, string, string) (bool, error) {
+	return f.linked, f.err
 }
 
 func (f *fakeUsers) CountUsers(_ context.Context, now time.Time) (identity.UserCounts, error) {
@@ -448,6 +464,43 @@ func serve(t *testing.T, h *Handler, method, path, body, token, actor string) *h
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	return w
+}
+
+func TestCollectionEconomyTesterRequiresAdminWriteAndReadsBack(t *testing.T) {
+	l := &fakeLedger{env: domain.EnvProduction}
+	actor := &fakeValidator{email: backofficeSA}
+	h := newHandler(t, l, actor, &fakeAuditor{})
+	h.apps = &fakeApps{app: registry.App{AppID: "lizard-tycoon", Status: registry.StatusActive, Features: map[string]bool{"iap": true}}}
+	h.users = &fakeUsers{user: identity.SupportUser{PlatformUserID: testPUID, AppID: "lizard-tycoon"}, linked: true}
+	if err := h.WithAppHandlers(map[domain.Scope]*Handler{{AppID: "lizard-tycoon", Environment: domain.EnvProduction}: h}); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+	call := func(method, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, "/v1/admin/apps/lizard-tycoon/iap/economy/"+testPUID+"/tester", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer token")
+		request.Header.Set("X-Seori-App", "lizard-tycoon")
+		request.Header.Set("X-Seori-Actor", "operator")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	if got := call(http.MethodPost, `{"enabled":true}`); got.Code != http.StatusOK || l.economyTesterWrites != 1 || !l.economyTester.Enabled {
+		t.Fatalf("write = %d %s; state %+v", got.Code, got.Body.String(), l.economyTester)
+	}
+	if got := call(http.MethodGet, ""); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"enabled":true`) {
+		t.Fatalf("readback = %d %s", got.Code, got.Body.String())
+	}
+	h.users = &fakeUsers{user: identity.SupportUser{PlatformUserID: testPUID, AppID: "lizard-tycoon"}, linked: false}
+	if got := call(http.MethodPost, `{"enabled":true}`); got.Code == http.StatusOK || l.economyTesterWrites != 1 {
+		t.Fatalf("unlinked account accepted: %d %s", got.Code, got.Body.String())
+	}
+	actor.email = backofficeReadSA
+	if got := call(http.MethodPost, `{"enabled":false}`); got.Code != http.StatusForbidden || l.economyTesterWrites != 1 {
+		t.Fatalf("read-only write = %d %s", got.Code, got.Body.String())
+	}
 }
 
 func decodeEnvelope(t *testing.T, w *httptest.ResponseRecorder) (bool, map[string]any, string) {

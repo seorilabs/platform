@@ -252,7 +252,7 @@ func (h *Handler) createAccountLinkChallenge(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return err
 	}
-	if err := h.VerifyAppCheck(
+	if err := h.svc.VerifyAccountLinkAppCheck(
 		r.Context(), sess.AppID, r.Header.Get("X-Firebase-AppCheck"),
 	); err != nil {
 		return err
@@ -290,7 +290,7 @@ func (h *Handler) createAccountLink(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	if err := h.VerifyAppCheck(
+	if err := h.svc.VerifyAccountLinkAppCheck(
 		r.Context(), sess.AppID, r.Header.Get("X-Firebase-AppCheck"),
 	); err != nil {
 		return err

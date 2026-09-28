@@ -1,0 +1,94 @@
+{
+  "version": 2,
+  "apps": {
+    "lizard-tycoon": {
+      "entitlements": {
+        "sp_galaxy_gecko": {
+          "type": "non_consumable",
+          "google_play": "sp_galaxy_gecko",
+          "app_store": "com.seorilabs.lizardtycoon.premium.galaxy_gecko",
+          "apps_in_toss": "ait.0000061736.661a2b70.f4bc305a85.6363283252"
+        },
+        "sp_shootingstar_tokay": {
+          "type": "non_consumable",
+          "google_play": "sp_shootingstar_tokay",
+          "app_store": "com.seorilabs.lizardtycoon.premium.shootingstar_tokay",
+          "apps_in_toss": "ait.0000061736.8f83718f.b05bcf007f.6363284932"
+        },
+        "sp_aurora_skink": {
+          "type": "non_consumable",
+          "google_play": "sp_aurora_skink",
+          "app_store": "com.seorilabs.lizardtycoon.premium.aurora_skink",
+          "apps_in_toss": "ait.0000061736.762d18b9.8ea455a9ab.8769490405"
+        },
+        "sp_moonlight_crested": {
+          "type": "non_consumable",
+          "google_play": "sp_moonlight_crested",
+          "app_store": "com.seorilabs.lizardtycoon.premium.moonlight_crested",
+          "apps_in_toss": "ait.0000061736.7b2caae8.ada1cdd2a4.8769528387"
+        },
+        "sp_gargoyle_gecko": {
+          "type": "non_consumable",
+          "google_play": "sp_gargoyle_gecko",
+          "app_store": "com.seorilabs.lizardtycoon.premium.gargoyle_gecko",
+          "apps_in_toss": "ait.0000061736.03cc4e7b.6e8abe4768.8769539908"
+        },
+        "sp_uromastyx": {
+          "type": "non_consumable",
+          "google_play": "sp_uromastyx",
+          "app_store": "com.seorilabs.lizardtycoon.premium.uromastyx",
+          "apps_in_toss": "ait.0000061736.4beb45be.d4437df2de.8769553516"
+        },
+        "ft_rack_pack_1": {
+          "type": "non_consumable",
+          "google_play": "ft_rack_pack_1",
+          "app_store": "com.seorilabs.lizardtycoon.premium.rack_pack_1",
+          "apps_in_toss": "ait.0000061736.e4c83382.56c14e53ad.8769567252"
+        },
+        "ft_rack_pack_2": {
+          "type": "non_consumable",
+          "google_play": "ft_rack_pack_2",
+          "app_store": "com.seorilabs.lizardtycoon.premium.rack_pack_2",
+          "apps_in_toss": "ait.0000061736.8c5cfb67.75e7068bea.8769581123"
+        },
+        "th_night_sky_terrarium": {
+          "type": "non_consumable",
+          "google_play": "th_night_sky_terrarium",
+          "app_store": "com.seorilabs.lizardtycoon.premium.night_sky_terrarium",
+          "apps_in_toss": "ait.0000061736.be488060.c4424b0c31.8769594658"
+        },
+        "ck_starlight_accessory_set": {
+          "type": "non_consumable",
+          "google_play": "ck_starlight_accessory_set",
+          "app_store": "com.seorilabs.lizardtycoon.premium.starlight_accessory_set",
+          "apps_in_toss": "ait.0000061736.71206e81.7d89ea8b73.8769607440"
+        },
+        "crystal_300": {
+          "type": "consumable",
+          "google_play": "crystal_300",
+          "app_store": "crystal_300"
+        },
+        "crystal_1000": {
+          "type": "consumable",
+          "google_play": "crystal_1000",
+          "app_store": "crystal_1000"
+        },
+        "crystal_3200": {
+          "type": "consumable",
+          "google_play": "crystal_3200",
+          "app_store": "crystal_3200"
+        },
+        "crystal_5500": {
+          "type": "consumable",
+          "google_play": "crystal_5500",
+          "app_store": "crystal_5500"
+        },
+        "crystal_starter": {
+          "type": "non_consumable",
+          "google_play": "crystal_starter",
+          "app_store": "crystal_starter"
+        }
+      }
+    }
+  }
+}

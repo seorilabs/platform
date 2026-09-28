@@ -336,6 +336,24 @@ func (s *Service) VerifyAppCheck(ctx context.Context, appID, token string) error
 	if !app.RequireAppCheck {
 		return nil
 	}
+	return s.verifyAppCheckToken(ctx, app, token)
+}
+
+// VerifyAccountLinkAppCheck protects the account-link endpoints independently.
+// Invariant: enabling recovery cannot silently require attestation from legacy
+// Android or AppsInToss session and purchase requests.
+func (s *Service) VerifyAccountLinkAppCheck(ctx context.Context, appID, token string) error {
+	app, err := s.registry.GetUsable(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if !app.RequireAppCheck && !app.Auth.RequireAccountLinkAppCheck {
+		return nil
+	}
+	return s.verifyAppCheckToken(ctx, app, token)
+}
+
+func (s *Service) verifyAppCheckToken(ctx context.Context, app registry.App, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return platformerr.New(
