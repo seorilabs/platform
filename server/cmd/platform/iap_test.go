@@ -75,3 +75,40 @@ func TestValidateAppCatalogRequiresOnlyConfiguredVerifiers(t *testing.T) {
 		t.Fatalf("AIT verifier가 있을 때 code = %q, want %q", code, platformerr.CodeCatalogIncomplete)
 	}
 }
+
+func TestValidateAppCatalogAllowsProductsForOnlySomeMarkets(t *testing.T) {
+	cat, err := catalog.Parse([]byte(`{
+      "version": 2,
+      "apps": {
+        "lizard-tycoon": {
+          "entitlements": {
+            "sp_galaxy_gecko": {
+              "google_play": "sp_galaxy_gecko",
+              "app_store": "com.seorilabs.lizardtycoon.premium.galaxy_gecko",
+              "apps_in_toss": "ait.gecko"
+            },
+            "crystal_300": {
+              "type": "consumable",
+              "google_play": "crystal_300",
+              "app_store": "crystal_300"
+            }
+          }
+        }
+      }
+    }`), nil)
+	if err != nil {
+		t.Fatalf("catalog parse: %v", err)
+	}
+	app := registry.App{AppID: "lizard-tycoon", IAP: registry.IAPConfig{
+		Markets:        []string{"google_play", "app_store", "apps_in_toss"},
+		EntitlementIDs: []string{"sp_galaxy_gecko", "crystal_300"},
+	}}
+	if err := validateAppCatalog(cat, app, []domain.Platform{
+		domain.PlatformGooglePlay, domain.PlatformAppStore, domain.PlatformAppsInToss,
+	}); err != nil {
+		t.Fatalf("Play와 Apple 전용 상품 때문에 AIT 작업자가 부팅하지 못한다: %v", err)
+	}
+	if _, err := cat.ProductForApp(app.AppID, domain.PlatformAppsInToss, "crystal_300"); platformerr.CodeOf(err) != platformerr.CodeProductNotAllowed {
+		t.Fatalf("AIT에 없는 크리스털이 검증 가능하다: %v", err)
+	}
+}

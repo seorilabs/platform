@@ -259,22 +259,31 @@ func newAppleSandboxEnvironment(
 		verifiers: map[domain.Platform]verify.Verifier{domain.PlatformAppStore: list[0]}}, nil
 }
 
-// validateAppCatalog는 실제 조립된 verifier의 SKU만 부팅 조건으로 삼는다.
+// validateAppCatalog는 실제 조립된 verifier마다 판매 가능한 SKU가 있는지 확인한다.
 //
 // registry market은 계약 범위이고 verifier는 현재 자격증명으로 실제 호출 가능한
 // 범위다. 아직 mTLS 인증서가 없는 AppsInToss까지 SKU를 강제하면 그 provider를
-// fail-closed로 건너뛰는 대신 IAP role 전체가 부팅하지 못한다.
+// fail-closed로 건너뛰는 대신 IAP role 전체가 부팅하지 못한다. 상품별 마켓
+// 출시는 카탈로그의 SKU 유무로 정한다. SKU가 없는 마켓에서는 해당 상품이
+// ProductForApp에 잡히지 않으므로 결제 검증도 열리지 않는다.
 func validateAppCatalog(cat *catalog.Catalog, app registry.App, requiredMarkets []domain.Platform) error {
 	for _, entitlementID := range app.IAP.EntitlementIDs {
 		if !cat.HasForApp(app.AppID, entitlementID) {
 			return platformerr.Newf(platformerr.CodeCatalogIncomplete,
 				"%s의 %s entitlement가 앱별 카탈로그에 없어요", app.AppID, entitlementID)
 		}
-		for _, market := range requiredMarkets {
-			if _, ok := cat.SKUForApp(app.AppID, entitlementID, market); !ok {
-				return platformerr.Newf(platformerr.CodeCatalogIncomplete,
-					"%s의 %s entitlement에 %s SKU가 없어요", app.AppID, entitlementID, market)
+	}
+	for _, market := range requiredMarkets {
+		available := false
+		for _, entitlementID := range app.IAP.EntitlementIDs {
+			if _, ok := cat.SKUForApp(app.AppID, entitlementID, market); ok {
+				available = true
+				break
 			}
+		}
+		if !available {
+			return platformerr.Newf(platformerr.CodeCatalogIncomplete,
+				"%s의 %s 마켓에 판매 가능한 SKU가 없어요", app.AppID, market)
 		}
 	}
 	return nil
