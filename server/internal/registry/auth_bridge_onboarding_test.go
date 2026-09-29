@@ -62,15 +62,15 @@ func TestAuthBridgeOnboardingRegistryContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	byID := make(map[string]*App, len(apps))
+	byID := make(map[string]App, len(apps))
 	for i := range apps {
-		byID[apps[i].AppID] = &apps[i]
+		byID[apps[i].AppID] = apps[i]
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.appID, func(t *testing.T) {
-			app := byID[tt.appID]
-			if app == nil {
+			app, ok := byID[tt.appID]
+			if !ok {
 				t.Fatalf("%s registry가 없다", tt.appID)
 			}
 			if err := app.Validate(); err != nil {
