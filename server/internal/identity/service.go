@@ -194,6 +194,13 @@ func (s *Service) WithAITLoginVerifiers(verifiers map[string]AITLoginVerifier) *
 	return s
 }
 
+// WithAccountLinkRepository는 세션 발급 역할이 기존 계정 연결 기록을 읽게 한다.
+// 계정 연결 요청은 API 역할만 받지만, 결제 세션은 IAP 역할에서 새로 발급한다.
+func (s *Service) WithAccountLinkRepository(repo AccountRepository) *Service {
+	s.accounts = repo
+	return s
+}
+
 // NewService는 서비스를 만든다.
 // blocklist는 선택 인자가 아니다. nil이면 차단이 조용히 풀린 채
 // 배포되고, 그 상태는 로그에도 남지 않는다.

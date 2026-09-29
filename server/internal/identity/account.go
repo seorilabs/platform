@@ -75,7 +75,7 @@ func (s *Service) ConfigureAccountProviders(repo AccountRepository, providers ..
 		}
 		configured[provider.Name()] = provider
 	}
-	s.accounts = repo
+	s.WithAccountLinkRepository(repo)
 	s.accountProviders = configured
 	return nil
 }
