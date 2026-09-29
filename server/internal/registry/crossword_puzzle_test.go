@@ -15,14 +15,16 @@ func TestCrosswordPuzzleRegistryAuthBridgeContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var app *App
+	var app App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "crossword-puzzle" {
-			app = &apps[i]
+			app = apps[i]
+			found = true
 			break
 		}
 	}
-	if app == nil {
+	if !found {
 		t.Fatal("crossword-puzzle registry가 없다")
 	}
 

@@ -14,14 +14,16 @@ func TestBabycareRegistryEventContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var babycare *App
+	var babycare App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "babycare" {
-			babycare = &apps[i]
+			babycare = apps[i]
+			found = true
 			break
 		}
 	}
-	if babycare == nil {
+	if !found {
 		t.Fatal("babycare registry가 없다")
 	}
 
