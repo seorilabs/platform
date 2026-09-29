@@ -11,6 +11,7 @@ require (
 	cloud.google.com/go/storage v1.62.1
 	firebase.google.com/go/v4 v4.21.0
 	github.com/go-sql-driver/mysql v1.10.0
+	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/richzw/appstore v1.41.0
@@ -44,7 +45,6 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
-	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
