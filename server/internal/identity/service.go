@@ -688,7 +688,7 @@ func (s *Service) Refresh(
 	if err := s.ensureNotBlocked(ctx, app.AppID, sess.AppUserID); err != nil {
 		return Result{}, err
 	}
-	if sess.IsLinkedAccount && s.accounts != nil {
+	if s.accounts != nil {
 		linked, err := s.accounts.IsAccountLinked(ctx, app.AppID, sess.PlatformUserID)
 		if err != nil {
 			return Result{}, err

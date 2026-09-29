@@ -260,6 +260,10 @@ func TestIAPSessionReflectsAccountLinkFromAPIRole(t *testing.T) {
 	if _, err := api.CompleteAccountLink(ctx, sess, "kakao", "provider-id-token", challenge.Nonce); err != nil {
 		t.Fatal(err)
 	}
+	upgraded, err := iap.Refresh(ctx, "lizard-tycoon", before.RefreshToken, ClientInfo{})
+	if err != nil || !upgraded.IsLinkedAccount || upgraded.PlatformUserID != guest.PlatformUserID {
+		t.Fatalf("연결 후 IAP 갱신 세션 = %#v, err = %v", upgraded, err)
+	}
 	after, err := iap.CreateSession(ctx, "lizard-tycoon", credential, ClientInfo{})
 	if err != nil || !after.IsLinkedAccount || after.PlatformUserID != guest.PlatformUserID {
 		t.Fatalf("연결 후 IAP 세션 = %#v, err = %v", after, err)
