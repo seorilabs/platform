@@ -519,6 +519,8 @@ paths:
         제외한다. `unlock`은 `reward_claim` 또는 `ticket`만 허용한다. 한 번 해금한
         `flow:{year}`는 같은 명식의 세운과 12개월 월운을 함께 연다. 서버 권한 근거가
         없으면 오류로 우회하지 않고 해당 심화 섹션을 `locked`로 반환한다.
+        레지스트리 `content.deep_always_open`이 켜진 앱은 권한을 보지 않고 심화 본문을
+        항상 포함하며 `unlock`은 무시하고 `locked`는 빈 배열이다.
       operationId: resolveContentReading
       security: [{ PlatformToken: [] }]
       parameters:
@@ -569,7 +571,8 @@ paths:
         entitlement는 보지 않는다.
 
         레지스트리 `content.pairing_enabled`가 꺼진 앱은 `content_not_enabled`(403)다.
-        앱은 이 응답과 404를 같은 뜻(궁합 미제공)으로 다룬다.
+        앱은 이 응답과 404를 같은 뜻(궁합 미제공)으로 다룬다. `content.deep_always_open`이
+        켜진 앱은 권한을 보지 않고 궁합 본문을 항상 포함하며 `locked`는 빈 배열이다.
       operationId: resolveContentPairing
       security: [{ PlatformToken: [] }]
       parameters:

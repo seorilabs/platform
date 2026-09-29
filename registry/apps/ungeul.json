@@ -7,55 +7,12 @@
   "features": {
     "config": false,
     "events": false,
-    "iap": true,
-    "ads": true,
+    "iap": false,
+    "ads": false,
     "content": true,
     "firebase_custom_token_bridge": true
   },
-  "ads": {
-    "providers": [
-      "admob",
-      "apps_in_toss"
-    ],
-    "placements": [
-      {
-        "id": "deep_flow",
-        "format": "rewarded",
-        "providers": {
-          "admob": {
-            "android_ad_unit_id": "ca-app-pub-9932778305312246/4587859068",
-            "ios_ad_unit_id": "ca-app-pub-2444587584524186/2557921082",
-            "retired_android_ad_unit_ids": [
-              "ca-app-pub-2444587584524186/8793041426"
-            ],
-            "reward_item": "deep_flow",
-            "reward_amount": 1
-          },
-          "apps_in_toss": {
-            "ad_group_id": "ait.v2.live.44b40e237fed4252"
-          }
-        },
-        "reward": {
-          "key": "deep_flow",
-          "min_amount": 1,
-          "max_amount": 1
-        },
-        "daily_limit": 10,
-        "cooldown_seconds": 30
-      }
-    ]
-  },
   "require_app_check": true,
-  "auth": {
-    "account_providers": {
-      "kakao": {
-        "audience": "4d309d86b98ea5db999bd1603b8c6c29"
-      },
-      "apple": {
-        "audience": "com.seorilabs.ungeul"
-      }
-    }
-  },
   "ga4": {
     "event_prefix": ""
   },
@@ -64,24 +21,8 @@
     "prefix": "ungeul",
     "reading_daily_limit": 10,
     "term_daily_limit": 100,
-    "reward_key": "deep_flow",
-    "ticket_entitlement_id": "deep_reading_ticket",
-    "ticket_units_per_purchase": 5,
-    "pairing_enabled": true
-  },
-  "iap": {
-    "ledger_environment": "production",
-    "markets": [
-      "google_play",
-      "app_store",
-      "apps_in_toss"
-    ],
-    "google_play_package_name": "com.seorilabs.ungeul",
-    "app_store_bundle_id": "com.seorilabs.ungeul",
-    "entitlement_ids": [
-      "deep_reading_ticket"
-    ],
-    "require_linked_account": true
+    "pairing_enabled": true,
+    "deep_always_open": true
   },
   "platform_event_allowlist": [
     "home_viewed",
@@ -99,7 +40,6 @@
     "feedback_prompt_dismissed",
     "deep_gate_shown",
     "deep_means_selected",
-    "deep_ticket_used",
     "reward_ad_requested",
     "reward_ad_shown",
     "reward_ad_granted",
