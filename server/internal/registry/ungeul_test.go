@@ -3,21 +3,14 @@ package registry
 import (
 	"context"
 	"os"
-	"reflect"
 	"testing"
 )
 
-// 운글은 결과 화면에서 사용자가 직접 선택한 보상형 광고 한 번으로 같은 명식의
-// 세운과 열두 달 월운을 함께 연다. 클라이언트, AdMob 콘솔, Platform registry가
-// 다른 placement나 보상값을 쓰면 광고를 끝까지 보고도 SSV가 거부되므로 여기서
-// 운영 계약을 고정한다.
-//
-// AppsInToss 도 같은 지면을 쓴다. 서버는 보상 claim 에서 지면에 등록된 provider 만
-// 허용하므로 `apps_in_toss` 가 빠지면 광고를 끝까지 봐도 청구가 막힌다. ad group id
-// 는 클라이언트가 `VITE_AIT_REWARD_AD_GROUP_ID` 로 굽는 값과 같아야 한다 — 서버는
-// 지면에 provider 가 있는지만 보고 group id 는 대조하지 않아서 어긋나도 런타임에
-// 드러나지 않는다.
-func TestUngeulAdsRegistryContract(t *testing.T) {
+// 운글은 2026-09-29 부터 광고만으로 운영한다. 전면·보상형 광고는 클라이언트가 직접 띄우고
+// 서버는 권한을 기록하지 않는다 — 열람권(IAP)·계정 연결·서버 광고 지면(SSV)은 전부 걷었다.
+// 그래서 심화 본문은 `deep_always_open` 으로 늘 내려가야 하고, 걷은 설정이 되살아나면
+// 앱이 부르지 않는 경로가 원장에 남아 무엇이 잠금을 푸는지 두 갈래로 말하게 된다.
+func TestUngeulAdOnlyRegistryContract(t *testing.T) {
 	source := NewFSSource(os.DirFS("../../../registry"), "apps")
 	apps, err := source.LoadApps(context.Background())
 	if err != nil {
@@ -34,126 +27,22 @@ func TestUngeulAdsRegistryContract(t *testing.T) {
 	if ungeul == nil {
 		t.Fatal("ungeul registry가 없다")
 	}
-	if !ungeul.FeatureEnabled("ads") {
-		t.Fatal("운글 광고 feature가 비활성이다")
+	if !ungeul.FeatureEnabled("content") || !ungeul.Content.DeepAlwaysOpen {
+		t.Fatal("운글 심화는 권한 확인 없이 항상 열려야 한다")
 	}
-	if len(ungeul.Ads.Placements) != 1 {
-		t.Fatalf("placements=%d, want 1", len(ungeul.Ads.Placements))
+	if !ungeul.Content.PairingEnabled {
+		t.Fatal("운글 궁합이 꺼져 있다")
 	}
-
-	placement, ok := ungeul.AdsPlacement("deep_flow")
-	if !ok {
-		t.Fatal("deep_flow 지면이 없다")
+	if ungeul.FeatureEnabled("iap") || ungeul.FeatureEnabled("ads") {
+		t.Fatalf("운글은 서버 IAP·광고 경로를 쓰지 않는다: iap=%v ads=%v",
+			ungeul.FeatureEnabled("iap"), ungeul.FeatureEnabled("ads"))
 	}
-	if placement.Format != "rewarded" {
-		t.Fatalf("format=%q, want rewarded", placement.Format)
+	if len(ungeul.Ads.Placements) != 0 || len(ungeul.IAP.EntitlementIDs) != 0 ||
+		len(ungeul.Auth.AccountProviders) != 0 {
+		t.Fatalf("걷은 설정이 남아 있다: ads=%+v iap=%+v auth=%+v", ungeul.Ads, ungeul.IAP, ungeul.Auth)
 	}
-	if placement.Reward == nil || placement.Reward.Key != "deep_flow" ||
-		placement.Reward.MinAmount != 1 || placement.Reward.MaxAmount != 1 {
-		t.Fatalf("보상 계약이 클라이언트와 다르다: %+v", placement.Reward)
-	}
-	if placement.DailyLimit != 10 || placement.CooldownSeconds != 30 {
-		t.Fatalf("policy=(%d,%d), want (10,30)", placement.DailyLimit, placement.CooldownSeconds)
-	}
-
-	provider, ok := placement.Providers["admob"]
-	if !ok {
-		t.Fatal("AdMob provider 설정이 없다")
-	}
-	if provider.AndroidAdUnitID != "ca-app-pub-9932778305312246/4587859068" {
-		t.Fatalf("Android unit=%q", provider.AndroidAdUnitID)
-	}
-	// iOS 는 App Store 4.3(b) 로 경로가 닫혀 클라이언트가 없다. 옛 publisher 값이지만
-	// 그 unit 으로 들어올 콜백이 없고, 비우면 은퇴 목록도 둘 수 없어 그대로 둔다.
-	if provider.IOSAdUnitID != "ca-app-pub-2444587584524186/2557921082" {
-		t.Fatalf("iOS unit=%q", provider.IOSAdUnitID)
-	}
-	// 운글은 Google Play 에 이미 공개돼 있고(v1.0.32), 설치된 빌드는 전부 옛 unit 으로
-	// 광고를 재생한다. 유지 publisher 로 옮긴 새 unit 을 싣는 AAB 는 아직 출시되지
-	// 않았다. 이 목록을 지우면 구버전 사용자가 광고를 끝까지 보고도 ad_unit_mismatch 로
-	// 보상을 못 받는다. 구버전 소진을 확인한 뒤에 지운다.
-	wantRetiredAndroid := []string{"ca-app-pub-2444587584524186/8793041426"}
-	if !reflect.DeepEqual(provider.RetiredAndroidAdUnitIDs, wantRetiredAndroid) {
-		t.Fatalf("Android 은퇴 unit=%v, want %v", provider.RetiredAndroidAdUnitIDs, wantRetiredAndroid)
-	}
-	if len(provider.RetiredIOSAdUnitIDs) != 0 {
-		t.Fatalf("iOS 은퇴 unit=%v, want 없음", provider.RetiredIOSAdUnitIDs)
-	}
-	if provider.RewardItem != "deep_flow" || provider.RewardAmount != 1 {
-		t.Fatalf("AdMob reward=(%q,%d), want (deep_flow,1)", provider.RewardItem, provider.RewardAmount)
-	}
-
-	ait, ok := placement.Providers["apps_in_toss"]
-	if !ok {
-		t.Fatal("AppsInToss provider 설정이 없다")
-	}
-	if ait.AdGroupID != "ait.v2.live.44b40e237fed4252" {
-		t.Fatalf("AppsInToss ad group=%q", ait.AdGroupID)
-	}
-	if ungeul.Content.RewardKey != "deep_flow" {
-		t.Fatalf("content reward key=%q, want deep_flow", ungeul.Content.RewardKey)
-	}
-}
-
-// 운글 열람권은 세 마켓의 소모성 상품 한 건을 동일 entitlement로 검증하고,
-// 네이티브 구매는 카카오 또는 Apple로 연결된 계정에만 귀속한다. 상품 카탈로그,
-// 클라이언트, registry가 어긋나면 결제 뒤 지급 또는 복원이 막히므로 운영 계약을 고정한다.
-func TestUngeulIAPRegistryContract(t *testing.T) {
-	source := NewFSSource(os.DirFS("../../../registry"), "apps")
-	apps, err := source.LoadApps(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var ungeul *App
-	for i := range apps {
-		if apps[i].AppID == "ungeul" {
-			ungeul = &apps[i]
-			break
-		}
-	}
-	if ungeul == nil {
-		t.Fatal("ungeul registry가 없다")
-	}
-	if !ungeul.FeatureEnabled("iap") {
-		t.Fatal("운글 IAP feature가 비활성이다")
-	}
-	if ungeul.IAP.LedgerEnvironment != LedgerProduction {
-		t.Fatalf("ledger environment=%q, want production", ungeul.IAP.LedgerEnvironment)
-	}
-	wantMarkets := []string{"google_play", "app_store", "apps_in_toss"}
-	if len(ungeul.IAP.Markets) != len(wantMarkets) {
-		t.Fatalf("markets=%v, want %v", ungeul.IAP.Markets, wantMarkets)
-	}
-	for _, market := range wantMarkets {
-		if !ungeul.MarketEnabled(market) {
-			t.Fatalf("market %q가 비활성이다", market)
-		}
-	}
-	if ungeul.IAP.GooglePlayPackageName != "com.seorilabs.ungeul" ||
-		ungeul.IAP.AppStoreBundleID != "com.seorilabs.ungeul" {
-		t.Fatalf("native app identifiers=(%q,%q)",
-			ungeul.IAP.GooglePlayPackageName, ungeul.IAP.AppStoreBundleID)
-	}
-	if len(ungeul.IAP.EntitlementIDs) != 1 ||
-		ungeul.IAP.EntitlementIDs[0] != "deep_reading_ticket" {
-		t.Fatalf("entitlements=%v, want deep_reading_ticket", ungeul.IAP.EntitlementIDs)
-	}
-	if !ungeul.IAP.RequireLinkedAccount {
-		t.Fatal("네이티브 구매의 연결 계정 요구가 비활성이다")
-	}
-	// 카카오 ID token의 aud는 앱 ID가 아니라 SDK 초기화에 쓴 앱 키다. 앱 ID를 넣으면
-	// 사용자가 카카오 동의까지 마친 뒤 검증에서만 떨어져 원인을 찾기 어렵다.
-	if got := ungeul.Auth.AccountProviders["kakao"].Audience; got != "4d309d86b98ea5db999bd1603b8c6c29" {
-		t.Fatalf("Kakao audience=%q, want 네이티브 앱 키", got)
-	}
-	if got := ungeul.Auth.AccountProviders["apple"].Audience; got != "com.seorilabs.ungeul" {
-		t.Fatalf("Apple audience=%q, want com.seorilabs.ungeul", got)
-	}
-	if ungeul.Content.TicketEntitlementID != "deep_reading_ticket" ||
-		ungeul.Content.TicketUnitsPerPurchase != 5 {
-		t.Fatalf("ticket content contract=(%q,%d), want (deep_reading_ticket,5)",
-			ungeul.Content.TicketEntitlementID, ungeul.Content.TicketUnitsPerPurchase)
+	if ungeul.Content.RewardKey != "" || ungeul.Content.TicketEntitlementID != "" {
+		t.Fatalf("content 에 광고 보상·열람권 설정이 남아 있다: %+v", ungeul.Content)
 	}
 }
 
@@ -185,7 +74,7 @@ func TestUngeulEventAllowlistCoversClientContract(t *testing.T) {
 		"time_choice_shown", "time_choice_completed", "reading_generated",
 		"reading_section_viewed", "term_help_opened", "term_label_rendered",
 		// 심화 게이트와 보상형 광고.
-		"deep_gate_shown", "deep_means_selected", "deep_ticket_used",
+		"deep_gate_shown", "deep_means_selected",
 		"reward_ad_requested", "reward_ad_shown", "reward_ad_granted",
 		"reward_ad_declined", "reward_ad_closed",
 		// 정체성 카드 공유·홈 타일·궁합.

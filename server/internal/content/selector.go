@@ -92,6 +92,8 @@ func Select(req ResolveRequest) (Selection, error) {
 	for _, topic := range topics {
 		base.Add("topic." + reading.Ilju + "_" + topic)
 	}
+	// 팩폭 한마디는 일주별 좌표 하나다. 이 좌표가 없는 릴리스도 계속 읽혀야 하므로 선택 항목이다.
+	optionalBase.Add("punch." + reading.Ilju)
 	// 새 원고가 게시되기 전에도 기존 릴리스는 읽을 수 있다. 좌표는 서버가 명식에서
 	// 다시 계산하며, 임의의 콘텐츠 ID나 개인정보를 요청에 추가하지 않는다.
 	for _, id := range topicContextIDs(reading.Chart) {

@@ -45,6 +45,10 @@ func TestSelectBuildsOnlyDerivedCoordinates(t *testing.T) {
 	if got := selection.DeepIDs["seun"]; !slices.Contains(got, "seun.siksin_과다") {
 		t.Errorf("seun IDs = %v", got)
 	}
+	// 팩폭 한마디는 이 좌표가 없는 옛 릴리스도 읽혀야 하므로 필수가 아니라 선택이다.
+	if !slices.Contains(selection.OptionalBaseIDs, "punch.mujin") || slices.Contains(selection.BaseIDs, "punch.mujin") {
+		t.Errorf("punch.mujin 은 선택 좌표여야 한다: base=%v optional=%v", selection.BaseIDs, selection.OptionalBaseIDs)
+	}
 }
 
 func TestSelectRejectsForgedRelation(t *testing.T) {

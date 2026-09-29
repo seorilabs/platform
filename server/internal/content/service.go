@@ -78,7 +78,9 @@ func (s *Service) Resolve(
 		return ResolveResult{}, err
 	}
 
-	if req.Unlock != nil {
+	// deep_always_open 앱은 권한 원장을 보지 않는다. 옛 클라이언트가 보내는 `unlock`도
+	// 소비하지 않고 조용히 지나간다 — 기록할 권한이 없기 때문이다.
+	if req.Unlock != nil && !app.Content.DeepAlwaysOpen {
 		if s.access == nil {
 			return ResolveResult{}, platformerr.New(platformerr.CodeContentLocked,
 				"심화 권한 확인이 준비되지 않았어요")
@@ -114,8 +116,8 @@ func (s *Service) Resolve(
 			continue
 		}
 		deepKey := flowDeepKey(req.Reading.Seun.Year)
-		allowed := false
-		if s.access != nil {
+		allowed := app.Content.DeepAlwaysOpen
+		if !allowed && s.access != nil {
 			allowed, err = s.access.Authorized(
 				ctx, app, puid, selection.ReadingKey, deepKey, req.Reading.Seun.Year,
 			)
@@ -184,7 +186,7 @@ func (s *Service) ResolvePairing(
 		return ResolvePairingResult{}, err
 	}
 
-	if req.Unlock != nil {
+	if req.Unlock != nil && !app.Content.DeepAlwaysOpen {
 		if s.access == nil {
 			return ResolvePairingResult{}, platformerr.New(platformerr.CodeContentLocked,
 				"심화 권한 확인이 준비되지 않았어요")
@@ -204,8 +206,8 @@ func (s *Service) ResolvePairing(
 		}
 	}
 
-	allowed := false
-	if s.access != nil {
+	allowed := app.Content.DeepAlwaysOpen
+	if !allowed && s.access != nil {
 		allowed, err = s.access.Authorized(ctx, app, puid, selection.PairKey, pairingDeepKey, 0)
 		if err != nil {
 			return ResolvePairingResult{}, platformerr.Wrap(err, platformerr.CodeContentUnavailable,

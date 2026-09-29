@@ -347,6 +347,24 @@ func TestContentConfigValidation(t *testing.T) {
 	if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "content가 비활성") {
 		t.Fatalf("content 비활성 앱의 pairing_enabled error = %v", err)
 	}
+
+	// 심화 항상 열기는 광고 보상·열람권과 배타다. 둘이 같이 있으면 잠금을 푸는 주체가 둘이 된다.
+	app = validContentApp()
+	app.Content.DeepAlwaysOpen = true
+	if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "deep_always_open") {
+		t.Fatalf("열람권과 함께 둔 deep_always_open error = %v", err)
+	}
+	app = validContentApp()
+	app.Content.TicketEntitlementID, app.Content.TicketUnitsPerPurchase, app.Content.SeasonEntitlements = "", 0, nil
+	app.Content.DeepAlwaysOpen = true
+	if err := app.Validate(); err != nil {
+		t.Fatalf("deep_always_open 단독 content config: %v", err)
+	}
+	app = validAppForTest()
+	app.Content = ContentConfig{DeepAlwaysOpen: true}
+	if err := app.Validate(); err == nil || !strings.Contains(err.Error(), "content가 비활성") {
+		t.Fatalf("content 비활성 앱의 deep_always_open error = %v", err)
+	}
 }
 
 func TestValidateAppSetRejectsCrossAppAdMobUnitReuse(t *testing.T) {

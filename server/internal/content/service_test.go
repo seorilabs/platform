@@ -192,6 +192,48 @@ func TestResolveUnlocksAnnualAndMonthlyFlowTogether(t *testing.T) {
 	}
 }
 
+// deep_always_open 앱은 권한 원장 없이 심화 본문을 늘 내려주고, 옛 클라이언트의 unlock 도
+// 소비하지 않는다. 광고를 클라이언트가 직접 띄우는 앱의 계약이다.
+func TestResolveDeepAlwaysOpenSkipsAccessAndUnlock(t *testing.T) {
+	req := validResolveRequest()
+	req.Scope = []string{"base", "seun", "wolun"}
+	req.Unlock = &UnlockRequest{Kind: "reward_claim", Section: "seun", ClaimID: "cl_claim-1"}
+	app := testContentApp()
+	app.Content.DeepAlwaysOpen = true
+	for name, access := range map[string]AccessController{"원장 없음": nil, "원장 있음": &flowServiceAccess{authorized: map[string]bool{}}} {
+		t.Run(name, func(t *testing.T) {
+			service, err := NewService(fakeApps{app}, fakeReleases{serviceRelease(t, req)}, serviceUsage{}, access)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := service.Resolve(context.Background(), "ungeul", "uid", req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Locked == nil || len(result.Locked) != 0 {
+				t.Fatalf("locked=%#v, want 빈 배열", result.Locked)
+			}
+			for _, section := range []string{"seun", "wolun"} {
+				if !containsArticle(result.Articles, "심화 해설", section) {
+					t.Fatalf("%s 심화 본문이 빠졌다: %+v", section, result.Articles)
+				}
+			}
+			if flow, ok := access.(*flowServiceAccess); ok && (len(flow.checked) != 0 || len(flow.unlocked) != 0) {
+				t.Fatalf("권한 원장을 건드렸다: checked=%v unlocked=%v", flow.checked, flow.unlocked)
+			}
+		})
+	}
+}
+
+func containsArticle(articles []Article, text, prefix string) bool {
+	for _, article := range articles {
+		if article.Text == text && strings.HasPrefix(article.ID, prefix+".") {
+			return true
+		}
+	}
+	return false
+}
+
 func TestResolvePropagatesDailyLimit(t *testing.T) {
 	req := validResolveRequest()
 	limit := platformerr.New(platformerr.CodeRateLimited, "limit")
@@ -368,6 +410,31 @@ func TestResolvePairingTicketUnlockRecordsPairKeyAndGunghap(t *testing.T) {
 		if article.Access != AccessDeep {
 			t.Fatalf("궁합에 무료 본문이 섞였다: %+v", article)
 		}
+	}
+}
+
+func TestResolvePairingDeepAlwaysOpenSkipsAccessAndUnlock(t *testing.T) {
+	req := validPairingRequest()
+	req.Unlock = &UnlockRequest{Kind: "ticket", Section: "gunghap"}
+	app := pairingApp()
+	app.Content.DeepAlwaysOpen = true
+	for name, access := range map[string]AccessController{"원장 없음": nil, "원장 있음": &pairingServiceAccess{authorized: map[string]bool{}}} {
+		t.Run(name, func(t *testing.T) {
+			result, err := newPairingService(t, app, req, serviceUsage{}, access).
+				ResolvePairing(context.Background(), "ungeul", "uid", req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Locked == nil || len(result.Locked) != 0 {
+				t.Fatalf("locked=%#v, want 빈 배열", result.Locked)
+			}
+			if len(result.Articles) == 0 {
+				t.Fatal("궁합 심화 본문이 비었다")
+			}
+			if pairing, ok := access.(*pairingServiceAccess); ok && (len(pairing.checked) != 0 || len(pairing.unlocked) != 0) {
+				t.Fatalf("권한 원장을 건드렸다: checked=%v unlocked=%v", pairing.checked, pairing.unlocked)
+			}
+		})
 	}
 }
 

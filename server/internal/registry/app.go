@@ -227,6 +227,11 @@ type ContentConfig struct {
 	// content_not_enabled로 거절한다. 레지스트리 파일은 환경을 모르므로 staging에 먼저
 	// regsync하고 앱이 나간 뒤 production에 regsync하는 것이 "단계적 켜기"다.
 	PairingEnabled bool `json:"pairing_enabled,omitempty" firestore:"pairing_enabled,omitempty"`
+	// DeepAlwaysOpen은 심화(deep) 본문을 권한 확인 없이 항상 내려준다. 광고를 클라이언트가
+	// 직접 띄우고 서버는 권한을 기록하지 않는 앱의 스위치다. 켜면 `unlock`은 무시되고
+	// `locked`는 항상 빈 배열이다. 광고 보상 key·열람권과는 함께 둘 수 없다 — 둘 다 있으면
+	// 무엇이 잠금을 푸는지 원장이 두 갈래로 말하게 된다.
+	DeepAlwaysOpen bool `json:"deep_always_open,omitempty" firestore:"deep_always_open,omitempty"`
 }
 
 // StoreConfig는 마켓 배포 페이지의 원장이다.
@@ -414,7 +419,8 @@ func (a App) validateContent() error {
 	if !a.FeatureEnabled("content") {
 		if cfg.Bucket != "" || cfg.Prefix != "" || cfg.ReadingDailyLimit != 0 ||
 			cfg.TermDailyLimit != 0 || cfg.RewardKey != "" || cfg.TicketEntitlementID != "" ||
-			cfg.TicketUnitsPerPurchase != 0 || len(cfg.SeasonEntitlements) != 0 || cfg.PairingEnabled {
+			cfg.TicketUnitsPerPurchase != 0 || len(cfg.SeasonEntitlements) != 0 || cfg.PairingEnabled ||
+			cfg.DeepAlwaysOpen {
 			return fmt.Errorf("%s: content가 비활성인데 content 설정이 존재한다", a.AppID)
 		}
 		return nil
@@ -436,6 +442,9 @@ func (a App) validateContent() error {
 	}
 	if cfg.TermDailyLimit <= 0 || cfg.TermDailyLimit > 1000 {
 		return fmt.Errorf("%s: content.term_daily_limit은 1~1000이어야 한다", a.AppID)
+	}
+	if cfg.DeepAlwaysOpen && (cfg.RewardKey != "" || cfg.TicketEntitlementID != "" || len(cfg.SeasonEntitlements) != 0) {
+		return fmt.Errorf("%s: deep_always_open 앱에는 광고 보상 key나 열람권 설정을 둘 수 없다", a.AppID)
 	}
 	if cfg.RewardKey != "" {
 		if !a.FeatureEnabled("ads") || !adsIDPattern.MatchString(cfg.RewardKey) {
