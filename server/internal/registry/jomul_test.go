@@ -154,14 +154,16 @@ func TestJomulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var jomul *App
+	var jomul App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "jomul" {
-			jomul = &apps[i]
+			jomul = apps[i]
+			found = true
 			break
 		}
 	}
-	if jomul == nil {
+	if !found {
 		t.Fatal("jomul registry가 없다")
 	}
 
@@ -184,7 +186,7 @@ func TestJomulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
 		}
 	}
 
-	r := New(staticRegistrySource{apps: []App{*jomul}})
+	r := New(staticRegistrySource{apps: []App{jomul}})
 	for origin := range required {
 		allowed, err := r.AllowsCORSOrigin(context.Background(), origin)
 		if err != nil {

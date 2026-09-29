@@ -14,14 +14,16 @@ func TestLucidChessRegistryAuthAndEventContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var lucidChess *App
+	var lucidChess App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "lucid-chess" {
-			lucidChess = &apps[i]
+			lucidChess = apps[i]
+			found = true
 			break
 		}
 	}
-	if lucidChess == nil {
+	if !found {
 		t.Fatal("lucid-chess registry가 없다")
 	}
 
