@@ -14,14 +14,16 @@ func TestLizardTycoonRegistryEventContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var lizardTycoon *App
+	var lizardTycoon App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "lizard-tycoon" {
-			lizardTycoon = &apps[i]
+			lizardTycoon = apps[i]
+			found = true
 			break
 		}
 	}
-	if lizardTycoon == nil {
+	if !found {
 		t.Fatal("lizard-tycoon registry가 없다")
 	}
 	// 1.4.2의 신규 상품도 기존 원장과 같은 앱 경계에서 검증하고 복원한다.

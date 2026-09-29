@@ -17,14 +17,16 @@ func TestUngeulAdOnlyRegistryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var ungeul *App
+	var ungeul App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "ungeul" {
-			ungeul = &apps[i]
+			ungeul = apps[i]
+			found = true
 			break
 		}
 	}
-	if ungeul == nil {
+	if !found {
 		t.Fatal("ungeul registry가 없다")
 	}
 	if !ungeul.FeatureEnabled("content") || !ungeul.Content.DeepAlwaysOpen {
@@ -57,14 +59,16 @@ func TestUngeulEventAllowlistCoversClientContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var ungeul *App
+	var ungeul App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "ungeul" {
-			ungeul = &apps[i]
+			ungeul = apps[i]
+			found = true
 			break
 		}
 	}
-	if ungeul == nil {
+	if !found {
 		t.Fatal("ungeul registry가 없다")
 	}
 
@@ -121,14 +125,16 @@ func TestUngeulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var ungeul *App
+	var ungeul App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "ungeul" {
-			ungeul = &apps[i]
+			ungeul = apps[i]
+			found = true
 			break
 		}
 	}
-	if ungeul == nil {
+	if !found {
 		t.Fatal("ungeul registry가 없다")
 	}
 
@@ -153,7 +159,7 @@ func TestUngeulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
 
 	// 실제로 서버가 그 origin 을 통과시키는지까지 본다. 목록에 적힌 것과 판정이 갈리면
 	// 레지스트리만 고쳐 두고 런타임은 거부하는 상태가 된다.
-	r := New(staticRegistrySource{apps: []App{*ungeul}})
+	r := New(staticRegistrySource{apps: []App{ungeul}})
 	for origin := range required {
 		allowed, err := r.AllowsCORSOrigin(context.Background(), origin)
 		if err != nil {

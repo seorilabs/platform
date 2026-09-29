@@ -21,14 +21,16 @@ func TestAlleyMarketMatchAdsRegistryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var alley *App
+	var alley App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "alley-market-match" {
-			alley = &apps[i]
+			alley = apps[i]
+			found = true
 			break
 		}
 	}
-	if alley == nil {
+	if !found {
 		t.Fatal("Alley Market Match registry가 없다")
 	}
 	if err := alley.Validate(); err != nil {

@@ -12,14 +12,16 @@ func TestReascendLaunchMonetizationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var app *App
+	var app App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "reascend" {
-			app = &apps[i]
+			app = apps[i]
+			found = true
 			break
 		}
 	}
-	if app == nil {
+	if !found {
 		t.Fatal("reascend registry가 없다")
 	}
 	if err := app.Validate(); err != nil {

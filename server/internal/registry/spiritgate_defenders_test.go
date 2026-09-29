@@ -14,14 +14,16 @@ func TestSpiritgateDefendersAdsRegistryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var spiritgate *App
+	var spiritgate App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "spiritgate-defenders" {
-			spiritgate = &apps[i]
+			spiritgate = apps[i]
+			found = true
 			break
 		}
 	}
-	if spiritgate == nil {
+	if !found {
 		t.Fatal("spiritgate-defenders registry가 없다")
 	}
 	if !spiritgate.FeatureEnabled("ads") {

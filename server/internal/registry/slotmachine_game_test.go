@@ -21,14 +21,16 @@ func TestSlotmachineGameRegistryPresenceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var slotmachine *App
+	var slotmachine App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "slotmachine-game" {
-			slotmachine = &apps[i]
+			slotmachine = apps[i]
+			found = true
 			break
 		}
 	}
-	if slotmachine == nil {
+	if !found {
 		t.Fatal("slotmachine-game registry가 없다")
 	}
 
@@ -67,14 +69,16 @@ func TestSlotmachineGameAdsRegistryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var slotmachine *App
+	var slotmachine App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "slotmachine-game" {
-			slotmachine = &apps[i]
+			slotmachine = apps[i]
+			found = true
 			break
 		}
 	}
-	if slotmachine == nil {
+	if !found {
 		t.Fatal("slotmachine-game registry가 없다")
 	}
 

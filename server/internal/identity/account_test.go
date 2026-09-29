@@ -231,6 +231,52 @@ func TestAccountLinkIssuesLinkedSession(t *testing.T) {
 	}
 }
 
+func TestIAPSessionReflectsAccountLinkFromAPIRole(t *testing.T) {
+	ctx := context.Background()
+	accounts := newMemoryAccountRepo()
+	provider := &fakeAccountProvider{name: "kakao", subject: "provider-subject"}
+	api := newAccountTestService(t, accounts, provider, &fakeCustomTokenIssuer{token: "firebase-custom-token"})
+	// 운영에서는 API와 IAP가 별도 프로세스지만 사용자 저장소와 서명 키를 공유한다.
+	iap := NewService(api.registry, fakeVerifier{}, api.users, api.issuer, fakeBlocklist{}).
+		WithAccountLinkRepository(accounts)
+	credential := Credential{Kind: KindFirebaseIDToken, Value: "firebase-anonymous-uid"}
+	guest, err := api.CreateSession(ctx, "lizard-tycoon", credential, ClientInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts.users[guest.PlatformUserID] = guest.AppUserID
+	before, err := iap.CreateSession(ctx, "lizard-tycoon", credential, ClientInfo{})
+	if err != nil || before.IsLinkedAccount {
+		t.Fatalf("연결 전 IAP 세션 = %#v, err = %v", before, err)
+	}
+	sess, err := api.Authenticate(ctx, "lizard-tycoon", guest.PlatformToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := api.BeginAccountLink(ctx, sess, "kakao")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.CompleteAccountLink(ctx, sess, "kakao", "provider-id-token", challenge.Nonce); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := iap.Refresh(ctx, "lizard-tycoon", before.RefreshToken, ClientInfo{})
+	if err != nil || !upgraded.IsLinkedAccount || upgraded.PlatformUserID != guest.PlatformUserID {
+		t.Fatalf("연결 후 IAP 갱신 세션 = %#v, err = %v", upgraded, err)
+	}
+	after, err := iap.CreateSession(ctx, "lizard-tycoon", credential, ClientInfo{})
+	if err != nil || !after.IsLinkedAccount || after.PlatformUserID != guest.PlatformUserID {
+		t.Fatalf("연결 후 IAP 세션 = %#v, err = %v", after, err)
+	}
+	if err := api.DisconnectExternalAccount(ctx, "lizard-tycoon", "kakao", "provider-subject"); err != nil {
+		t.Fatal(err)
+	}
+	downgraded, err := iap.Refresh(ctx, "lizard-tycoon", after.RefreshToken, ClientInfo{})
+	if err != nil || downgraded.IsLinkedAccount {
+		t.Fatalf("연결 해제 후 IAP 갱신 세션 = %#v, err = %v", downgraded, err)
+	}
+}
+
 func TestAccountLinkRestoresExistingPlatformUser(t *testing.T) {
 	accounts := newMemoryAccountRepo()
 	provider := &fakeAccountProvider{name: "kakao", subject: "provider-subject"}

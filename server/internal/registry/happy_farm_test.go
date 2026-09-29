@@ -14,14 +14,16 @@ func TestHappyFarmRegistryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var happyFarm *App
+	var happyFarm App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "happy-farm" {
-			happyFarm = &apps[i]
+			happyFarm = apps[i]
+			found = true
 			break
 		}
 	}
-	if happyFarm == nil {
+	if !found {
 		t.Fatal("happy-farm registry가 없다")
 	}
 

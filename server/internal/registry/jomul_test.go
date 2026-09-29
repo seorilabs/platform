@@ -18,14 +18,16 @@ func TestJomulAnalyticsRegistryContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var jomul *App
+	var jomul App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "jomul" {
-			jomul = &apps[i]
+			jomul = apps[i]
+			found = true
 			break
 		}
 	}
-	if jomul == nil {
+	if !found {
 		t.Fatal("jomul registry가 없다")
 	}
 	// events 는 켜 둔다. 이미 마켓에 나간 구버전 빌드의 배치를 서버가 200 으로 받아 버려야 SDK
@@ -54,14 +56,16 @@ func TestJomulAdsRegistryContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var jomul *App
+	var jomul App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "jomul" {
-			jomul = &apps[i]
+			jomul = apps[i]
+			found = true
 			break
 		}
 	}
-	if jomul == nil {
+	if !found {
 		t.Fatal("jomul registry가 없다")
 	}
 	if !jomul.FeatureEnabled("ads") {
@@ -150,14 +154,16 @@ func TestJomulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var jomul *App
+	var jomul App
+	found := false
 	for i := range apps {
 		if apps[i].AppID == "jomul" {
-			jomul = &apps[i]
+			jomul = apps[i]
+			found = true
 			break
 		}
 	}
-	if jomul == nil {
+	if !found {
 		t.Fatal("jomul registry가 없다")
 	}
 
@@ -180,7 +186,7 @@ func TestJomulCORSOriginsCoverBothAppsInTossGenerations(t *testing.T) {
 		}
 	}
 
-	r := New(staticRegistrySource{apps: []App{*jomul}})
+	r := New(staticRegistrySource{apps: []App{jomul}})
 	for origin := range required {
 		allowed, err := r.AllowsCORSOrigin(context.Background(), origin)
 		if err != nil {
