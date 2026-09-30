@@ -11,5 +11,3 @@ node scripts/merge-lizard-iap-catalog.mjs --current /secure/current-iap-catalog.
 ```
 
 두 파일을 Git에 넣지 않는다. 병합된 파일을 새 Secret Manager 버전으로 등록하는 일은 서버 코드 배포와 사전 조건을 확인한 뒤 수행한다. 등록 후 새 비밀 버전의 상품 ID·유형·앱별 개수와 실제 서버 지급 경로를 읽어 검증한다.
-
-경제 설정은 일반 판매 `enabled=false`, `launch_at=0`으로 유지한다. 시험 판매 `test_enabled=true`는 관리 API에서 등록한 **실제 연결 계정**에만 적용되며, Play는 검증된 `testPurchase` 주문만 시험 지갑에 지급한다. 서버와 백오피스 배포, 계정 연결 서명 계정, Android OAuth, App Check 등록과 실기기 검증 전에는 registry 동기화나 일반 판매 전환을 완료 상태로 기록하지 않는다.
