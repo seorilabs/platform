@@ -1,6 +1,6 @@
 {
   "version": "2026-09-v1",
-  "enabled": true,
+  "enabled": false,
 	"test_enabled": true,
 	"test_launch_at": 1790553600,
   "app_id": "lizard-tycoon",
@@ -590,5 +590,5 @@
       ]
     }
   ],
-  "launch_at": 1790553600
+  "launch_at": 0
 }
