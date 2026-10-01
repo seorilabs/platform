@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "apps": {
+    "bloomhand": {
+      "entitlements": {
+        "friend_box_1": {
+          "type": "consumable",
+          "google_play": "bloomhand_friend_box_1",
+          "app_store": "bloomhand_friend_box_1"
+        },
+        "friend_box_5": {
+          "type": "consumable",
+          "google_play": "bloomhand_friend_box_5",
+          "app_store": "bloomhand_friend_box_5"
+        }
+      }
+    }
+  }
+}
