@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/iap/binding"
+	"github.com/seorilabs/platform/server/internal/iap/boxes"
 	"github.com/seorilabs/platform/server/internal/iap/catalog"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
@@ -79,7 +80,10 @@ type Service struct {
 	apps         interface {
 		GetUsable(context.Context, string) (registry.App, error)
 	}
-	now func() time.Time
+	// boxes는 앱별 확률 상자 카탈로그다. ADR 0029.
+	boxes     map[string]*boxes.Catalog
+	boxRandom boxes.Random
+	now       func() time.Time
 }
 
 // Config는 서비스 조립 설정이다.
@@ -96,6 +100,8 @@ type Config struct {
 	Apps         interface {
 		GetUsable(context.Context, string) (registry.App, error)
 	}
+	// Boxes는 앱별 확률 상자 카탈로그다. 없으면 상자 API가 닫힌다.
+	Boxes map[string]*boxes.Catalog
 }
 
 // New는 서비스를 만든다.
@@ -134,6 +140,8 @@ func New(cfg Config) (*Service, error) {
 		appOutboxes:  cfg.AppOutboxes,
 		auditor:      cfg.Auditor,
 		apps:         cfg.Apps,
+		boxes:        cfg.Boxes,
+		boxRandom:    boxes.CryptoRandom{},
 		now:          time.Now,
 	}, nil
 }

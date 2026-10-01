@@ -14,6 +14,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/config"
 	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/iap/binding"
+	"github.com/seorilabs/platform/server/internal/iap/boxes"
 	"github.com/seorilabs/platform/server/internal/iap/catalog"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
@@ -135,9 +136,17 @@ func newIAPService(
 	appVerifiers := make(map[string][]verify.Verifier)
 	appVerifierMaps := make(map[string]map[domain.Platform]verify.Verifier)
 	appsByID := make(map[string]registry.App)
+	// 상자 카탈로그는 바이너리에 내장돼 있다. 결제를 켠 앱만 조립하고,
+	// 카탈로그가 깨졌으면 부팅을 막는다(ADR 0029).
+	boxCatalogs := make(map[string]*boxes.Catalog)
 	for _, app := range apps {
 		if !app.FeatureEnabled("iap") {
 			continue
+		}
+		if bc, ok, err := boxes.Load(app.AppID); err != nil {
+			return nil, fmt.Errorf("iap: %s 상자 카탈로그가 올바르지 않다: %w", app.AppID, err)
+		} else if ok {
+			boxCatalogs[app.AppID] = bc
 		}
 		appEnv := domain.EnvProduction
 		if app.IAP.LedgerEnvironment == registry.LedgerSandbox {
@@ -184,6 +193,7 @@ func newIAPService(
 		AppLedgers:   appLedgers,
 		AppOutboxes:  appOutboxes,
 		Apps:         reg,
+		Boxes:        boxCatalogs,
 	})
 	if err != nil {
 		return nil, err
@@ -205,6 +215,7 @@ func newIAPService(
 		"environment", ic.Environment,
 		"markets", enabled,
 		"entitlements", len(cat.IDs()),
+		"box_apps", len(boxCatalogs),
 		"additional_environments", len(additional),
 	)
 	return &iapParts{
@@ -251,6 +262,7 @@ func newAppleSandboxEnvironment(
 		AppLedgers:   map[string]verify.Ledger{app.AppID: l},
 		AppOutboxes:  map[string]verify.OutboxWriter{app.AppID: l},
 		Apps:         reg, Auditor: auditAdapter{col: col},
+		Boxes: sandboxBoxes(app),
 	})
 	if err != nil {
 		return iapEnvironment{}, err
@@ -510,4 +522,14 @@ func newAuditRow(action, appID, puid, outcome string, detail map[string]any) eve
 		row.RequestID = requestID
 	}
 	return row
+}
+
+// sandboxBoxes는 추가 Apple sandbox 환경에도 같은 상자 카탈로그를 붙인다.
+// 기본 환경 조립에서 이미 검증했으므로 여기서는 실패를 무시한다.
+func sandboxBoxes(app registry.App) map[string]*boxes.Catalog {
+	bc, ok, err := boxes.Load(app.AppID)
+	if err != nil || !ok {
+		return nil
+	}
+	return map[string]*boxes.Catalog{app.AppID: bc}
 }

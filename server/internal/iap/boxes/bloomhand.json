@@ -1,0 +1,45 @@
+{
+  "app_id": "bloomhand",
+  "versions": [
+    {
+      "version": "2026-10-01",
+      "published_on": "2026-10-01",
+      "effective_on": "2026-10-01",
+      "notice_days": 7,
+      "pity": 10,
+      "pity_rarity": "rare",
+      "level_rule": "triangular",
+      "rarities": [
+        { "id": "common", "weight": 6000 },
+        { "id": "uncommon", "weight": 3200 },
+        { "id": "rare", "weight": 800 }
+      ],
+      "friends": [
+        { "id": "B01", "rarity": "common" },
+        { "id": "B02", "rarity": "common" },
+        { "id": "B03", "rarity": "common" },
+        { "id": "B04", "rarity": "common" },
+        { "id": "B05", "rarity": "common" },
+        { "id": "B06", "rarity": "common" },
+        { "id": "B07", "rarity": "common" },
+        { "id": "B08", "rarity": "common" },
+        { "id": "B09", "rarity": "common" },
+        { "id": "B10", "rarity": "common" },
+        { "id": "B11", "rarity": "uncommon" },
+        { "id": "B12", "rarity": "uncommon" },
+        { "id": "B13", "rarity": "uncommon" },
+        { "id": "B14", "rarity": "uncommon" },
+        { "id": "B15", "rarity": "uncommon" },
+        { "id": "B16", "rarity": "uncommon" },
+        { "id": "B17", "rarity": "uncommon" },
+        { "id": "B18", "rarity": "rare" },
+        { "id": "B19", "rarity": "rare" },
+        { "id": "B20", "rarity": "rare" }
+      ],
+      "products": {
+        "friend_box_1": 1,
+        "friend_box_5": 5
+      }
+    }
+  ]
+}
