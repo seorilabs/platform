@@ -219,7 +219,7 @@ sleep 중 멈출 수 있는 monotonic tick을 세션 만료 기준으로 쓰지 
 만료 60초 전부터 선제 refresh한다. session refresh 전송 자체는 proactive와
 strict IAP 경로 모두 일반 재시도 없이 한 번만 보낸다.
 
-`verify_purchase`, `list_entitlements`, `account_references`는 전송 계층의 일반
+`verify_purchase`, `list_entitlements`, `account_references`, `get_boxes`, `open_box`는 전송 계층의 일반
 재시도를 모두 끈다. 첫 응답이 정확히 `401 session_expired`일 때만 refresh를
 한 번 요청하고 새 토큰으로 원 요청을 한 번 replay한다. 그 refresh 요청도
 일반 재시도를 하지 않으며 refresh 실패, replay의 두 번째 401, 403, 5xx,
@@ -296,3 +296,23 @@ lizard-tycoon의 기존 `iap_functions_client.gd`는 `_exact_keys()`로
 - HTTP 요청은 직렬로 흐른다. Godot의 `HTTPRequest`가 한 번에 하나만
   처리하기 때문이다. 플랫폼 호출은 빈도가 낮아 충분하다.
 - `Retry-After`는 초 단위 숫자만 읽는다. Godot에 HTTP-date 파서가 없다.
+
+## 확률 상자(0.8.0, ADR 0029)
+
+```gdscript
+platform.get_boxes(func(res):
+    if res.ok:
+        var state = res.result.state   # available, debt, copies, levels, sinceRare ...
+        var catalog = res.result.catalog  # rarities(10000 기준), friends, pity, products
+)
+var request_id := "open-%d" % Time.get_ticks_usec()  # 결과를 받을 때까지 보관
+platform.open_box(request_id, func(res):
+    if res.ok:
+        print(res.result.friendId, res.result.level, res.result.applied)
+    elif res.code in ["box_empty", "box_debt"]:
+        pass  # 상점 안내 / 환불 부채 안내
+)
+```
+
+- `get_boxes`는 익명만 거부한다. 연결 전 게스트도 확률을 볼 수 있다.
+- `open_box`는 결제 세션 규칙을 따른다(`require_linked_account` 앱은 연결 계정만). 모호한 실패 뒤에는 같은 `request_id`로 다시 부른다.
