@@ -23,7 +23,10 @@ const AtomicJsonStore := preload("core/atomic_json_store.gd")
 const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.7.9"
+const SDK_VERSION := "0.8.0"
+
+## OpenAPI BoxOpenRequest.requestId 와 같다.
+static var _BOX_REQUEST_ID := RegEx.create_from_string("^[A-Za-z0-9_-]{8,64}$")
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -1091,6 +1094,35 @@ func list_entitlements(callback: Callable) -> void:
 func account_references(callback: Callable) -> void:
 	_iap_request(
 		{"method": "POST", "path": "/v1/iap/account-references"},
+		callback,
+	)
+
+
+## 확률 상자 상태와 공개 확률(ADR 0029).
+##
+## 구매 전에도 확률을 보여줘야 하므로 연결 전 게스트도 읽을 수 있다. 익명만 거부한다.
+## result: {linked, serverTime, state: BoxState, catalog: BoxCatalogView}
+func get_boxes(callback: Callable) -> void:
+	if is_anonymous():
+		callback.call(_client_error("anonymous_not_allowed", "로그인 후에 볼 수 있어요"))
+		return
+	_iap_request({"method": "GET", "path": "/v1/iap/boxes"}, callback)
+
+
+## 상자 하나를 서버가 연다(ADR 0029).
+##
+## request_id는 앱이 만들어 개봉 결과를 받을 때까지 보관한다. 응답이 모호하면
+## (timeout, 5xx) 같은 request_id로 다시 부르면 서버가 첫 결과를 돌려준다
+## (applied=false). 다른 IAP 요청처럼 일반 재시도는 하지 않는다.
+func open_box(request_id: String, callback: Callable) -> void:
+	if not _BOX_REQUEST_ID.search(request_id):
+		callback.call(_client_error("request_invalid", "상자 요청 id가 올바르지 않아요"))
+		return
+	if is_anonymous():
+		callback.call(_client_error("anonymous_not_allowed", "로그인 후에 열 수 있어요"))
+		return
+	_iap_request(
+		{"method": "POST", "path": "/v1/iap/boxes/open", "body": {"requestId": request_id}},
 		callback,
 	)
 

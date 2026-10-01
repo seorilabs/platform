@@ -73,6 +73,7 @@ func _initialize() -> void:
 	_check_standard_adapters()
 	_check_observation_headers()
 	_check_guards()
+	_check_box_requests()
 	_check_update_gate()
 
 	if _failures.is_empty():
@@ -1236,6 +1237,45 @@ func _expect_iap_request(
 			and bool(request.get("no_retry", false)),
 		"IAP 요청 계약이 다르다: %s" % request,
 	)
+
+
+## 확률 상자(ADR 0029) 요청 계약: 경로·메서드·본문, 일반 재시도 없음, 잘못된 id 즉시 거부.
+func _check_box_requests() -> void:
+	var transport := ScriptedTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client.configure({
+		"base_url": "https://platform.invalid",
+		"iap_base_url": "https://iap.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+	client._store_session(_session_result("token-box", "refresh-box", 3600))
+	var results: Array[Dictionary] = []
+	client.open_box("bad id", func(response: Dictionary) -> void: results.append(response))
+	_expect(
+		transport.requests.is_empty() and results.size() == 1
+			and String(results[0].get("code", "")) == "request_invalid",
+		"잘못된 상자 요청 id가 즉시 거부되지 않았다: %s" % results,
+	)
+	client.get_boxes(func(response: Dictionary) -> void: results.append(response))
+	client.open_box("open-req-0001", func(response: Dictionary) -> void: results.append(response))
+	if transport.requests.size() != 2:
+		_fail("상자 요청이 두 개 만들어지지 않았다: %d" % transport.requests.size())
+		client.free()
+		return
+	_expect_iap_request(transport.requests[0], "GET", "/v1/iap/boxes", "token-box")
+	_expect_iap_request(transport.requests[1], "POST", "/v1/iap/boxes/open", "token-box")
+	var body: Variant = transport.requests[1].get("body", {})
+	_expect(
+		body is Dictionary and (body as Dictionary).size() == 1
+			and String((body as Dictionary).get("requestId", "")) == "open-req-0001",
+		"상자 개봉 본문이 다르다: %s" % body,
+	)
+	transport.respond(1, _failure_response(503, "service_unavailable"))
+	_expect(transport.requests.size() == 2, "상자 개봉 5xx를 일반 재시도했다")
+	client.free()
 
 
 ## 잘못된 입력이 네트워크를 타지 않고 즉시 거부되는지 본다.
