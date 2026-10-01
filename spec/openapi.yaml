@@ -1031,6 +1031,68 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /iap/boxes:
+    get:
+      tags: [iap]
+      summary: 확률 상자 보유 상태와 공개 확률 조회
+      operationId: getBoxEconomy
+      description: |
+        ADR 0029. 열 수 있는 상자 수는 소모성 구매 source에서 서버가 계산한다.
+        환불로 생긴 부채를 빼면 음수일 수 있다. 확률·보장·친구 목록은 서버 카탈로그가 정본이며
+        앱은 이 값으로 구매·개봉 화면의 확률표를 그린다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      responses:
+        '200':
+          description: 상자 상태와 현재 적용 카탈로그
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/BoxSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /iap/boxes/open:
+    post:
+      tags: [iap]
+      summary: 상자 하나를 서버가 연다
+      operationId: openBox
+      description: |
+        ADR 0029. 활성 소모성 source 1단위 차감, 서버 추첨, 친구 장수 증가, 보장 카운터,
+        개봉 증거를 한 트랜잭션으로 커밋한다. 같은 requestId 재시도는 첫 결과를 반환하고
+        다른 내용으로 재사용하면 409다. 부채가 있으면 box_debt, 상자가 없으면 box_empty다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BoxOpenRequest' }
+      responses:
+        '200':
+          description: 개봉 결과. 재시도면 applied=false와 최초 결과
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/BoxOpenReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /iap/verify:
     post:
       tags: [iap]
@@ -2569,6 +2631,81 @@ components:
               rarity: { type: string, enum: [common, rare, legendary] }
               duplicate: { type: boolean }
               shards: { type: integer, minimum: 0 }
+
+    BoxState:
+      type: object
+      required: [version, available, activeRemaining, debt, opened, sinceRare, copies, levels]
+      properties:
+        version: { type: integer, format: int64 }
+        available: { type: integer, description: 'activeRemaining - debt. 0 이하면 열 수 없다. 음수는 환불 부채다.' }
+        activeRemaining: { type: integer, minimum: 0 }
+        debt: { type: integer, minimum: 0, description: '환불된 구매에서 이미 연 상자 수' }
+        opened: { type: integer, minimum: 0 }
+        sinceRare: { type: integer, minimum: 0, description: '마지막 희귀 이후 연 상자 수(보장 진행)' }
+        copies: { type: object, additionalProperties: { type: integer, minimum: 1 } }
+        levels: { type: object, additionalProperties: { type: integer, minimum: 1 } }
+    BoxSnapshot:
+      type: object
+      required: [state, catalog, linked, serverTime]
+      properties:
+        linked: { type: boolean }
+        serverTime: { type: integer, format: int64, description: UTC Unix seconds }
+        state: { $ref: '#/components/schemas/BoxState' }
+        catalog: { $ref: '#/components/schemas/BoxCatalogView' }
+    BoxCatalogView:
+      type: object
+      required: [version, effectiveOn, noticeDays, pity, levelRule, rarities, friends, products]
+      properties:
+        version: { type: string }
+        effectiveOn: { type: string, format: date }
+        noticeDays: { type: integer, minimum: 1 }
+        pity: { type: integer, minimum: 1, description: '이 수만큼 연속으로 희귀가 없으면 그 상자는 가장 적게 가진 희귀다' }
+        levelRule: { type: string, enum: [triangular], description: 'Lv n→n+1에 같은 친구 n장. 누적 1 + L(L−1)/2장이면 Lv L' }
+        rarities:
+          type: array
+          items:
+            type: object
+            required: [id, weight]
+            properties:
+              id: { type: string }
+              weight: { type: integer, minimum: 0, description: '10000 기준 가중치. 같은 희귀도 안은 균등' }
+        friends:
+          type: array
+          items:
+            type: object
+            required: [id, rarity]
+            properties:
+              id: { type: string }
+              rarity: { type: string }
+        products:
+          type: array
+          items:
+            type: object
+            required: [entitlementId, units]
+            properties:
+              entitlementId: { type: string }
+              units: { type: integer, minimum: 1 }
+    BoxOpenRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId]
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+    BoxOpenReceipt:
+      type: object
+      required: [requestId, applied, catalogVersion, friendId, rarity, copies, level, newFriend, levelUp, pity, state]
+      properties:
+        requestId: { type: string }
+        applied: { type: boolean, description: 'false면 같은 requestId 재시도이며 최초 결과다' }
+        catalogVersion: { type: string }
+        friendId: { type: string }
+        rarity: { type: string }
+        copies: { type: integer, minimum: 1 }
+        level: { type: integer, minimum: 1 }
+        newFriend: { type: boolean }
+        levelUp: { type: boolean }
+        pity: { type: boolean, description: '보장으로 나온 희귀' }
+        state: { $ref: '#/components/schemas/BoxState' }
 
     AccountDeletionStatus:
       type: object

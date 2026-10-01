@@ -74,6 +74,17 @@ const (
 	CodeContentReplayMismatch  Code = "content_replay_mismatch"
 )
 
+// 확률 상자 경제. ADR 0029
+const (
+	// CodeBoxEmpty는 열 수 있는 상자가 없다는 뜻이다. 상점으로 안내한다.
+	CodeBoxEmpty Code = "box_empty"
+	// CodeBoxDebt는 환불로 이미 연 상자 수가 남은 상자보다 많아 개봉을
+	// 막았다는 뜻이다. 다음 구매가 부채를 먼저 메운다.
+	CodeBoxDebt Code = "box_debt"
+	// CodeBoxReplayMismatch는 같은 requestId가 다른 내용으로 다시 왔다는 뜻이다.
+	CodeBoxReplayMismatch Code = "box_replay_mismatch"
+)
+
 // 광고 정책과 보상 claim
 const (
 	CodeAdsNotEnabled            Code = "ads_not_enabled"
@@ -245,6 +256,11 @@ var statusByCode = map[Code]int{
 	CodeContentClaimInvalid:    http.StatusForbidden,
 	CodeContentTicketEmpty:     http.StatusForbidden,
 	CodeContentReplayMismatch:  http.StatusConflict,
+
+	// 상자
+	CodeBoxEmpty:          http.StatusConflict,
+	CodeBoxDebt:           http.StatusConflict,
+	CodeBoxReplayMismatch: http.StatusConflict,
 
 	// 광고
 	CodeAdsNotEnabled:            http.StatusForbidden,
