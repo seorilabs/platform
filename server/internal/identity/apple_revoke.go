@@ -140,7 +140,7 @@ func (r *AppleTokenRevoker) post(ctx context.Context, path string, form url.Valu
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, appleResponseMaxBytes))
 	return resp.StatusCode, body, err
 }
