@@ -220,7 +220,7 @@ jobs:
             --image="${{ needs.build.outputs.image }}" \
             --service-account="$API_RUNTIME_SA" \
             --update-env-vars="BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL},KAKAO_UNLINK_PLATFORM_APP_ID=${KAKAO_UNLINK_PLATFORM_APP_ID},KAKAO_UNLINK_APP_ID=${KAKAO_UNLINK_APP_ID}" \
-            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest,KAKAO_UNLINK_ADMIN_KEY=ungeul-kakao-admin-key:latest" \
+            --update-secrets="PLATFORM_SESSION_SECRET=platform-session-secret:latest,BACKOFFICE_OPERATIONAL_EVENTS_SECRET=backoffice-operational-events-secret:latest,KAKAO_UNLINK_ADMIN_KEY=ungeul-kakao-admin-key:latest,APPLE_SIGN_IN_KEYS_JSON=apple-sign-in-keys:latest" \
             --quiet
 
           gcloud run deploy platform-ingest \

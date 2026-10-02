@@ -316,3 +316,18 @@ platform.open_box(request_id, func(res):
 
 - `get_boxes`는 익명만 거부한다. 연결 전 게스트도 확률을 볼 수 있다.
 - `open_box`는 결제 세션 규칙을 따른다(`require_linked_account` 앱은 연결 계정만). 모호한 실패 뒤에는 같은 `request_id`로 다시 부른다.
+
+## 계정 삭제와 Apple 승인 철회(0.8.1)
+
+Google·Apple 연결 계정도 `request_account_deletion`으로 삭제를 접수한다. Apple을 연결한 계정은 서버가
+`409 account_reauth_required`를 돌려준다. 앱은 Sign in with Apple을 다시 띄워 받은 **authorization code**를
+마지막 인자로 넣고 **같은 접수증**으로 다시 부른다. 서버가 code를 교환한 승인을 철회한 뒤 접수한다.
+code는 5분 안에 한 번만 쓸 수 있으므로 저장하지 않는다.
+
+```gdscript
+platform.request_account_deletion(id_token, receipt, app_check, func(res):
+    if res.code == "account_reauth_required":
+        var code := await apple_sign_in_authorization_code()  # 앱의 네이티브 플러그인
+        platform.request_account_deletion(id_token, receipt, app_check, on_done, code)
+)
+```

@@ -185,6 +185,14 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 		// 버전 최초 관측은 세션 원장과 같은 Firestore·outbox 자원을 쓴다.
 		svc.WithAppVersionObserver(users)
 		svc.WithAccountDeletions(users)
+		if len(cfg.AppleSignInKeysJSON) > 0 {
+			appleKeys, err := identity.ParseAppleSignInKeys(cfg.AppleSignInKeysJSON)
+			if err != nil {
+				closeStore()
+				return nil, err
+			}
+			svc.WithAppleRevoker(identity.NewAppleTokenRevoker(appleKeys, nil))
+		}
 		// 결제 세션도 API 역할에서 기록한 계정 연결을 확인해야 한다.
 		// 그렇지 않으면 연결 직후의 새 세션이 미연결로 발급된다.
 		if cfg.Role == config.RoleIAP {

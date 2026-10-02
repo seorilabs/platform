@@ -174,6 +174,7 @@ type Service struct {
 	aitLogin         map[string]AITLoginVerifier
 	users            UserRepository
 	deletions        DeletionRepository
+	appleRevoker     AppleAuthorizationRevoker
 	issuer           *SessionIssuer
 	customTokens     CustomTokenIssuer
 	appCheck         AppCheckVerifier
