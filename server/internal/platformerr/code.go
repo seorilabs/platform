@@ -34,6 +34,8 @@ const (
 	CodeAnonymousNotAllowed Code = "anonymous_not_allowed"
 	CodeAccountLinkRequired Code = "account_link_required"
 	CodeAccountLinkConflict Code = "account_link_conflict"
+	// CodeAccountReauthRequired는 계정 삭제가 공급자 재승인(Apple authorization code)을 요구할 때다.
+	CodeAccountReauthRequired Code = "account_reauth_required"
 )
 
 // App Check
@@ -221,15 +223,16 @@ var statusByCode = map[Code]int{
 	CodeProofInvalid:       http.StatusBadRequest,
 
 	// 인증과 세션
-	CodeAuthRequired:        http.StatusUnauthorized,
-	CodeAuthInvalid:         http.StatusUnauthorized,
-	CodeAuthForbidden:       http.StatusForbidden,
-	CodeSessionInvalid:      http.StatusUnauthorized,
-	CodeSessionExpired:      http.StatusUnauthorized,
-	CodeRefreshInvalid:      http.StatusUnauthorized,
-	CodeAnonymousNotAllowed: http.StatusForbidden,
-	CodeAccountLinkRequired: http.StatusForbidden,
-	CodeAccountLinkConflict: http.StatusConflict,
+	CodeAuthRequired:          http.StatusUnauthorized,
+	CodeAuthInvalid:           http.StatusUnauthorized,
+	CodeAuthForbidden:         http.StatusForbidden,
+	CodeSessionInvalid:        http.StatusUnauthorized,
+	CodeSessionExpired:        http.StatusUnauthorized,
+	CodeRefreshInvalid:        http.StatusUnauthorized,
+	CodeAnonymousNotAllowed:   http.StatusForbidden,
+	CodeAccountLinkRequired:   http.StatusForbidden,
+	CodeAccountLinkConflict:   http.StatusConflict,
+	CodeAccountReauthRequired: http.StatusConflict,
 
 	// App Check
 	CodeAppCheckRequired:    http.StatusUnauthorized,

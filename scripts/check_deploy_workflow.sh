@@ -129,6 +129,11 @@ require(kakao_secret not in kakao_worker_block, "platform-worker에 Kakao Admin 
 require(text.count(kakao_secret) == 1, "Kakao Admin Key secret은 platform-api 한 곳에만 마운트해야 한다.")
 require("Assert Kakao unlink secret boundary" in text, "Kakao unlink secret readback gate가 없다.")
 
+# Sign in with Apple 키는 계정 삭제(승인 철회)를 처리하는 platform-api 한 곳에만 둔다.
+apple_secret = "APPLE_SIGN_IN_KEYS_JSON=apple-sign-in-keys:latest"
+require(apple_secret in api_block, "platform-api에 Sign in with Apple 키 secret이 없다.")
+require(text.count(apple_secret) == 1, "Sign in with Apple 키 secret은 platform-api 한 곳에만 마운트해야 한다.")
+
 
 operational_url = "BACKOFFICE_OPERATIONAL_EVENTS_URL=${BACKOFFICE_OPERATIONAL_EVENTS_URL}"
 operational_secret = (

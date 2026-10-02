@@ -293,10 +293,16 @@ func (a App) Validate() error {
 		// IAP 앱은 허용한다. 삭제 워커는 IAP 원장(주문·이전·운영자 감사)을 건드리지 않고, 신원 삭제 뒤
 		// 원장에 남는 platform uid는 연결 자료가 없어 가명이 된다. 구매 토큰 재사용 방지도 주문 문서로
 		// 계속 동작한다(새 계정이 같은 토큰을 내면 소유권 이전 규칙을 따른다).
-		// content와 외부 계정 연결은 막는다. content 소비 기록은 platform uid로 남는데 워커가 처리하지 않고,
-		// 외부 계정 연결은 제공자 쪽 연결 해제와 연결 자료 정리가 워커에 없다.
-		if !a.FeatureEnabled("firebase_custom_token_bridge") || a.FeatureEnabled("content") || len(a.Auth.AccountProviders) > 0 {
-			return fmt.Errorf("%s: account deletion supports Firebase guest apps without content or account providers only", a.AppID)
+		// content는 막는다. content 소비 기록은 platform uid로 남는데 워커가 처리하지 않는다.
+		// 외부 계정은 Google·Apple만 허용한다. 연결 자료는 워커(DeleteUser)가 지우고, Apple은 접수 때
+		// 재승인 code로 승인을 철회한다. Kakao 연결 해제(공급자 API 호출)는 삭제 흐름에 없다.
+		if !a.FeatureEnabled("firebase_custom_token_bridge") || a.FeatureEnabled("content") {
+			return fmt.Errorf("%s: account deletion supports Firebase apps without content only", a.AppID)
+		}
+		for provider := range a.Auth.AccountProviders {
+			if provider != "google" && provider != "apple" {
+				return fmt.Errorf("%s: account deletion supports Google and Apple account links only", a.AppID)
+			}
 		}
 		// 삭제 접수는 Firebase ID token의 uid만 대상으로 삼는다. AppsInToss 로그인은 별도 "ait:" 신원을 만들고
 		// (identity.Service의 KindAITLogin) 그 신원은 이 경로로 지울 수 없다. 광고나 IAP가 AppsInToss를

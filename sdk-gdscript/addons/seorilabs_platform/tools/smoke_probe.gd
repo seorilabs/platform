@@ -183,6 +183,11 @@ func _check_firebase_custom_token_bridge() -> void:
 	if request.get("path") != "/v1/auth/account-deletions" or request.get("body") != {
 		"appId": "probe", "firebaseIdToken": "firebase-id-token", "receiptToken": receipt}:
 		_fail("삭제 접수 대상과 접수증이 보존되지 않는다")
+	client.request_account_deletion("firebase-id-token", receipt, "app-check", func(_res: Dictionary) -> void: pass, "apple-code")
+	request = transport.last_request
+	if request.get("body") != {"appId": "probe", "firebaseIdToken": "firebase-id-token", "receiptToken": receipt,
+		"providerAuthorization": {"provider": "apple", "authorizationCode": "apple-code"}}:
+		_fail("Apple 재승인 code 가 삭제 접수 본문에 들어가지 않는다: %s" % request.get("body"))
 	client.account_deletion_status(receipt, func(_res: Dictionary) -> void: pass)
 	request = transport.last_request
 	if request.get("method") != "POST" or request.get("path") != "/v1/auth/account-deletions/status" \

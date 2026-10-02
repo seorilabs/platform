@@ -53,6 +53,8 @@ type Config struct {
 	Ads         AdsConfig
 	Operational OperationalConfig
 	KakaoUnlink KakaoUnlinkConfig
+	// AppleSignInKeysJSON은 계정 삭제 때 Sign in with Apple 승인을 철회하는 앱별 키 묶음이다(API 역할, 선택).
+	AppleSignInKeysJSON []byte
 	Presence    PresenceConfig
 	// Measurement Protocol api_secret은 ingest role에만 주입한다.
 	GA4MeasurementProtocolSecrets map[string]string
@@ -166,6 +168,9 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		c.KakaoUnlink = kakaoUnlink
+		if raw := strings.TrimSpace(os.Getenv("APPLE_SIGN_IN_KEYS_JSON")); raw != "" {
+			c.AppleSignInKeysJSON = []byte(raw)
+		}
 	}
 	if role == RoleIngest {
 		presence, err := loadPresence()

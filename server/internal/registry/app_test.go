@@ -694,19 +694,30 @@ func TestAccountDeletionFeatureValidation(t *testing.T) {
 				app.Features["firebase_custom_token_bridge"] = false
 				app.FirebaseCustomTokenServiceAccount = ""
 			},
-			wantErr: "account deletion supports Firebase guest apps",
+			wantErr: "account deletion supports Firebase apps without content",
 		},
 		{
 			name:    "content 앱 거부",
 			mutate:  func(app *App) { app.Features["content"] = true },
-			wantErr: "account deletion supports Firebase guest apps",
+			wantErr: "account deletion supports Firebase apps without content",
 		},
 		{
-			name: "외부 계정 연결 앱 거부",
+			name: "Kakao 연결 앱 거부",
 			mutate: func(app *App) {
-				app.Auth.AccountProviders = map[string]AuthProviderConfig{"kakao": {Audience: "kakao-app"}}
+				app.Auth.RequireAccountLinkAppCheck = true
+				app.Auth.AccountProviders = map[string]AuthProviderConfig{"kakao": {Audience: "0123456789abcdef0123456789abcdef"}}
 			},
-			wantErr: "account deletion supports Firebase guest apps",
+			wantErr: "account deletion supports Google and Apple account links only",
+		},
+		{
+			name: "Google·Apple 연결 앱 허용",
+			mutate: func(app *App) {
+				app.Auth.RequireAccountLinkAppCheck = true
+				app.Auth.AccountProviders = map[string]AuthProviderConfig{
+					"google": {Audience: "1-abc.apps.googleusercontent.com"},
+					"apple":  {Audience: "com.seorilabs.example"},
+				}
+			},
 		},
 		{
 			name: "AppsInToss IAP 앱 거부",

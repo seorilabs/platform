@@ -335,3 +335,42 @@ func deletionStorePath(raw string) fspath.Path {
 	}
 	return p
 }
+
+// LinkedProviders는 Firebase uid → platform 사용자 → 연결 공급자 subject 해시를 읽는다.
+// 매핑이 없으면(게스트) 빈 맵이다.
+func (r *StoreRepository) LinkedProviders(ctx context.Context, appID, uid string) (map[string]string, error) {
+	idPath, err := identityPath(appID, uid)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := r.store.Get(ctx, idPath)
+	if errors.Is(err, store.ErrNotFound) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var mapping identityDoc
+	if err = snap.DataTo(&mapping); err != nil {
+		return nil, err
+	}
+	uPath, err := userPath(mapping.PlatformUserID)
+	if err != nil {
+		return nil, err
+	}
+	snap, err = r.store.Get(ctx, uPath)
+	if errors.Is(err, store.ErrNotFound) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var user userDoc
+	if err = snap.DataTo(&user); err != nil {
+		return nil, err
+	}
+	if user.LinkedProviders == nil {
+		return map[string]string{}, nil
+	}
+	return user.LinkedProviders, nil
+}

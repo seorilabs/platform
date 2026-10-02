@@ -153,3 +153,37 @@ func TestDeletionTransactionRecoveryAndCleanup(t *testing.T) {
 		t.Fatal("expired deletion metadata remains", err)
 	}
 }
+
+func TestLinkedProvidersReadsSubjectHashByFirebaseUID(t *testing.T) {
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
+		t.Skip("local Firestore emulator required")
+	}
+	ctx := context.Background()
+	st, err := store.New(ctx, "platform-deletion-test", "t"+strings.ReplaceAll(uuid.NewString(), "-", "")+"_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC()
+	repo := NewStoreRepository(st)
+	repo.now = func() time.Time { return now }
+	app := deletionTestApp()
+	linked, err := repo.LinkedProviders(ctx, app.AppID, "unknown-uid")
+	if err != nil || len(linked) != 0 {
+		t.Fatalf("미등록 uid 의 연결이 비어 있지 않다: %v %v", linked, err)
+	}
+	puid, err := repo.EnsureUser(ctx, app.AppID, NewIdentity{UID: "linked-uid", AuthType: "firebase_bridge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.CreateAccountLinkChallenge(ctx, app.AppID, puid, "apple", "nonce-1", now.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.ConnectAccount(ctx, app.AppID, puid, "apple", "apple-subject", "nonce-1", now); err != nil {
+		t.Fatal(err)
+	}
+	linked, err = repo.LinkedProviders(ctx, app.AppID, "linked-uid")
+	if err != nil || linked["apple"] != hashHex("apple-subject") || len(linked) != 1 {
+		t.Fatalf("Apple 연결 해시를 읽지 못했다: %v %v", linked, err)
+	}
+}

@@ -43,12 +43,15 @@ type deletionMemory struct {
 	status       DeletionStatus
 	blocked      bool
 	err          error
+	linked       map[string]string
+	begun        bool
 }
 
 func (m *deletionMemory) BeginDeletion(_ context.Context, app registry.App, uid, receipt string) (DeletionStatus, error) {
 	m.app = app
 	m.uid = uid
 	m.receipt = receipt
+	m.begun = true
 	return m.status, m.err
 }
 func (m *deletionMemory) DeletionStatus(_ context.Context, app, receipt string) (DeletionStatus, error) {
@@ -59,6 +62,12 @@ func (m *deletionMemory) DeletionStatus(_ context.Context, app, receipt string) 
 }
 func (m *deletionMemory) AccountDeleting(context.Context, string, string) (bool, error) {
 	return m.blocked, m.err
+}
+func (m *deletionMemory) LinkedProviders(context.Context, string, string) (map[string]string, error) {
+	if m.linked == nil {
+		return map[string]string{}, m.err
+	}
+	return m.linked, m.err
 }
 func deletionTestApp() registry.App {
 	app := testApp()
@@ -77,14 +86,14 @@ func TestDeletionUsesVerifiedIdentityAndOriginalReceipt(t *testing.T) {
 	repo := &deletionMemory{status: DeletionStatus{State: "processing", RequestedAt: time.Now(), GoogleAnalyticsDeletion: "not_requested"}}
 	s := deletionService(t, fakeVerifier{}, repo)
 	token := strings.Repeat("a", 64)
-	if _, err := s.RequestAccountDeletion(context.Background(), deletionTestApp().AppID, "verified-uid", token); err != nil {
+	if _, err := s.RequestAccountDeletion(context.Background(), deletionTestApp().AppID, "verified-uid", token, nil); err != nil {
 		t.Fatal(err)
 	}
 	if repo.uid != "verified-uid" || repo.app.FirebaseProjectID != deletionTestApp().FirebaseProjectID || repo.receipt != token {
 		t.Fatal("삭제 대상이 인증 결과와 다르다")
 	}
 	repo.blocked = true // 접수 이후에도 동일 접수 재시도와 상태 확인은 허용한다.
-	if _, err := s.RequestAccountDeletion(context.Background(), repo.app.AppID, "verified-uid", token); err != nil {
+	if _, err := s.RequestAccountDeletion(context.Background(), repo.app.AppID, "verified-uid", token, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, other := range []struct{ app, receipt string }{{"other", token}, {repo.app.AppID, strings.Repeat("b", 64)}} {
@@ -103,7 +112,7 @@ func TestDeletionRejectsInvalidProofBeforePersistence(t *testing.T) {
 	}{{"", strings.Repeat("a", 64), nil}, {"uid", "guessable", nil}, {"uid", strings.Repeat("a", 64), errors.New("wrong audience")}} {
 		repo := &deletionMemory{}
 		s := deletionService(t, fakeVerifier{err: tc.verifyErr}, repo)
-		if _, err := s.RequestAccountDeletion(context.Background(), deletionTestApp().AppID, tc.token, tc.receipt); err == nil {
+		if _, err := s.RequestAccountDeletion(context.Background(), deletionTestApp().AppID, tc.token, tc.receipt, nil); err == nil {
 			t.Fatal("유효하지 않은 삭제 요청을 수락했다")
 		}
 		if repo.uid != "" {
@@ -178,7 +187,7 @@ func TestAcceptedDeletionSurvivesFeatureDisable(t *testing.T) {
 	repo := &deletionMemory{}
 	svc := deletionService(t, fakeVerifier{}, repo)
 	svc.registry = w.Registry
-	if _, err := svc.RequestAccountDeletion(context.Background(), app.AppID, "uid", strings.Repeat("a", 64)); platformerr.CodeOf(err) != platformerr.CodeAuthForbidden || repo.uid != "" {
+	if _, err := svc.RequestAccountDeletion(context.Background(), app.AppID, "uid", strings.Repeat("a", 64), nil); platformerr.CodeOf(err) != platformerr.CodeAuthForbidden || repo.uid != "" {
 		t.Fatal("disabled feature admitted a new request")
 	}
 }

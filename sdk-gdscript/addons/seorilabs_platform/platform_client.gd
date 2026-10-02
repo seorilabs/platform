@@ -23,7 +23,7 @@ const AtomicJsonStore := preload("core/atomic_json_store.gd")
 const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.8.0"
+const SDK_VERSION := "0.8.1"
 
 ## OpenAPI BoxOpenRequest.requestId 와 같다.
 static var _BOX_REQUEST_ID := RegEx.create_from_string("^[A-Za-z0-9_-]{8,64}$")
@@ -234,16 +234,20 @@ func delete_firebase_account(
 	)
 
 ## 접수증은 호출 전에 앱이 저장한다. 응답 유실 시 같은 값으로 재시도한다.
+## Apple 을 연결한 계정은 서버가 409 account_reauth_required 를 돌려준다. 그때 Sign in with Apple 로 다시 받은
+## authorization code 를 apple_authorization_code 로 넣어 같은 접수증으로 다시 부른다(서버가 승인을 철회한다).
 func request_account_deletion(firebase_id_token: String, receipt_token: String,
-		app_check_token: String, callback: Callable) -> void:
-	if firebase_id_token.is_empty() or not _valid_deletion_receipt(receipt_token):
+		app_check_token: String, callback: Callable, apple_authorization_code: String = "") -> void:
+	if firebase_id_token.is_empty() or not _valid_deletion_receipt(receipt_token) \
+		or apple_authorization_code.length() > 1024:
 		callback.call(_client_error("request_invalid", "삭제 접수 정보를 확인해 주세요"))
 		return
+	var body := {"appId": _app_id, "firebaseIdToken": firebase_id_token, "receiptToken": receipt_token}
+	if not apple_authorization_code.is_empty():
+		body["providerAuthorization"] = {"provider": "apple", "authorizationCode": apple_authorization_code}
 	_transport.request({"method": "POST", "path": "/v1/auth/account-deletions",
 		"base_url": _api_base_url, "no_retry": true,
-		"app_check_token": app_check_token,
-		"body": {"appId": _app_id, "firebaseIdToken": firebase_id_token,
-			"receiptToken": receipt_token}}, callback)
+		"app_check_token": app_check_token, "body": body}, callback)
 
 
 ## Firebase 계정 삭제 이후에도 상태를 읽는다. 접수증을 URL에 넣지 않는다.
