@@ -757,6 +757,7 @@ func (r *StoreRepository) ConnectAccount(
 			if challenge.SubjectHash != subjectHash || challenge.TargetUserID == "" {
 				return platformerr.New(platformerr.CodeAccountLinkConflict, "이미 사용한 로그인 요청이에요")
 			}
+			// 전환한 challenge 재시도도 옛 신원에 뒤늦게 생긴 구매를 버리지 않는다.
 			if appID == "bloomhand" && challenge.TargetUserID != currentPlatformUserID {
 				if err := ledger.CheckGuestAccountSwitch(tx, appID, currentPlatformUserID); err != nil {
 					return err

@@ -2,12 +2,10 @@ package ledger
 
 import (
 	"cloud.google.com/go/firestore"
-	"errors"
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
-	"google.golang.org/api/iterator"
 )
 
 // CheckGuestAccountSwitch는 계정 연결 트랜잭션 안에서 구매 원장 유실을 막는다.
@@ -54,7 +52,7 @@ func CheckGuestAccountSwitch(tx *store.Tx, appID, puid string) error {
 			if err == nil {
 				return guestPurchaseConflict()
 			}
-			if !errors.Is(err, iterator.Done) {
+			if !store.IsDone(err) {
 				return err
 			}
 		}
