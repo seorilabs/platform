@@ -47,6 +47,7 @@ env:
 
 jobs:
   approval-target:
+    if: ${{ inputs.deploy }}
     name: Publish deployment approval target
     runs-on: ubuntu-latest
     timeout-minutes: 5

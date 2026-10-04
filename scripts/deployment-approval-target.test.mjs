@@ -8,11 +8,10 @@ import test from 'node:test';
 for (const [file, environment] of [['deploy.yml', 'production'], ['deploy-staging.yml', 'staging'], ['presence-edge.yml', 'production']]) {
   test(`${file}: 승인 이전 job이 실행과 이미지 대상을 artifact로 고정`, () => {
     const source = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8');
-    const preparation = source.split('  approval-target:\n')[1].split('\n  ')[0];
     // job 전체는 다음 job의 두 칸 들여쓰기까지다.
     const job = source.match(/^  approval-target:\n([\s\S]*?)(?=^  [a-z][\w-]*:)/m)[1];
-    assert.ok(preparation !== undefined);
     assert.match(job, /runs-on: ubuntu-latest/);
+    if (file === "presence-edge.yml") assert.ok(job.includes("if: ${{ inputs.deploy }}"));
     assert.doesNotMatch(job, /^    environment:/m);
     assert.doesNotMatch(job, /secrets\./);
     assert.match(source, /needs: (\[build, approval-target\]|approval-target)/);
