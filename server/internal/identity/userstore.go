@@ -13,6 +13,7 @@ import (
 	"cloud.google.com/go/firestore"
 
 	"github.com/seorilabs/platform/server/internal/fspath"
+	"github.com/seorilabs/platform/server/internal/iap/ledger"
 	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/remoteconfig"
@@ -756,6 +757,11 @@ func (r *StoreRepository) ConnectAccount(
 			if challenge.SubjectHash != subjectHash || challenge.TargetUserID == "" {
 				return platformerr.New(platformerr.CodeAccountLinkConflict, "이미 사용한 로그인 요청이에요")
 			}
+			if appID == "bloomhand" && challenge.TargetUserID != currentPlatformUserID {
+				if err := ledger.CheckGuestAccountSwitch(tx, appID, currentPlatformUserID); err != nil {
+					return err
+				}
+			}
 			targetPath, err := userPath(challenge.TargetUserID)
 			if err != nil {
 				return err
@@ -815,6 +821,12 @@ func (r *StoreRepository) ConnectAccount(
 				if len(current.LinkedProviders) > 0 {
 					return platformerr.New(platformerr.CodeAccountLinkConflict,
 						"서로 다른 연결 계정을 합칠 수 없어요")
+				}
+				// DEC-055: 다른 앱의 연결 정책은 유지하며 Bloomhand 게스트 구매를 보존한다.
+				if appID == "bloomhand" {
+					if err := ledger.CheckGuestAccountSwitch(tx, appID, currentPlatformUserID); err != nil {
+						return err
+					}
 				}
 				targetPath, err := userPath(targetID)
 				if err != nil {
