@@ -1288,6 +1288,64 @@ func _auth_state_changed_error() -> Dictionary:
 	return _client_error("auth_state_changed", "인증 상태가 바뀌었어요")
 
 
+## API 역할의 서버 우편함. 보상과 소유자는 요청 body로 보내지 않는다.
+func list_inbox(cursor: String, callback: Callable) -> void:
+	var path := "/v1/inbox"
+	if not cursor.is_empty():
+		path += "?cursor=" + cursor.uri_encode()
+	_inbox_request({"method": "GET", "path": path}, callback)
+
+
+func read_inbox(id: String, callback: Callable) -> void:
+	_inbox_request({"method": "POST", "path": "/v1/inbox/" + id.uri_encode() + "/read", "body": {}}, callback)
+
+
+func claim_inbox(id: String, callback: Callable) -> void:
+	_inbox_request({"method": "POST", "path": "/v1/inbox/" + id.uri_encode() + "/claim", "body": {}}, callback)
+
+
+func claim_inbox_batch(ids: Array, callback: Callable) -> void:
+	if ids.is_empty() or ids.size() > 50:
+		callback.call(_client_error("request_invalid", "우편은 1~50개씩 수령해 주세요"))
+		return
+	_inbox_request({"method": "POST", "path": "/v1/inbox/claim-batch", "body": {"ids": ids}}, callback)
+
+
+func _inbox_request(request_data: Dictionary, callback: Callable) -> void:
+	var generation := _auth_generation
+	with_token(func(token: String, error: Dictionary) -> void:
+		if token.is_empty():
+			callback.call(_auth_error_response(error))
+			return
+		_send_inbox_request(request_data, token, callback, generation, false)
+	)
+
+
+func _send_inbox_request(request_data: Dictionary, token: String, callback: Callable,
+	generation: int, replayed: bool) -> void:
+	if generation != _auth_generation:
+		callback.call(_auth_state_changed_error())
+		return
+	var request := request_data.duplicate(true)
+	request["base_url"] = _api_base_url
+	request["token"] = token
+	request["no_retry"] = true
+	_transport.request(request, func(response: Dictionary) -> void:
+		if generation != _auth_generation:
+			callback.call(_auth_state_changed_error())
+			return
+		if replayed or not _is_session_expired_response(response):
+			callback.call(response)
+			return
+		_refresh_after_session_expired(token, func(refreshed: String, error: Dictionary) -> void:
+			if refreshed.is_empty():
+				callback.call(_auth_error_response(error))
+				return
+			_send_inbox_request(request_data, refreshed, callback, generation, true)
+		)
+	)
+
+
 ## 서버/전송 계층의 완전한 envelope는 status와 local 판정을 보존한다.
 ## with_token의 간단한 로컬 오류처럼 필드가 부족할 때만 SDK envelope로 감싼다.
 func _auth_error_response(error: Dictionary) -> Dictionary:
