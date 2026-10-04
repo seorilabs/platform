@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// 블룸핸드 친구 상자(ADR 0029)는 연결 계정에서만 사고 열 수 있고(ADR 0030),
+// 블룸핸드 친구 상자(ADR 0033)는 게스트도 사고 열 수 있고,
 // 계정 연결은 App Check 를 요구한다. 상자 카탈로그 상품과 결제 경계가 어긋나면 지급이 막힌다.
-func TestBloomhandIAPRequiresLinkedAccountWithAppCheck(t *testing.T) {
+func TestBloomhandIAPAllowsGuestWithOptionalAppCheckedAccountLink(t *testing.T) {
 	apps, err := NewFSSource(os.DirFS("../../../registry"), "apps").LoadApps(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -18,7 +18,7 @@ func TestBloomhandIAPRequiresLinkedAccountWithAppCheck(t *testing.T) {
 		if app.AppID != "bloomhand" {
 			continue
 		}
-		if !app.FeatureEnabled("iap") || !app.IAP.RequireLinkedAccount || !app.Auth.RequireAccountLinkAppCheck {
+		if !app.FeatureEnabled("iap") || app.IAP.RequireLinkedAccount || !app.Auth.RequireAccountLinkAppCheck {
 			t.Fatalf("블룸핸드 결제·계정 연결 경계가 다르다: %#v %#v", app.IAP, app.Auth)
 		}
 		if got := app.Auth.AccountProviders["apple"].Audience; got != "com.seorilabs.bloomhand" {
