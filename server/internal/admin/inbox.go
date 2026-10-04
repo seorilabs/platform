@@ -2,12 +2,12 @@ package admin
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
-	"net/http"
-	"time"
 )
 
 type InboxIssuer interface {
@@ -46,7 +46,7 @@ func RegisterInbox(mux *http.ServeMux, auth *Authenticator, apps Apps, users Use
 		}
 		actor := actorLogin(Actor{Email: ActorFrom(r.Context()).Email})
 		in := ledger.InboxIssue{RequestID: req.RequestID, PlatformUserID: req.PlatformUserID, Title: req.Title, Body: req.Body, Rewards: req.Rewards, ExpiresAt: req.ExpiresAt, Reason: req.Reason, Actor: actor}
-		if err = in.Validate(time.Now()); err != nil {
+		if err = in.Validate(); err != nil {
 			return err
 		}
 		if req.Confirmation != "ISSUE INBOX "+appID+" "+req.PlatformUserID {

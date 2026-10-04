@@ -2,10 +2,8 @@ package ledger
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"strings"
-	"time"
 	"unicode"
 
 	"cloud.google.com/go/firestore"
@@ -13,7 +11,6 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
-	"google.golang.org/api/iterator"
 )
 
 type InboxReward struct {
@@ -55,7 +52,7 @@ func inboxError(code platformerr.Code, message string) error { return platformer
 func cleanInboxText(s string, max int) bool {
 	return strings.TrimSpace(s) != "" && len([]rune(s)) <= max && !strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' })
 }
-func (in InboxIssue) Validate(now time.Time) error {
+func (in InboxIssue) Validate() error {
 	if !operatorRequestIDPattern.MatchString(in.RequestID) || !operatorPUIDPattern.MatchString(in.PlatformUserID) || !operatorActorPattern.MatchString(in.Actor) || !ValidAdminMutationReason(in.Reason) || !cleanInboxText(in.Title, 120) || !cleanInboxText(in.Body, 4000) || len(in.Rewards) > 10 || in.ExpiresAt < 0 {
 		return inboxError(platformerr.CodeRequestInvalid, "우편 발행 내용이 올바르지 않아요")
 	}
@@ -92,7 +89,7 @@ func (l *Ledger) inboxRecord(collection, puid, id string) (fspath.Path, error) {
 	return l.paths.parse(collection + "/" + economyDigest(l.appID+"\x00"+puid+"\x00"+id))
 }
 func (l *Ledger) IssueInbox(ctx context.Context, in InboxIssue) (InboxMessage, error) {
-	if err := in.Validate(l.now()); err != nil {
+	if err := in.Validate(); err != nil {
 		return InboxMessage{}, err
 	}
 	if in.Rewards == nil {
@@ -159,7 +156,7 @@ func (l *Ledger) ListInbox(ctx context.Context, puid, cursor string) (InboxPage,
 	out := InboxPage{Messages: []InboxMessage{}}
 	for {
 		snap, e := it.Next()
-		if errors.Is(e, iterator.Done) {
+		if store.IsDone(e) {
 			break
 		}
 		if e != nil {
