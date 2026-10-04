@@ -77,6 +77,38 @@ env:
   IAP_ENVIRONMENT: production
 
 jobs:
+  approval-target:
+    name: Publish deployment approval target
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Write public deployment target
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE_SHA: ${{ github.sha }}
+          IMAGE_BASE: ${{ env.REGISTRY }}/${{ env.IMAGE_PATH }}
+          TARGET_ENVIRONMENT: production
+          WORKFLOW_FILE: deploy.yml
+          TARGETS: '["cloud-run:seorilabs-platform:asia-northeast3:platform-api","cloud-run:seorilabs-platform:asia-northeast3:platform-ingest","cloud-run:seorilabs-platform:asia-northeast3:platform-iap","cloud-run:seorilabs-platform:asia-northeast3:platform-admin","cloud-run:seorilabs-platform:asia-northeast3:platform-ads","cloud-run-job:seorilabs-platform:asia-northeast3:platform-worker"]'
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg runId "$GITHUB_RUN_ID" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" --arg sourceSha "$SOURCE_SHA" \
+            --arg imageSha "$IMAGE_SHA" --arg environment "$TARGET_ENVIRONMENT" \
+            --arg workflow "$WORKFLOW_FILE" --arg image "$IMAGE_BASE:$IMAGE_SHA" \
+            --argjson targets "$TARGETS" \
+            '{version:1,repository:$repository,runId:$runId,runAttempt:$runAttempt,sourceSha:$sourceSha,imageSha:$imageSha,environment:$environment,workflow:$workflow,image:$image,targets:$targets}' \
+            > deployment-target.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployment-target-${{ github.run_attempt }}-production
+          path: deployment-target.json
+          if-no-files-found: error
+          retention-days: 3
+
   build:
     name: Build and push image
     # 빌드는 Cloud Build에서 돌므로 러너에는 gcloud만 있으면 된다.
@@ -152,7 +184,7 @@ jobs:
 
   deploy:
     name: Deploy production runtime
-    needs: build
+    needs: [build, approval-target]
     # gcloud만 쓰므로 Docker가 필요 없다.
     runs-on: ubuntu-latest
     timeout-minutes: 30
