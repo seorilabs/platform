@@ -46,6 +46,38 @@ env:
   IMAGE: registry.vzyx.xyz/seorilabs/platform-presence-edge
 
 jobs:
+  approval-target:
+    name: Publish deployment approval target
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Write public deployment target
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE_SHA: ${{ github.sha }}
+          IMAGE_BASE: ${{ env.IMAGE }}
+          TARGET_ENVIRONMENT: production
+          WORKFLOW_FILE: presence-edge.yml
+          TARGETS: '["kubernetes:platform:deployment/platform-presence-edge:edge"]'
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg runId "$GITHUB_RUN_ID" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" --arg sourceSha "$SOURCE_SHA" \
+            --arg imageSha "$IMAGE_SHA" --arg environment "$TARGET_ENVIRONMENT" \
+            --arg workflow "$WORKFLOW_FILE" --arg image "$IMAGE_BASE:$IMAGE_SHA" \
+            --argjson targets "$TARGETS" \
+            '{version:1,repository:$repository,runId:$runId,runAttempt:$runAttempt,sourceSha:$sourceSha,imageSha:$imageSha,environment:$environment,workflow:$workflow,image:$image,targets:$targets}' \
+            > deployment-target.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployment-target-${{ github.run_attempt }}-production
+          path: deployment-target.json
+          if-no-files-found: error
+          retention-days: 3
+
   verify:
     # 순수 Go 검증이라 클러스터 접근이 없다. 아래 두 job과 달리 hosted다.
     name: Verify edge
@@ -92,7 +124,7 @@ jobs:
   deploy:
     name: Deploy to RPI
     if: ${{ inputs.deploy }}
-    needs: build
+    needs: [build, approval-target]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
