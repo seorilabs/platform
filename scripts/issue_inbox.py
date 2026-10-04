@@ -2,7 +2,6 @@
 """Prepare/issue one reviewed mailbox payload. OIDC token is read from a file, never printed."""
 import argparse
 import json
-import os
 import urllib.request
 from pathlib import Path
 
