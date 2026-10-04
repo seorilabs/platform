@@ -44,9 +44,6 @@ for line in out.splitlines():
     path = line.strip('"').split(" ", 1)[1]
     real.add(path[len("/v1"):])
 
-# 주석 속 예시는 라우트가 아니다. httpx/envelope.go가 net/http 패턴
-# 라우팅을 설명하며 이 경로를 인용한다.
-real.discard("/inbox/{id}/claim")
 
 # 앱별 webhook은 registry의 각 appId에 서로 다른 verifier와 원장을 고정해
 # 등록한다. 따라서 ServeMux에는 literal appId가 들어가지만 공개 계약에는

@@ -47,182 +47,182 @@ tags:
     description: 백오피스 전용 운영 조회와 조작
 
 paths:
-/inbox:
-  get:
-    tags:
-    - inbox
-    operationId: listInbox
-    summary: 우편 목록 — 읽음/수령 상태 분리, 삭제 없는 cursor 페이지
-    security:
-    - PlatformToken: []
-    responses:
-      '200':
-        description: 성공
+  /inbox:
+    get:
+      tags:
+      - inbox
+      operationId: listInbox
+      summary: 우편 목록 — 읽음/수령 상태 분리, 삭제 없는 cursor 페이지
+      security:
+      - PlatformToken: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      parameters:
+      - name: cursor
+        in: query
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9._-]{1,128}$
+  /inbox/{id}/read:
+    post:
+      tags:
+      - inbox
+      operationId: readInboxMessage
+      summary: 우편 읽음 처리
+      security:
+      - PlatformToken: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      parameters:
+      - &id001
+        name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9._-]{1,128}$
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf:
-              - $ref: '#/components/schemas/EnvelopeOk'
-              - type: object
-                properties:
-                  result:
-                    $ref: '#/components/schemas/InboxPage'
-      '400':
-        $ref: '#/components/responses/BadRequest'
-      '401':
-        $ref: '#/components/responses/Unauthorized'
-      '403':
-        $ref: '#/components/responses/Forbidden'
-    parameters:
-    - name: cursor
-      in: query
-      schema:
-        type: string
-        pattern: ^[A-Za-z0-9._-]{1,128}$
-/inbox/{id}/read:
-  post:
-    tags:
-    - inbox
-    operationId: readInboxMessage
-    summary: 우편 읽음 처리
-    security:
-    - PlatformToken: []
-    responses:
-      '200':
-        description: 성공
+              $ref: '#/components/schemas/InboxEmptyRequest'
+  /inbox/{id}/claim:
+    post:
+      tags:
+      - inbox
+      operationId: claimInboxMessage
+      summary: 우편 수령 — 영구 지급 원장과 같은 transaction
+      security:
+      - PlatformToken: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      parameters:
+      - *id001
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf:
-              - $ref: '#/components/schemas/EnvelopeOk'
-              - type: object
-                properties:
-                  result:
-                    $ref: '#/components/schemas/InboxMessage'
-      '400':
-        $ref: '#/components/responses/BadRequest'
-      '401':
-        $ref: '#/components/responses/Unauthorized'
-      '403':
-        $ref: '#/components/responses/Forbidden'
-    parameters:
-    - &id001
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: ^[A-Za-z0-9._-]{1,128}$
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InboxEmptyRequest'
-/inbox/{id}/claim:
-  post:
-    tags:
-    - inbox
-    operationId: claimInboxMessage
-    summary: 우편 수령 — 영구 지급 원장과 같은 transaction
-    security:
-    - PlatformToken: []
-    responses:
-      '200':
-        description: 성공
+              $ref: '#/components/schemas/InboxEmptyRequest'
+  /inbox/claim-batch:
+    post:
+      tags:
+      - inbox
+      operationId: claimInboxBatch
+      summary: 최대 50개 항목별 수령 결과 — 실패분만 재시도
+      security:
+      - PlatformToken: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxBatchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf:
-              - $ref: '#/components/schemas/EnvelopeOk'
-              - type: object
-                properties:
-                  result:
-                    $ref: '#/components/schemas/InboxMessage'
-      '400':
-        $ref: '#/components/responses/BadRequest'
-      '401':
-        $ref: '#/components/responses/Unauthorized'
-      '403':
-        $ref: '#/components/responses/Forbidden'
-    parameters:
-    - *id001
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InboxEmptyRequest'
-/inbox/claim-batch:
-  post:
-    tags:
-    - inbox
-    operationId: claimInboxBatch
-    summary: 최대 50개 항목별 수령 결과 — 실패분만 재시도
-    security:
-    - PlatformToken: []
-    responses:
-      '200':
-        description: 성공
+              $ref: '#/components/schemas/InboxBatchRequest'
+  /admin/apps/{appId}/inbox:
+    post:
+      tags:
+      - admin
+      operationId: issueInboxMessage
+      summary: 관리자 우편 발행 — write OIDC, 앱/사용자 확인, exact replay
+      security:
+      - AdminOidc: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf:
-              - $ref: '#/components/schemas/EnvelopeOk'
-              - type: object
-                properties:
-                  result:
-                    $ref: '#/components/schemas/InboxBatchResult'
-      '400':
-        $ref: '#/components/responses/BadRequest'
-      '401':
-        $ref: '#/components/responses/Unauthorized'
-      '403':
-        $ref: '#/components/responses/Forbidden'
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InboxBatchRequest'
-/admin/apps/{appId}/inbox:
-  post:
-    tags:
-    - admin
-    operationId: issueInboxMessage
-    summary: 관리자 우편 발행 — write OIDC, 앱/사용자 확인, exact replay
-    security:
-    - AdminOidc: []
-    responses:
-      '200':
-        description: 성공
-        content:
-          application/json:
-            schema:
-              allOf:
-              - $ref: '#/components/schemas/EnvelopeOk'
-              - type: object
-                properties:
-                  result:
-                    $ref: '#/components/schemas/InboxMessage'
-      '400':
-        $ref: '#/components/responses/BadRequest'
-      '401':
-        $ref: '#/components/responses/Unauthorized'
-      '403':
-        $ref: '#/components/responses/Forbidden'
-    parameters:
-    - name: appId
-      in: path
-      required: true
-      schema:
-        type: string
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InboxIssueRequest'
+              $ref: '#/components/schemas/InboxIssueRequest'
   /auth/session:
     post:
       tags: [auth]
