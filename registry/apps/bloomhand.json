@@ -46,7 +46,7 @@
       "friend_box_1",
       "friend_box_5"
     ],
-    "require_linked_account": true
+    "require_linked_account": false
   },
   "platform_event_allowlist": [
     "seori_sdk_error",
