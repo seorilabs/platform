@@ -23,6 +23,8 @@ servers:
     description: 확정 필요 — P0 배포 후 실제 URL로 교체
 
 tags:
+  - name: inbox
+    description: 앱과 사용자별 우편과 서버 보상 수령
   - name: auth
     description: 세션 교환과 갱신
   - name: config
@@ -45,6 +47,228 @@ tags:
     description: 백오피스 전용 운영 조회와 조작
 
 paths:
+  /inbox:
+    get:
+      tags:
+      - inbox
+      operationId: listInbox
+      summary: 우편 목록 — 읽음/수령 상태 분리, 삭제 없는 cursor 페이지
+      security:
+      - PlatformToken: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - name: cursor
+        in: query
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9._-]{1,128}$
+  /inbox/{id}/read:
+    post:
+      tags:
+      - inbox
+      operationId: readInboxMessage
+      summary: 우편 읽음 처리
+      security:
+      - PlatformToken: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - &id001
+        name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9._-]{1,128}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboxEmptyRequest'
+  /inbox/{id}/claim:
+    post:
+      tags:
+      - inbox
+      operationId: claimInboxMessage
+      summary: 우편 수령 — 영구 지급 원장과 같은 transaction
+      security:
+      - PlatformToken: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboxEmptyRequest'
+  /inbox/claim-batch:
+    post:
+      tags:
+      - inbox
+      operationId: claimInboxBatch
+      summary: 최대 50개 항목별 수령 결과 — 실패분만 재시도
+      security:
+      - PlatformToken: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxBatchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboxBatchRequest'
+  /admin/apps/{appId}/inbox:
+    post:
+      tags:
+      - admin
+      operationId: issueInboxMessage
+      summary: 관리자 우편 발행 — write OIDC, 앱/사용자 확인, exact replay
+      security:
+      - AdminOidc: []
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/EnvelopeOk'
+                - type: object
+                  properties:
+                    result:
+                      $ref: '#/components/schemas/InboxMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboxIssueRequest'
   /auth/session:
     post:
       tags: [auth]
@@ -2586,6 +2810,146 @@ components:
         pattern: '^[A-Za-z0-9-]{1,39}$'
 
   schemas:
+    InboxReward:
+      type: object
+      additionalProperties: false
+      required:
+      - kind
+      - entitlementId
+      - quantity
+      properties:
+        kind:
+          type: string
+          enum:
+          - entitlement
+        entitlementId:
+          type: string
+          pattern: ^[A-Za-z0-9._-]{1,128}$
+        quantity:
+          type: integer
+          enum:
+          - 1
+    InboxMessage:
+      type: object
+      required:
+      - id
+      - title
+      - body
+      - rewards
+      - issuedAt
+      - expiresAt
+      - readAt
+      - claimedAt
+      properties:
+        id:
+          type: string
+        title: &id002
+          type: string
+          maxLength: 120
+        body: &id003
+          type: string
+          maxLength: 4000
+        rewards: &id004
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/InboxReward'
+        issuedAt:
+          type: integer
+          format: int64
+          description: Unix seconds; 0은 없음
+        expiresAt: &id005
+          type: integer
+          format: int64
+          description: Unix seconds; 0은 없음
+        readAt:
+          type: integer
+          format: int64
+          description: Unix seconds; 0은 없음
+        claimedAt:
+          type: integer
+          format: int64
+          description: Unix seconds; 0은 없음
+    InboxEmptyRequest:
+      type: object
+      additionalProperties: false
+    InboxPage:
+      type: object
+      required:
+      - messages
+      - nextCursor
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxMessage'
+        nextCursor:
+          type: string
+    InboxBatchRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - ids
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items: &id001
+            type: string
+            pattern: ^[A-Za-z0-9._-]{1,128}$
+    InboxBatchResult:
+      type: object
+      required:
+      - results
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required:
+            - id
+            - ok
+            properties:
+              id:
+                type: string
+              ok:
+                type: boolean
+              message:
+                $ref: '#/components/schemas/InboxMessage'
+              errorCode:
+                type: string
+    InboxIssueRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - requestId
+      - platformUserId
+      - title
+      - body
+      - rewards
+      - reason
+      - confirmation
+      properties:
+        requestId: *id001
+        platformUserId:
+          type: string
+          pattern: ^pu_[0-7][0-9A-HJKMNP-TV-Z]{25}$
+        title: *id002
+        body: *id003
+        rewards: *id004
+        expiresAt: *id005
+        reason:
+          type: string
+          enum:
+          - customer_support_compensation
+          - incorrect_grant_correction
+          - incident_recovery
+          - internal_validation
+        confirmation:
+          type: string
+          description: ISSUE INBOX <appId> <platformUserId>
     CollectionEconomyTransaction:
       type: object
       additionalProperties: false
