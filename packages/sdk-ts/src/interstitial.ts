@@ -51,7 +51,7 @@ export interface InterstitialOptions {
 }
 export class InterstitialController {
   private state: InterstitialState;
-  private active: { id: string; placement: string; impressed: boolean; started: number; next: () => void; cleanup: () => void } | null = null;
+  private active: { id: string; placement: string; impressed: boolean; started: number; visibleSince: number | null; visibleMs: number; next: () => void; cleanup: () => void } | null = null;
   private foreground = true;
   private healthy = true;
   private readonly now: () => number;
@@ -94,6 +94,10 @@ export class InterstitialController {
     if (this.healthy) this.persist();
   }
   setForeground(value: boolean): void {
+    if (this.active?.started) {
+      if (this.active.visibleSince !== null) this.active.visibleMs += Math.max(0, this.now() - this.active.visibleSince);
+      this.active.visibleSince = value ? this.now() : null;
+    }
     this.foreground = value;
     this.touch();
     this.options.suspended?.(!value || this.active !== null);
@@ -126,7 +130,7 @@ export class InterstitialController {
     if (!this.options.adapter.ready()) { skip('not_ready'); return; }
     this.state.pending = o.id;
     if (!this.persist()) { skip('storage_failed'); return; }
-    const request = { id: o.id, placement: o.placement, impressed: false, started: 0, next: once, cleanup: () => {} };
+    const request = { id: o.id, placement: o.placement, impressed: false, started: 0, visibleSince: null as number | null, visibleMs: 0, next: once, cleanup: () => {} };
     this.active = request;
     this.options.suspended?.(true);
     this.track('ad_requested', '', o.placement);
@@ -141,7 +145,9 @@ export class InterstitialController {
           this.persist();
           this.track('ad_impression', '', o.placement);
         } else if (event === 'show' && !request.started) {
-          request.started = this.now(); this.track('ad_show', '', o.placement);
+          request.started = this.now(); request.visibleSince = this.foreground ? this.now() : null; this.track('ad_show', '', o.placement);
+        } else if (event === 'clicked') {
+          this.track('ad_clicked', '', o.placement);
         } else if (event === 'dismissed' || event === 'failedToShow' || event === 'error') {
           this.finish(event);
         }
@@ -153,6 +159,7 @@ export class InterstitialController {
     const request = this.active;
     if (!request) return;
     this.active = null;
+    if (request.visibleSince !== null) request.visibleMs += Math.max(0, this.now() - request.visibleSince);
     this.state.pending = null;
     if (request.impressed || request.started) this.state.lastClosed = this.now();
     // 광고 클릭으로 장시간 이탈하더라도 광고 종료를 세션 새 시작으로 세지 않는다.
@@ -160,7 +167,7 @@ export class InterstitialController {
     this.persist();
     request.cleanup();
     this.track(event === 'dismissed' ? 'ad_closed' : 'ad_failed', event, request.placement);
-    try { this.options.track?.('ad_duration', { policy_version: this.options.policy.version, placement: request.placement, duration_ms: request.started ? Math.max(0, this.now()-request.started) : 0 }); } catch { /* 계측 실패는 진행을 막지 않는다. */ }
+    try { this.options.track?.('ad_duration', { policy_version: this.options.policy.version, placement: request.placement, duration_ms: request.visibleMs, elapsed_ms: request.started ? Math.max(0, this.now()-request.started) : 0 }); } catch { /* 계측 실패는 진행을 막지 않는다. */ }
     this.options.suspended?.(!this.foreground);
     request.next();
   }

@@ -6,11 +6,12 @@ const policy = { version: 'test', enabled: true, cooldown_s: 90, session_cap: 6,
 function fixture(initial: InterstitialState | null = null) {
  let now = Date.UTC(2026,9,5), state = initial, ready = true, failed = false, shown = 0, next = 0;
  let emit: (e: InterstitialEvent) => void = () => {};
+ const records: {name:string;params:Record<string,string|number>}[] = [];
  const events: string[] = [], suspensions: boolean[] = [];
  const store = { read: () => state, write: (s: InterstitialState) => { if(failed) throw Error('disk'); state = structuredClone(s); } };
- const controller = new InterstitialController({policy,store,now:()=>now,adapter:{ ready:()=>ready,show: e=>{ shown++;emit=e;return ()=>{}; } },track:n=>events.push(n),suspended:v=>suspensions.push(v)});
+ const controller = new InterstitialController({policy,store,now:()=>now,adapter:{ ready:()=>ready,show: e=>{ shown++;emit=e;return ()=>{}; } },track:(n,p)=>{events.push(n);records.push({name:n,params:p})},suspended:v=>suspensions.push(v)});
  let seq = 0;
- return {controller,store,events,suspensions,op:(extra:Partial<CompletionOpportunity>={})=>controller.opportunity({id:String(++seq),placement:'play',saved:true,confirmed:true,tutorialComplete:true,adRemoved:false,...extra},()=>next++),emit:(e:InterstitialEvent)=>emit(e),advance:(ms:number)=>now+=ms,setReady:(v:boolean)=>ready=v,setFailed:()=>failed=true,get callback(){return emit},get state(){return state!},get shown(){return shown},get next(){return next}};
+ return {controller,store,events,records,suspensions,op:(extra:Partial<CompletionOpportunity>={})=>controller.opportunity({id:String(++seq),placement:'play',saved:true,confirmed:true,tutorialComplete:true,adRemoved:false,...extra},()=>next++),emit:(e:InterstitialEvent)=>emit(e),advance:(ms:number)=>now+=ms,setReady:(v:boolean)=>ready=v,setFailed:()=>failed=true,get callback(){return emit},get state(){return state!},get shown(){return shown},get next(){return next}};
 }
 test('tutorial/save/confirmation/removal and not-ready fail open with no replay',()=>{
  const f=fixture();for(const extra of [{tutorialComplete:false},{saved:false},{confirmed:false},{adRemoved:true}])f.op(extra);
@@ -41,3 +42,8 @@ test('persistent write failure skips; failed show does not count; interrupted re
  err.op();const recovery=fixture(err.state);assert.equal(recovery.state.daily,0);assert.equal(recovery.state.reservedDaily,1);recovery.op();assert.equal(recovery.shown,0);
 });
 test('event normalization excludes reward and unknown events',()=>{assert.equal(normalizeInterstitialEvent('impression'),'impression');assert.equal(normalizeInterstitialEvent('userEarnedReward'),null);});
+
+test('actual visible ad duration excludes external background time',()=>{
+ const f=fixture();f.op();f.emit('show');f.advance(1000);f.emit('clicked');f.controller.setForeground(false);f.advance(60000);f.controller.setForeground(true);f.advance(2000);f.emit('dismissed');
+ assert.equal(f.records.find(r=>r.name==='ad_duration')?.params.duration_ms,3000);assert.equal(f.records.find(r=>r.name==='ad_duration')?.params.elapsed_ms,63000);assert.ok(f.events.includes('ad_clicked'));
+});
