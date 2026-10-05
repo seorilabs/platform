@@ -305,3 +305,6 @@ export class Platform {
 export function createPlatform(opts: PlatformOptions): Platform {
   return new Platform(opts);
 }
+
+export { InterstitialController, normalizeInterstitialEvent } from './interstitial.ts';
+export type { InterstitialPolicy, InterstitialStore, InterstitialState, InterstitialAdapter, CompletionOpportunity } from './interstitial.ts';
