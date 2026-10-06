@@ -14,15 +14,15 @@ import (
 	"github.com/seorilabs/platform/server/internal/config"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
-	"github.com/seorilabs/platform/server/internal/iap/providers/apple"
 	"github.com/seorilabs/platform/server/internal/iap/refundreview"
 	"github.com/seorilabs/platform/server/internal/iap/verify"
 	"github.com/seorilabs/platform/server/internal/iap/webhook"
 	"github.com/seorilabs/platform/server/internal/iap/worker"
+	"github.com/seorilabs/platform/server/pkg/appleapi"
 )
 
 func newSandboxAppleWebhook(ic config.IAPConfig, part iapEnvironment, appID string, audit webhook.Auditor) (*webhook.AppleHandler, error) {
-	client, err := apple.NewClient(apple.Config{
+	client, err := appleapi.NewClient(appleapi.Config{
 		KeyContent: ic.Apple.KeyContent, KeyID: ic.Apple.KeyID, Issuer: ic.Apple.Issuer,
 		BundleID: part.app.IAP.AppStoreBundleID, Sandbox: true, RequireOCSP: false,
 	})
@@ -47,7 +47,7 @@ func registerWebhooks(mux *http.ServeMux, cfg config.Config, d *deps) error {
 	if ic.Apple.Enabled() {
 		// 알림 JWS 검증에 쓰는 클라이언트는 검증기와 같은 설정이어야 한다.
 		// 다르면 한쪽은 통과하고 다른 쪽은 막히는 상태가 된다.
-		client, err := apple.NewClient(apple.Config{
+		client, err := appleapi.NewClient(appleapi.Config{
 			KeyContent:  ic.Apple.KeyContent,
 			KeyID:       ic.Apple.KeyID,
 			Issuer:      ic.Apple.Issuer,
@@ -138,7 +138,7 @@ func registerWebhooks(mux *http.ServeMux, cfg config.Config, d *deps) error {
 			continue
 		}
 		if verifier := appVerifiers[domain.PlatformAppStore]; verifier != nil {
-			client, err := apple.NewClient(apple.Config{
+			client, err := appleapi.NewClient(appleapi.Config{
 				KeyContent: ic.Apple.KeyContent, KeyID: ic.Apple.KeyID, Issuer: ic.Apple.Issuer,
 				BundleID:    app.IAP.AppStoreBundleID,
 				Sandbox:     app.IAP.LedgerEnvironment == "sandbox",

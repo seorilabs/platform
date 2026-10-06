@@ -38,6 +38,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/providers/apple"
 	"github.com/seorilabs/platform/server/internal/iap/providers/play"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/pkg/appleapi"
 )
 
 const playScope = "https://www.googleapis.com/auth/androidpublisher"
@@ -74,7 +75,7 @@ func TestAppleRealAPI(t *testing.T) {
 	}
 
 	// 샌드박스로 붙는다. production 원장을 건드리지 않는다.
-	client, err := apple.NewClient(apple.Config{
+	client, err := appleapi.NewClient(appleapi.Config{
 		KeyContent: keyContent,
 		KeyID:      keyID,
 		Issuer:     issuer,

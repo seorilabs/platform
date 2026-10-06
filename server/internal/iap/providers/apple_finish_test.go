@@ -11,6 +11,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/providers/apple"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/pkg/appleapi"
 )
 
 // finishTransaction 호출 경로를 실제 API로 확인한다.
@@ -34,7 +35,7 @@ func TestAppleFinishTransactionPath(t *testing.T) {
 	}
 	bundleID := os.Getenv("APPLE_IAP_BUNDLE_ID")
 
-	client, err := apple.NewClient(apple.Config{
+	client, err := appleapi.NewClient(appleapi.Config{
 		KeyContent:  keyContent,
 		KeyID:       os.Getenv("APPLE_IAP_KEY_ID"),
 		Issuer:      os.Getenv("APPLE_IAP_ISSUER_ID"),

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/seorilabs/platform/server/internal/iap/providers/apple"
+	"github.com/seorilabs/platform/server/pkg/appleapi"
 )
 
 // Apple에 테스트 알림 발송을 요청하고 결과를 조회한다.
@@ -27,7 +27,7 @@ func TestAppleTestNotification(t *testing.T) {
 	}
 	bundleID := os.Getenv("APPLE_IAP_BUNDLE_ID")
 
-	client, err := apple.NewClient(apple.Config{
+	client, err := appleapi.NewClient(appleapi.Config{
 		KeyContent:  keyContent,
 		KeyID:       os.Getenv("APPLE_IAP_KEY_ID"),
 		Issuer:      os.Getenv("APPLE_IAP_ISSUER_ID"),

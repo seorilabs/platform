@@ -27,6 +27,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"github.com/seorilabs/platform/server/internal/store"
+	"github.com/seorilabs/platform/server/pkg/appleapi"
 )
 
 // playScope는 Play Developer API 접근 범위다.
@@ -327,7 +328,7 @@ func newVerifiersForApp(
 		out = append(out, v)
 	}
 	if app.MarketEnabled(string(domain.PlatformAppStore)) && ic.Apple.Enabled() {
-		client, err := apple.NewClient(apple.Config{KeyContent: ic.Apple.KeyContent, KeyID: ic.Apple.KeyID, Issuer: ic.Apple.Issuer, BundleID: app.IAP.AppStoreBundleID, Sandbox: app.IAP.LedgerEnvironment == registry.LedgerSandbox, RequireOCSP: app.IAP.LedgerEnvironment != registry.LedgerSandbox})
+		client, err := appleapi.NewClient(appleapi.Config{KeyContent: ic.Apple.KeyContent, KeyID: ic.Apple.KeyID, Issuer: ic.Apple.Issuer, BundleID: app.IAP.AppStoreBundleID, Sandbox: app.IAP.LedgerEnvironment == registry.LedgerSandbox, RequireOCSP: app.IAP.LedgerEnvironment != registry.LedgerSandbox})
 		if err != nil {
 			return nil, err
 		}
@@ -412,7 +413,7 @@ func newVerifiers(ctx context.Context, ic config.IAPConfig) ([]verify.Verifier, 
 	}
 
 	if ic.Apple.Enabled() {
-		client, err := apple.NewClient(apple.Config{
+		client, err := appleapi.NewClient(appleapi.Config{
 			KeyContent: ic.Apple.KeyContent,
 			KeyID:      ic.Apple.KeyID,
 			Issuer:     ic.Apple.Issuer,

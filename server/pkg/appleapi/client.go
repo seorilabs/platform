@@ -1,4 +1,4 @@
-package apple
+package appleapi
 
 import (
 	"context"
@@ -203,6 +203,11 @@ func (c *Client) ParseNotification(signedPayload string) (*appstore.Notification
 		return nil, platformerr.Wrap(err, platformerr.CodeProviderResponseInvalid,
 			"App Store 알림 서명을 확인하지 못했어요")
 	}
+	if c.revoker != nil {
+		if err := c.revoker.check(context.Background(), signedPayload); err != nil {
+			return nil, err
+		}
+	}
 	return payload, nil
 }
 
@@ -217,6 +222,11 @@ func (c *Client) ParseTransaction(signedTransactionInfo string) (*appstore.JWSTr
 	if err != nil {
 		return nil, platformerr.Wrap(err, platformerr.CodeProviderResponseInvalid,
 			"App Store 거래 서명을 확인하지 못했어요")
+	}
+	if c.revoker != nil {
+		if err := c.revoker.check(context.Background(), signedTransactionInfo); err != nil {
+			return nil, err
+		}
 	}
 	return tx, nil
 }
