@@ -10,6 +10,7 @@ import (
 
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/providers/apple"
+	"github.com/seorilabs/platform/server/pkg/appleapi"
 )
 
 // 실제 샌드박스 구매를 검증한다. shadow 대조다.
@@ -40,7 +41,7 @@ func TestAppleRealSandboxPurchase(t *testing.T) {
 	}
 	bundleID := os.Getenv("APPLE_IAP_BUNDLE_ID")
 
-	client, err := apple.NewClient(apple.Config{
+	client, err := appleapi.NewClient(appleapi.Config{
 		KeyContent:  keyContent,
 		KeyID:       os.Getenv("APPLE_IAP_KEY_ID"),
 		Issuer:      os.Getenv("APPLE_IAP_ISSUER_ID"),

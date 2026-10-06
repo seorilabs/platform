@@ -442,9 +442,6 @@ func TestNewValidation(t *testing.T) {
 	}
 }
 
-// production에서 폐기 확인을 끄면 탈취된 인증서로 만든 위조 JWS를
-// 그대로 신뢰하게 된다. 부팅 시점에 잡는다.
-
 func TestReportedEnvironmentComesFromVerifiedTransaction(t *testing.T) {
 	for _, env := range []appstore.Environment{appstore.Production, appstore.Sandbox, ""} {
 		t.Run(string(env), func(t *testing.T) {

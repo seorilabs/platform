@@ -22,6 +22,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
 	"github.com/seorilabs/platform/server/internal/iap/providers/apple"
 	"github.com/seorilabs/platform/server/internal/store"
+	"github.com/seorilabs/platform/server/pkg/appleapi"
 )
 
 func TestWorkerCompletesAgainstRealMarket(t *testing.T) {
@@ -49,7 +50,7 @@ func TestWorkerCompletesAgainstRealMarket(t *testing.T) {
 	}
 	bundleID := os.Getenv("APPLE_IAP_BUNDLE_ID")
 
-	client, err := apple.NewClient(apple.Config{
+	client, err := appleapi.NewClient(appleapi.Config{
 		KeyContent:  keyContent,
 		KeyID:       os.Getenv("APPLE_IAP_KEY_ID"),
 		Issuer:      os.Getenv("APPLE_IAP_ISSUER_ID"),
