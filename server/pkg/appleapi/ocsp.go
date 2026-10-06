@@ -1,4 +1,4 @@
-package apple
+package appleapi
 
 import (
 	"context"

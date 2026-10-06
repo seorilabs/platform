@@ -1,4 +1,4 @@
-package apple
+package appleapi
 
 import (
 	"context"
@@ -267,3 +267,5 @@ func TestCheckRejectsMalformedJWS(t *testing.T) {
 		t.Error("깨진 JWS를 통과시켰다")
 	}
 }
+
+var appleNow = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
