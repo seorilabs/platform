@@ -41,7 +41,7 @@ var appleRelevantTypes = map[string]bool{
 // AppleParser는 알림 JWS를 검증하고 해석한다.
 //
 // 소비자인 이 패키지가 인터페이스를 정의한다.
-// apple.Client가 감싸는 richzw/appstore가 실제 검증을 한다.
+// appleapi.Client가 감싸는 richzw/appstore가 실제 검증을 한다.
 type AppleParser interface {
 	ParseNotification(signedPayload string) (*appstore.NotificationPayload, error)
 	ParseTransaction(signedTransactionInfo string) (*appstore.JWSTransaction, error)
