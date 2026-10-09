@@ -199,6 +199,11 @@ SDK는 모든 요청에 `X-Seori-Sdk`를 붙이고, `event_context`의 `appVersi
 처음 보는 `(앱, 런타임, 버전)` 조합은 서버가 새 빌드의 실유입 개시로 기록한다.
 32자를 넘거나 `A-Za-z0-9._/+-` 밖 문자가 섞인 값은 잘라 보내지 않고 그 축만 뺀다.
 
+debug export 빌드(`OS.is_debug_build()`)는 `X-Seori-Build: debug`를 스스로 붙인다.
+서버는 요청을 그대로 처리하되 신규 가입·버전 최초 관측·이벤트 수집·presence·광고 보상
+알림 같은 운영 관측에서 뺀다. QA 기기가 운영 서버에 붙어도 운영 지표가 오염되지 않게
+하는 신호라 앱이 따로 켜거나 끄지 않는다. 마켓 배포 빌드는 release export라 붙지 않는다.
+
 `auth_base_url`은 Toss Login mTLS 자격증명이 격리된 `platform-iap`처럼
 세션 발급 role이 기본 API와 다를 때만 지정한다. 생략하면 `base_url`을 쓴다.
 

@@ -33,6 +33,12 @@ var app_id := ""
 var max_retries := 3
 var sdk_version := ""
 var client_context_provider := Callable()
+## 개발용 빌드인지. 기본값은 이 빌드가 debug export인지다.
+##
+## 서버는 이 표시가 붙은 요청을 그대로 처리하되 운영 관측(신규 가입·버전 최초
+## 관측·이벤트 수집·광고 보상 알림)에서 뺀다. QA 기기가 운영 서버에 붙어도 운영
+## 지표가 오염되지 않게 하는 신호다. 마켓 배포 빌드는 release export라 false다.
+var debug_build := OS.is_debug_build()
 
 var _observation_regex: RegEx
 
@@ -190,6 +196,10 @@ func _build_headers(data: Dictionary) -> PackedStringArray:
 	# 어느 SDK 버전의 트래픽인지는 SDK가 스스로 안다. 앱 설정에 의존하지 않는다.
 	if not sdk_version.is_empty():
 		headers.append("X-Seori-Sdk: gd/" + sdk_version)
+
+	# 앱 설정에 맡기지 않는다. QA 빌드마다 앱이 기억해서 켜야 하는 값이면 결국 빠진다.
+	if debug_build:
+		headers.append("X-Seori-Build: debug")
 
 	var context := _client_context()
 	var app_version := _observation_value(context.get("appVersion", ""))
