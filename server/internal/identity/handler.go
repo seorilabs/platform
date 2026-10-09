@@ -35,13 +35,14 @@ var observationValuePattern = regexp.MustCompile(`^[A-Za-z0-9._/+-]{1,32}$`)
 
 // clientInfo는 실행 환경 헤더를 읽는다.
 //
-// 셋 다 선택이고 형식이 어긋나면 그 축만 비운다. 여기서 요청을 거부하면
+// 전부 선택이고 형식이 어긋나면 그 축만 비운다. 여기서 요청을 거부하면
 // 관측 필드 하나가 로그인을 막는다.
 func clientInfo(r *http.Request) ClientInfo {
 	return ClientInfo{
 		AppVersion: boundedHeader(r, appVersionHeader),
 		Runtime:    boundedHeader(r, runtimeHeader),
 		SDK:        boundedHeader(r, sdkHeader),
+		DebugBuild: httpx.IsDebugBuild(r),
 	}
 }
 

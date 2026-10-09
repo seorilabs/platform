@@ -369,7 +369,8 @@ func (r *StoreRepository) AcknowledgeClaim(ctx context.Context, id, appID, puid 
 		if err := tx.Set(p, result); err != nil {
 			return err
 		}
-		if r.operational == nil {
+		// QA 기기의 테스트 광고 보상은 운영 알림과 보고서의 광고 보상으로 세지 않는다.
+		if r.operational == nil || result.DebugBuild {
 			return nil
 		}
 		return r.operational.EnqueueTx(tx, operational.Event{

@@ -112,6 +112,23 @@ func Header(r *http.Request, name string, code platformerr.Code) (string, error)
 	return v, nil
 }
 
+// BuildHeader는 개발용 빌드 표시다. 정의한 값은 `debug` 하나다.
+//
+// SDK가 디버그 빌드에서 스스로 붙인다. 마켓 배포 파이프라인은 전부 release
+// export라 실사용자 요청에는 붙지 않는다.
+const BuildHeader = "X-Seori-Build"
+
+// IsDebugBuild는 요청이 개발용 빌드에서 왔는지다.
+//
+// 권한이 아니라 운영 관측에서 뺄지 고르는 신호다. QA 기기가 운영 서버에
+// 붙어도 계정·저장·보상은 그대로 동작해야 하므로 처리 자체는 바꾸지 않고,
+// 신규 가입·버전 최초 관측·이벤트 수집·presence·광고 보상 알림에만 쓴다.
+// 클라이언트가 고르는 값이라 거짓으로 붙여도 그 클라이언트 자신의 관측이
+// 빠질 뿐이다.
+func IsDebugBuild(r *http.Request) bool {
+	return strings.TrimSpace(r.Header.Get(BuildHeader)) == "debug"
+}
+
 // OptionalEnumHeader는 생략과 빈 값·중복 값을 구분한다. Header.Get만
 // 쓰면 첫 값을 고르게 되어 중복 환경 헤더가 경계를 우회할 수 있다.
 func OptionalEnumHeader(r *http.Request, name string, allowed []string, code platformerr.Code) (string, error) {

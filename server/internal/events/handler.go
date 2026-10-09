@@ -125,9 +125,12 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if !app.FeatureEnabled("events") {
-		// 기능이 꺼진 앱은 조용히 받아들이고 버린다.
-		// 에러를 주면 클라이언트가 재시도해 무의미한 트래픽이 생긴다.
+	// 기능이 꺼진 앱은 조용히 받아들이고 버린다.
+	// 에러를 주면 클라이언트가 재시도해 무의미한 트래픽이 생긴다.
+	//
+	// QA 기기의 디버그 빌드도 같다. 운영 BigQuery·GA4에 섞이면 퍼널과 DAU가
+	// 부풀려지고, 개발 버전이 버전 분포에 끼어든다.
+	if !app.FeatureEnabled("events") || httpx.IsDebugBuild(r) {
 		httpx.WriteOK(w, http.StatusOK, ingestResponse{Accepted: 0, Dropped: len(req.Events)})
 		return nil
 	}

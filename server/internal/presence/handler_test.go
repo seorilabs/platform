@@ -63,3 +63,27 @@ func TestHandlerIssuesEnabledToken(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", body.Result)
 	}
 }
+
+func TestHandlerReturnsDisabledForDebugBuild(t *testing.T) {
+	// QA 기기의 디버그 빌드가 동시 접속 수에 더해지면 실사용자 수를 읽을 수 없다.
+	// 기능이 꺼진 앱과 같은 응답을 주면 SDK는 heartbeat를 보내지 않는다.
+	h := NewHandler(fakeRegistry{app: registry.App{Features: map[string]bool{"presence": true}}}, fakeIssuer{}, "https://edge.vzyx.xyz")
+	req := httptest.NewRequest(http.MethodPost, "/v1/presence/token",
+		strings.NewReader(`{"sessionId":"session_0123456789abcdef","platform":"android","appVersion":"9.9.9"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Seori-App", "lizard-tycoon")
+	req.Header.Set("X-Seori-Build", "debug")
+	rec := httptest.NewRecorder()
+	if err := h.issue(rec, req); err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Result tokenResponse `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Result.Enabled || body.Result.Token != "" {
+		t.Fatalf("디버그 빌드에 presence token을 발급했다: %+v", body.Result)
+	}
+}

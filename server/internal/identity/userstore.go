@@ -69,6 +69,9 @@ type userDoc struct {
 	LastSeenAt      time.Time         `firestore:"lastSeenAt"`
 	SupportCode     string            `firestore:"supportCode"`
 	LinkedProviders map[string]string `firestore:"linkedProviders,omitempty"`
+	// DebugBuild는 QA 기기의 개발용 빌드에서 처음 만들어진 계정이다. 신규 가입
+	// 운영 이벤트를 내지 않았으므로 나중에 계정 수를 셀 때 이 표시로 가른다.
+	DebugBuild bool `firestore:"debugBuild,omitempty"`
 }
 
 // SupportUser는 Admin API에 노출해도 되는 PII 없는 사용자 요약이다.
@@ -277,10 +280,13 @@ func (r *StoreRepository) EnsureUser(
 			CreatedAt:   now,
 			LastSeenAt:  now,
 			SupportCode: NewSupportCode(appID, puid),
+			DebugBuild:  identity.Client.DebugBuild,
 		}); err != nil {
 			return err
 		}
-		if r.operational == nil {
+		// QA 기기는 저장을 지울 때마다 새 익명 계정을 만든다. 그 계정이
+		// 신규 가입 알림과 누적 수로 흘러가지 않게 운영 이벤트만 뺀다.
+		if r.operational == nil || identity.Client.DebugBuild {
 			return nil
 		}
 		return r.operational.EnqueueTx(tx, operational.Event{
@@ -604,9 +610,10 @@ type UserCounts struct {
 	ActiveWeek int64
 }
 
-// CountUsers는 전체·시간·일간·주간 사용자 수를 센다.
+// CountUsers는 전체·시간·일간·주간 사용자 수를 센다. 디버그 빌드 계정은 뺀다.
 //
-// 네 번의 집계 쿼리를 순차로 돌린다. 같은 트랜잭션이 아니므로 값들의
+// 축마다 전체와 디버그 계정을 한 번씩, 여덟 번의 집계 쿼리를 순차로 돌린다.
+// 같은 트랜잭션이 아니므로 값들의
 // 기준 시각이 미세하게 어긋날 수 있지만, 운영 화면의 규모 감각을 주는
 // 값이라 정합성보다 비용이 중요하다. 트랜잭션으로 묶으면 컬렉션 전체를
 // 잠그는 비용이 붙는다.
@@ -617,14 +624,41 @@ func (r *StoreRepository) CountUsers(ctx context.Context, now time.Time) (UserCo
 			"사용자 지표를 집계하지 못했어요")
 	}
 
-	total, err := r.store.Count(ctx, col, nil)
+	// QA 기기의 디버그 빌드가 만든 계정은 실사용자가 아니다. 저장을 지울 때마다
+	// 새 계정이 생겨 그대로 세면 규모와 활성 곡선이 QA 일정에 따라 튄다.
+	//
+	// 전체에서 디버그 계정 수를 뺀다. `debugBuild != true`로 거르면 필드가 없는
+	// 기존 문서까지 빠지므로 쓸 수 없다. 활성 수의 디버그 쪽 집계는 equality와
+	// range가 섞여 복합 인덱스(debugBuild, lastSeenAt)가 필요하다.
+	// → Obsidian 프로젝트/platform/03-architecture/firestore-indexes.md
+	debugOnly := func(q firestore.Query) firestore.Query {
+		return q.Where("debugBuild", "==", true)
+	}
+	countExcludingDebug := func(filter func(firestore.Query) firestore.Query) (int64, error) {
+		all, err := r.store.Count(ctx, col, filter)
+		if err != nil {
+			return 0, err
+		}
+		debug, err := r.store.Count(ctx, col, func(q firestore.Query) firestore.Query {
+			if filter != nil {
+				q = filter(q)
+			}
+			return debugOnly(q)
+		})
+		if err != nil {
+			return 0, err
+		}
+		return all - debug, nil
+	}
+
+	total, err := countExcludingDebug(nil)
 	if err != nil {
 		return UserCounts{}, platformerr.Wrap(err, platformerr.CodeInternal,
 			"사용자 지표를 집계하지 못했어요")
 	}
 
 	activeSince := func(d time.Duration) (int64, error) {
-		return r.store.Count(ctx, col, func(q firestore.Query) firestore.Query {
+		return countExcludingDebug(func(q firestore.Query) firestore.Query {
 			return q.Where("lastSeenAt", ">=", now.Add(-d))
 		})
 	}

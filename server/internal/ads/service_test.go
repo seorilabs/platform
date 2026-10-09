@@ -269,6 +269,24 @@ func TestCreateClaimValidatesProviderPlatformAndSuppression(t *testing.T) {
 	}
 }
 
+func TestCreateClaimRecordsDebugBuild(t *testing.T) {
+	// 정산 완료 시점에는 어느 빌드의 보상인지 다시 묻지 않는다. claim이 만들어질 때
+	// 남긴 표시로 운영 알림을 뺀다.
+	repo := &fakeRepo{}
+	svc := newTestService(t, repo, fakeEntitlements{})
+	claim, err := svc.CreateClaim(context.Background(), CreateClaimInput{
+		RequestID: "req-debug", AppID: "happy-farm", PlatformUserID: "pu_1", SupportCode: "SUPPORT",
+		PlacementID: "harvest_boost", Provider: "admob", ClientPlatform: "android",
+		Reward: Reward{Key: "harvest_boost", Amount: 1}, DebugBuild: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repo.claims[claim.ClaimID].DebugBuild {
+		t.Fatalf("저장할 claim에 디버그 빌드 표시가 없다: %#v", repo.claims[claim.ClaimID])
+	}
+}
+
 func TestClientConfirmationCannotUpgradeAdMob(t *testing.T) {
 	repo := &fakeRepo{claims: map[string]Claim{"cl_1": {ClaimID: "cl_1", AppID: "happy-farm", PlatformUserID: "pu_1", Provider: "admob", State: StateAccepted}}}
 	svc := newTestService(t, repo, fakeEntitlements{})

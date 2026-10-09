@@ -221,6 +221,36 @@ func TestDecodeStrictRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestIsDebugBuild(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []string
+		want   bool
+	}{
+		{"헤더 없음은 운영 빌드", nil, false},
+		{"debug", []string{"debug"}, true},
+		{"앞뒤 공백은 허용", []string{" debug "}, true},
+		// 정의한 값은 debug 하나다. 철자가 다른 값까지 받으면 오타 하나로
+		// 운영 빌드의 관측이 사라진다.
+		{"대문자는 정의되지 않은 값", []string{"DEBUG"}, false},
+		{"release", []string{"release"}, false},
+		{"빈 값", []string{""}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/v1/x", nil)
+			for _, v := range tt.values {
+				r.Header.Add(BuildHeader, v)
+			}
+
+			if got := IsDebugBuild(r); got != tt.want {
+				t.Errorf("IsDebugBuild = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBearerToken(t *testing.T) {
 	tests := []struct {
 		name     string

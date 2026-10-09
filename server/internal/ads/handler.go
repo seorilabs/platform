@@ -79,7 +79,7 @@ func (h *Handler) createClaim(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.DecodeStrict(w, r, &req); err != nil {
 		return err
 	}
-	claim, err := h.service.CreateClaim(r.Context(), CreateClaimInput{RequestID: req.RequestID, AppID: sess.AppID, PlatformUserID: sess.PlatformUserID, SupportCode: identity.NewSupportCode(sess.AppID, sess.PlatformUserID), PlacementID: req.Placement, Provider: req.Provider, ClientPlatform: req.ClientPlatform, Reward: req.Reward})
+	claim, err := h.service.CreateClaim(r.Context(), CreateClaimInput{RequestID: req.RequestID, AppID: sess.AppID, PlatformUserID: sess.PlatformUserID, SupportCode: identity.NewSupportCode(sess.AppID, sess.PlatformUserID), PlacementID: req.Placement, Provider: req.Provider, ClientPlatform: req.ClientPlatform, Reward: req.Reward, DebugBuild: httpx.IsDebugBuild(r)})
 	if err != nil {
 		return err
 	}

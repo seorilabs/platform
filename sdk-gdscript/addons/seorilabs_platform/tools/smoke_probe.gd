@@ -1324,6 +1324,26 @@ func _check_observation_headers() -> void:
 		if header.begins_with("X-Seori-AppVer") or header.begins_with("X-Seori-Runtime"):
 			_fail("설정 없이 관측 헤더가 붙었다: %s" % header)
 
+	# 디버그 빌드는 서버가 운영 관측에서 빼도록 스스로 표시한다. 마켓 배포 빌드는
+	# release export라 표시가 없어야 실사용자가 걸러지지 않는다.
+	transport.debug_build = true
+	if not Array(transport._build_headers({})).has("X-Seori-Build: debug"):
+		_fail("디버그 빌드 표시가 빠졌다")
+	transport.debug_build = false
+	for header: String in Array(transport._build_headers({})):
+		if header.begins_with("X-Seori-Build"):
+			_fail("release 빌드에 디버그 표시가 붙었다: %s" % header)
+
+	var presence := PresenceClient.new()
+	presence.debug_build = true
+	if not Array(presence._token_headers()).has("X-Seori-Build: debug"):
+		_fail("presence token 요청에 디버그 빌드 표시가 빠졌다")
+	presence.debug_build = false
+	for header: String in Array(presence._token_headers()):
+		if header.begins_with("X-Seori-Build"):
+			_fail("release 빌드 presence 요청에 디버그 표시가 붙었다: %s" % header)
+	presence.free()
+
 	transport.queue_free()
 	bare.queue_free()
 

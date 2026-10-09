@@ -33,6 +33,9 @@ var _active_context: Dictionary = {}
 var _http: HTTPRequest
 var _timer: Timer
 var _rng := RandomNumberGenerator.new()
+## 개발용 빌드인지. http_transport.gd의 같은 이름과 같은 뜻이다. 서버는 이
+## 표시가 붙은 token 요청에 enabled=false를 돌려 동시 접속 수에서 뺀다.
+var debug_build := OS.is_debug_build()
 
 
 func _ready() -> void:
@@ -109,18 +112,24 @@ func _request_token(context: Dictionary) -> void:
 	}
 	if context.has("appVersion"):
 		body["appVersion"] = context["appVersion"]
-	var headers := PackedStringArray([
-		"Content-Type: application/json",
-		"X-Seori-App: " + _app_id,
-	])
 	var error := _http.request(
 		_token_base_url + "/v1/presence/token",
-		headers,
+		_token_headers(),
 		HTTPClient.METHOD_POST,
 		JSON.stringify(body),
 	)
 	if error != OK:
 		_fail_and_schedule()
+
+
+func _token_headers() -> PackedStringArray:
+	var headers := PackedStringArray([
+		"Content-Type: application/json",
+		"X-Seori-App: " + _app_id,
+	])
+	if debug_build:
+		headers.append("X-Seori-Build: debug")
+	return headers
 
 
 func _request_heartbeat(context: Dictionary) -> void:

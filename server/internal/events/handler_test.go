@@ -193,3 +193,45 @@ func TestDeletionAppNeverDowngradesRejectedIdentityToAnonymous(t *testing.T) {
 		})
 	}
 }
+
+type unexpectedGA4 struct{ t *testing.T }
+
+func (u unexpectedGA4) Send(context.Context, registry.App, []*Row, ga4RelayContext) error {
+	u.t.Fatal("디버그 빌드 이벤트가 GA4로 중계됐다")
+	return nil
+}
+
+func TestDebugBuildEventsAreAcceptedAndDropped(t *testing.T) {
+	// QA 기기의 디버그 빌드 이벤트가 운영 BigQuery·GA4에 섞이면 퍼널과 DAU가
+	// 부풀려진다. 오류를 주면 SDK가 재전송만 늘리므로 기능이 꺼진 앱과 같이
+	// 받아들이고 버린다. collector가 nil이라 적재를 시도하면 테스트가 실패한다.
+	raw, err := os.ReadFile("../../../registry/apps/lizard-tycoon.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var app registry.App
+	if err = json.Unmarshal(raw, &app); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(nil, registry.New(deletionAppSource{app}), nil).WithGA4(unexpectedGA4{t})
+	req := httptest.NewRequest(http.MethodPost, "/v1/events", strings.NewReader(
+		`{"events":[{"eventId":"e1","name":"turn_end","sessionId":"s"},{"eventId":"e2","name":"turn_end","sessionId":"s"}],"context":{"appVersion":"9.9.9"}}`,
+	))
+	req.Header.Set(identity.AppHeader, app.AppID)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Seori-Build", "debug")
+	w := httptest.NewRecorder()
+
+	if err := h.ingest(w, req); err != nil {
+		t.Fatalf("디버그 빌드 배치를 거부했다: %v", err)
+	}
+	var body struct {
+		Result ingestResponse `json:"result"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Result.Accepted != 0 || body.Result.Dropped != 2 {
+		t.Fatalf("응답 = %+v, want accepted 0 dropped 2", body.Result)
+	}
+}

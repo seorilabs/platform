@@ -161,7 +161,7 @@ func TestCORSAllowsObservationHeaders(t *testing.T) {
 	r.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	r.Header.Set(
 		"Access-Control-Request-Headers",
-		"content-type, x-seori-app, x-seori-appver, x-seori-runtime, x-seori-sdk",
+		"content-type, x-seori-app, x-seori-appver, x-seori-build, x-seori-runtime, x-seori-sdk",
 	)
 	w := httptest.NewRecorder()
 

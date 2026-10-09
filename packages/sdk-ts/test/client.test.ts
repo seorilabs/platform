@@ -120,6 +120,47 @@ describe("Transport", () => {
     });
   }
 
+  it("개발용 빌드는 운영 관측에서 빠지도록 스스로 표시한다", async () => {
+    // QA 기기가 운영 서버에 붙어도 신규 가입·이벤트·presence가 운영 지표에
+    // 섞이지 않게 서버가 가르는 신호다.
+    const f = fakeFetch([ok({}), ok({})]);
+    const debug = new Transport({
+      baseUrl: "https://platform.test",
+      appId: "lizard-tycoon",
+      fetchImpl: f.impl,
+      debugBuild: true,
+    });
+    await debug.request({ method: "GET", path: "/v1/test" });
+    const release = new Transport({
+      baseUrl: "https://platform.test",
+      appId: "lizard-tycoon",
+      fetchImpl: f.impl,
+      debugBuild: false,
+    });
+    await release.request({ method: "GET", path: "/v1/test" });
+
+    assert.equal(f.calls[0]!.headers["X-Seori-Build"], "debug");
+    assert.equal(f.calls[1]!.headers["X-Seori-Build"], undefined);
+  });
+
+  it("생략하면 React Native의 __DEV__를 따른다", async () => {
+    // 앱이 QA 빌드마다 기억해서 켜야 하는 값이면 결국 빠진다. RN 번들러가
+    // 정의하는 전역을 기본값으로 쓴다.
+    const global = globalThis as { __DEV__?: boolean };
+    const f = fakeFetch([ok({}), ok({})]);
+    try {
+      global.__DEV__ = true;
+      await newTransport(f.impl).request({ method: "GET", path: "/v1/test" });
+      global.__DEV__ = false;
+      await newTransport(f.impl).request({ method: "GET", path: "/v1/test" });
+    } finally {
+      delete global.__DEV__;
+    }
+
+    assert.equal(f.calls[0]!.headers["X-Seori-Build"], "debug");
+    assert.equal(f.calls[1]!.headers["X-Seori-Build"], undefined);
+  });
+
   it("실행 환경을 모르면 관측 헤더를 지어내지 않는다", async () => {
     const f = fakeFetch([ok({})]);
     await newTransport(f.impl).request({ method: "GET", path: "/v1/test" });
