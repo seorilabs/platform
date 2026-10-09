@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/seorilabs/platform/server/internal/fspath"
@@ -84,5 +85,44 @@ func TestDebugBuildAccountSkipsIdentityCreatedEvent(t *testing.T) {
 				t.Fatalf("계정의 디버그 빌드 표시 = %v, want %v", user.DebugBuild, tt.debug)
 			}
 		})
+	}
+}
+
+func TestDebugBuildAccountIsNotCountedAsUser(t *testing.T) {
+	// Backoffice 플랫폼 개요의 전체·활성 사용자 수가 이 집계다. QA 기기가
+	// 저장을 지울 때마다 만든 계정이 여기 쌓이면 실사용자 규모를 읽을 수 없다.
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
+		t.Skip("local Firestore emulator required")
+	}
+	ctx := context.Background()
+	st, err := store.New(ctx, "platform-debug-build-test", "t"+strings.ReplaceAll(uuid.NewString(), "-", "")+"_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	repo := NewStoreRepository(st)
+	for _, tt := range []struct {
+		uid   string
+		debug bool
+	}{
+		{"release-user", false},
+		{"debug-user-1", true},
+		{"debug-user-2", true},
+	} {
+		if _, err := repo.EnsureUser(ctx, "lizard-tycoon", NewIdentity{
+			UID: tt.uid, Anonymous: true, AuthType: "firebase",
+			Client: ClientInfo{DebugBuild: tt.debug},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	counts, err := repo.CountUsers(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := UserCounts{Total: 1, ActiveHour: 1, ActiveDay: 1, ActiveWeek: 1}
+	if counts != want {
+		t.Fatalf("사용자 수 = %+v, want %+v", counts, want)
 	}
 }
