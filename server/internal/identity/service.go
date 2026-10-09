@@ -75,6 +75,9 @@ type ClientInfo struct {
 	Runtime string
 	// SDK는 X-Seori-Sdk다. 예 `gd/0.6.8`, `ts/0.4.0`.
 	SDK string
+	// DebugBuild는 X-Seori-Build: debug다. QA 기기의 개발용 빌드라는 뜻이고,
+	// 계정·세션은 그대로 만들되 운영 관측(버전 최초 관측·신규 가입 이벤트)에서 뺀다.
+	DebugBuild bool
 }
 
 // AppVersionObserver는 (앱, 런타임, 버전) 조합을 처음 본 순간을 한 번만 기록한다.
@@ -265,8 +268,11 @@ func (s *Service) WithAppVersionObserver(observer AppVersionObserver) *Service {
 //
 // 이건 관측이지 인증이 아니다. Firestore 한 번 흔들렸다고 로그인이 막히면
 // 얻는 것보다 잃는 게 크다. 대신 조용히 넘기지 않고 로그를 남긴다.
+//
+// 디버그 빌드는 관측하지 않는다. 9.9.9 같은 개발 버전이 관측 버전 목록과
+// 새 버전 유입 알림에 섞이면 운영자가 실제 출시 빌드를 가려낼 수 없다.
 func (s *Service) observeAppVersion(ctx context.Context, appID string, client ClientInfo) {
-	if s.appVersions == nil || client.AppVersion == "" {
+	if s.appVersions == nil || client.AppVersion == "" || client.DebugBuild {
 		return
 	}
 	if err := s.appVersions.ObserveAppVersion(ctx, appID, client); err != nil {

@@ -37,6 +37,44 @@ func TestClientInfoReadsObservationHeaders(t *testing.T) {
 	}
 }
 
+func TestClientInfoReadsDebugBuild(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/v1/auth/session", nil)
+	if clientInfo(r).DebugBuild {
+		t.Fatal("헤더가 없는 요청을 디버그 빌드로 읽었다")
+	}
+	r.Header.Set("X-Seori-Build", "debug")
+	if !clientInfo(r).DebugBuild {
+		t.Fatal("디버그 빌드 표시를 읽지 못했다")
+	}
+}
+
+func TestDebugBuildSessionIsNotObserved(t *testing.T) {
+	// QA 기기의 디버그 빌드가 운영 서버에 붙어도 9.9.9 같은 개발 버전이
+	// 관측 버전 목록과 app.version.first_seen 알림에 섞이면 안 된다.
+	// 계정과 세션은 그대로 만들어야 실기기 QA가 막히지 않는다.
+	repo := newMemRepo()
+	observer := &fakeAppVersionObserver{}
+	svc := newTestService(t, fakeVerifier{}, repo).WithAppVersionObserver(observer)
+
+	client := ClientInfo{AppVersion: "9.9.9", Runtime: "godot-native-android", DebugBuild: true}
+	res, err := svc.CreateSession(context.Background(), testApp().AppID, Credential{
+		Kind: KindFirebaseIDToken, Value: "id-token",
+	}, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PlatformToken == "" {
+		t.Fatal("디버그 빌드의 세션이 발급되지 않았다")
+	}
+	if len(observer.calls) != 0 {
+		t.Fatalf("디버그 빌드 버전을 관측했다: %+v", observer.calls)
+	}
+	// 계정 저장소가 신규 가입 이벤트를 뺄 수 있게 표시가 넘어가야 한다.
+	if !repo.lastIdentity.Client.DebugBuild {
+		t.Fatalf("계정에 디버그 빌드 표시가 넘어가지 않았다: %+v", repo.lastIdentity.Client)
+	}
+}
+
 func TestClientInfoDropsMalformedHeaderWithoutFailing(t *testing.T) {
 	// 관측 축 하나가 형식을 어겼다고 로그인이 막히면 안 된다.
 	for name, value := range map[string]string{

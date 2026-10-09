@@ -69,6 +69,9 @@ type userDoc struct {
 	LastSeenAt      time.Time         `firestore:"lastSeenAt"`
 	SupportCode     string            `firestore:"supportCode"`
 	LinkedProviders map[string]string `firestore:"linkedProviders,omitempty"`
+	// DebugBuild는 QA 기기의 개발용 빌드에서 처음 만들어진 계정이다. 신규 가입
+	// 운영 이벤트를 내지 않았으므로 나중에 계정 수를 셀 때 이 표시로 가른다.
+	DebugBuild bool `firestore:"debugBuild,omitempty"`
 }
 
 // SupportUser는 Admin API에 노출해도 되는 PII 없는 사용자 요약이다.
@@ -277,10 +280,13 @@ func (r *StoreRepository) EnsureUser(
 			CreatedAt:   now,
 			LastSeenAt:  now,
 			SupportCode: NewSupportCode(appID, puid),
+			DebugBuild:  identity.Client.DebugBuild,
 		}); err != nil {
 			return err
 		}
-		if r.operational == nil {
+		// QA 기기는 저장을 지울 때마다 새 익명 계정을 만든다. 그 계정이
+		// 신규 가입 알림과 누적 수로 흘러가지 않게 운영 이벤트만 뺀다.
+		if r.operational == nil || identity.Client.DebugBuild {
 			return nil
 		}
 		return r.operational.EnqueueTx(tx, operational.Event{
