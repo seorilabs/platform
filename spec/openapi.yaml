@@ -286,6 +286,7 @@ paths:
         - $ref: '#/components/parameters/SeoriSdk'
         - $ref: '#/components/parameters/SeoriRuntime'
         - $ref: '#/components/parameters/SeoriAppVer'
+        - $ref: '#/components/parameters/SeoriBuild'
       requestBody:
         required: true
         content:
@@ -317,6 +318,7 @@ paths:
       security: []
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/SeoriBuild'
       requestBody:
         required: true
         content:
@@ -360,6 +362,7 @@ paths:
         - $ref: '#/components/parameters/SeoriSdk'
         - $ref: '#/components/parameters/SeoriRuntime'
         - $ref: '#/components/parameters/SeoriAppVer'
+        - $ref: '#/components/parameters/SeoriBuild'
       requestBody:
         required: true
         content:
@@ -965,6 +968,7 @@ paths:
       security: []
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/SeoriBuild'
       requestBody:
         required: true
         content:
@@ -1048,6 +1052,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
         - $ref: '#/components/parameters/SeoriSdk'
+        - $ref: '#/components/parameters/SeoriBuild'
       requestBody:
         required: true
         content:
@@ -2423,7 +2428,7 @@ paths:
         간격을 서버 시각으로 제한한다. UTC 날짜 변경에도 간격을 유지한다. 동일 requestId의
         재조회는 기존 claim을 반환하며 간격과 일일 지급 횟수를 추가로 소비하지 않는다.
         미시청·취소 요청 생성은 일일 지급 횟수를 차감하지 않는다.
-      parameters: [{ $ref: '#/components/parameters/SeoriApp' }]
+      parameters: [{ $ref: '#/components/parameters/SeoriApp' }, { $ref: '#/components/parameters/SeoriBuild' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateAdRewardClaimRequest' } } } }
       responses:
         '201': { description: 생성 또는 동일 requestId 결과, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/EnvelopeOk' }, { type: object, properties: { result: { $ref: '#/components/schemas/AdRewardClaim' } } }] } } } }
@@ -2766,6 +2771,20 @@ components:
       in: header
       description: '`godot-native-android`, `godot-web-ait`, `rn-ios`, `ait-rn`, `web`'
       schema: { type: string, maxLength: 32 }
+    SeoriBuild:
+      name: X-Seori-Build
+      in: header
+      description: |
+        개발용 빌드 표시. 정의한 값은 `debug` 하나이고 다른 값은 무시한다.
+
+        SDK가 디버그 빌드에서 스스로 붙인다(Godot `OS.is_debug_build()`,
+        React Native `__DEV__`). 마켓 배포 빌드는 release export라 보내지 않는다.
+
+        요청 처리는 바꾸지 않는다. 계정·세션·보상은 그대로 만들어 실기기 QA를
+        막지 않고, 운영 관측만 남기지 않는다. 신규 계정 `identity.created`와
+        `app.version.first_seen` 운영 이벤트, 관측 버전 기록, 이벤트 수집(BigQuery·GA4),
+        presence token, 광고 보상 정산의 `ad.reward.delivered`가 빠진다.
+      schema: { type: string, enum: [debug] }
     SeoriAppVer:
       name: X-Seori-AppVer
       in: header
