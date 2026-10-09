@@ -45,6 +45,22 @@ export interface TransportOptions {
    * (앱, 런타임, 버전) 조합을 새 빌드의 실유입 개시로 기록한다.
    */
   clientContext?: () => ClientContext;
+  /**
+   * 개발용 빌드인지. true면 `X-Seori-Build: debug`가 붙는다. 서버는 요청을 그대로
+   * 처리하되 운영 관측(신규 가입·버전 최초 관측·이벤트 수집·presence·광고 보상
+   * 알림)에서 뺀다. QA 기기가 운영 서버에 붙어도 운영 지표가 오염되지 않게 한다.
+   *
+   * 생략하면 React Native의 `__DEV__`를 따른다. 웹 번들에는 이 전역이 없으므로
+   * 번들러의 개발 표시를 넘긴다. 예 Vite `import.meta.env.DEV`.
+   */
+  debugBuild?: boolean;
+}
+
+// React Native 번들러가 정의하는 전역이다. 웹 번들에는 없다.
+declare const __DEV__: boolean | undefined;
+
+function defaultDebugBuild(): boolean {
+  return typeof __DEV__ !== "undefined" && __DEV__ === true;
 }
 
 export interface ClientContext {
@@ -87,6 +103,7 @@ export class Transport {
   private readonly timeoutMs: number;
   private readonly appCheckToken: (() => Promise<string>) | undefined;
   private readonly clientContext: (() => ClientContext) | undefined;
+  private readonly debugBuild: boolean;
 
   constructor(opts: TransportOptions) {
     if (!opts.baseUrl) {
@@ -106,6 +123,7 @@ export class Transport {
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.appCheckToken = opts.appCheckToken;
     this.clientContext = opts.clientContext;
+    this.debugBuild = opts.debugBuild ?? defaultDebugBuild();
   }
 
   /**
@@ -231,6 +249,10 @@ export class Transport {
       // 어느 SDK 버전의 트래픽인지는 SDK가 스스로 안다. 앱 설정에 의존하지 않는다.
       "X-Seori-Sdk": `ts/${SDK_VERSION}`,
     };
+    // 앱 설정에 맡기지 않는다. QA 빌드마다 앱이 기억해서 켜야 하는 값이면 결국 빠진다.
+    if (this.debugBuild) {
+      headers["X-Seori-Build"] = "debug";
+    }
     const context = this.clientContext?.();
     const appVersion = boundedHeaderValue(context?.appVersion);
     if (appVersion) {
