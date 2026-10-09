@@ -75,6 +75,9 @@ type Claim struct {
 	AcknowledgedAt  *time.Time `json:"acknowledgedAt,omitempty" firestore:"acknowledgedAt,omitempty"`
 	ExpiresAt       time.Time  `json:"expiresAt" firestore:"expiresAt"`
 	TTLAt           time.Time  `json:"-" firestore:"ttlAt"`
+	// DebugBuild는 QA 기기의 개발용 빌드가 만든 claim이다. 보상은 그대로 정산하고
+	// 정산 완료 운영 이벤트만 내지 않는다. 응답 계약에는 싣지 않는다.
+	DebugBuild bool `json:"-" firestore:"debugBuild,omitempty"`
 }
 
 type Policy struct {

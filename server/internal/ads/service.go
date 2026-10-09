@@ -68,6 +68,8 @@ func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return
 type CreateClaimInput struct {
 	RequestID, AppID, PlatformUserID, SupportCode, PlacementID, Provider, ClientPlatform string
 	Reward                                                                               Reward
+	// DebugBuild는 X-Seori-Build: debug 요청이다.
+	DebugBuild bool
 }
 
 func (s *Service) Policy(ctx context.Context, appID, puid string) (Policy, error) {
@@ -124,6 +126,7 @@ func (s *Service) CreateClaim(ctx context.Context, in CreateClaimInput) (Claim, 
 		PlacementID: placement.ID, Provider: in.Provider, ClientPlatform: in.ClientPlatform,
 		Reward: in.Reward, State: StateAccepted, Assurance: AssurancePending,
 		CreatedAt: now, ExpiresAt: now.Add(24 * time.Hour), TTLAt: now.Add(90 * 24 * time.Hour),
+		DebugBuild: in.DebugBuild,
 	}
 	// 보상을 받은 뒤 한도 초과로 거부되는 일을 줄이기 위해 claim 생성 시에도
 	// 현재 사용량을 확인한다. 최종 원자적 한도 판정은 confirm에서 다시 한다.

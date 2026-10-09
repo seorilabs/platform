@@ -74,7 +74,9 @@ func (h *Handler) issue(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	base := tokenResponse{HeartbeatIntervalSeconds: int(HeartbeatInterval / time.Second)}
-	if !app.FeatureEnabled("presence") || h.issuer == nil || h.edgeURL == "" {
+	// QA 기기의 디버그 빌드는 동시 접속 수에 넣지 않는다. 기능이 꺼진 앱과 같은
+	// 응답이라 SDK는 heartbeat를 보내지 않고 앱 동작도 그대로다.
+	if !app.FeatureEnabled("presence") || h.issuer == nil || h.edgeURL == "" || httpx.IsDebugBuild(r) {
 		httpx.WriteOK(w, http.StatusOK, base)
 		return nil
 	}
