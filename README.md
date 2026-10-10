@@ -89,7 +89,6 @@ examples/       레퍼런스 배선 — React Native, Godot
 registry/apps/  앱 레지스트리. git이 SoT이고 regsync가 Firestore로 올린다
 scripts/        릴리스·검증 스크립트
 deploy/         RPI edge 배포 매니페스트
-docs/           자동화가 직접 검사하는 실행 계약만 둔다
 ```
 
 ## 문서
@@ -102,7 +101,6 @@ docs/           자동화가 직접 검사하는 실행 계약만 둔다
 | 두 SDK가 같이 통과해야 하는 행동 벡터 | [`spec/conformance/`](spec/conformance/README.md) |
 | 앱 레지스트리 형식과 규칙 | [`registry/apps/README.md`](registry/apps/README.md) |
 | GDScript SDK 상세 | [`sdk-gdscript/README.md`](sdk-gdscript/README.md) |
-| Fleet 승인 게시 계약 | [`docs/platform-fleet-approval-publisher.md`](docs/platform-fleet-approval-publisher.md) |
 
 설계 결정 기록(ADR), 운영 런북, 작업 로그는 비공개 원장에 있다. 이 저장소에는
 코드와 자동화가 검사하는 계약만 남긴다.

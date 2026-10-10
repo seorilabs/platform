@@ -14,7 +14,6 @@ on:
       - ".github/workflows/checks-platform-release.yml"
       - ".github/workflows/publish-sdk-gdscript.yml"
       - ".github/workflows/publish-sdk-ts.yml"
-      - ".github/platform-fleet-trusted-release-keys.json"
   push:
     branches: [main]
     paths:
@@ -29,7 +28,6 @@ on:
       - ".github/workflows/checks-platform-release.yml"
       - ".github/workflows/publish-sdk-gdscript.yml"
       - ".github/workflows/publish-sdk-ts.yml"
-      - ".github/platform-fleet-trusted-release-keys.json"
 
 permissions:
   contents: read
