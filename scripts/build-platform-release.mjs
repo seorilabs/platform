@@ -68,7 +68,7 @@ function resolveRevision(revision) {
 
 function resolveBaseRevision(sourceSha, requestedBase) {
   if (!requestedBase) {
-    throw new Error('검증된 Fleet 승인 또는 bootstrap base revision이 필요합니다.');
+    throw new Error('직전 공개 release의 base revision이 필요합니다.');
   }
   const baseSha = resolveRevision(requestedBase);
   run('git', ['merge-base', '--is-ancestor', baseSha, sourceSha], {

@@ -66,12 +66,12 @@ jobs:
       - name: Verify GDScript SDK
         run: bash scripts/sdk_gdscript_checksum.sh --check
 
-      - name: Resolve approved release base
+      - name: Resolve previous release base
         id: release-base
         shell: bash
         run: |
           set -euo pipefail
-          base_sha="$(node scripts/resolve-platform-release-base.mjs)"
+          base_sha="$(node scripts/resolve-platform-release-base.mjs "$GITHUB_REF_NAME")"
           echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
         env:
           GITHUB_TOKEN: ${{ github.token }}

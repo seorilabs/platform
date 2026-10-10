@@ -98,21 +98,16 @@ describe('Platform release workflow 계약', () => {
     assert.match(source, /npm publish "\$\{\{ steps\.pack\.outputs\.tarball \}\}"/u);
   });
 
-  it('release builder는 mutable tag 추론 없이 승인 또는 bootstrap exact base만 요구한다', async () => {
-    const [builderSource, bootstrapSource] = await Promise.all([
-      readFile(resolve(root, 'scripts/build-platform-release.mjs'), 'utf8'),
-      readFile(resolve(root, '.github/platform-release-bootstrap-base.json'), 'utf8'),
-    ]);
-    const bootstrap = JSON.parse(bootstrapSource);
+  it('release builder는 tag 추론 없이 resolver가 고른 직전 공개 release만 base로 받는다', async () => {
+    const builderSource = await readFile(resolve(root, 'scripts/build-platform-release.mjs'), 'utf8');
     assert.doesNotMatch(builderSource, /git['"], \['describe'/u);
     assert.match(builderSource, /'--base-ref'/u);
-    assert.match(builderSource, /검증된 Fleet 승인 또는 bootstrap base revision/u);
-    assert.deepEqual(bootstrap, {
-      schemaVersion: 1,
-      purpose: 'seorilabs-platform-release-bootstrap-base-v1',
-      releaseTag: 'v0.6.6',
-      sourceSha: '97f046ce2d9df5d72bc7a49fc81bb7c366ebaa17',
-    });
+    assert.match(builderSource, /직전 공개 release의 base revision/u);
+    // 지금 만드는 tag를 resolver에 넘겨야 같은 tag의 재실행이 자기 release를 base로 삼지 않는다.
+    for (const name of ['checks-platform-release.yml', 'publish-sdk-gdscript.yml', 'publish-sdk-ts.yml']) {
+      const source = await workflow(name);
+      assert.match(source, /resolve-platform-release-base\.mjs "\$(?:release_tag|GITHUB_REF_NAME)"/u, name);
+    }
   });
 
   it('tracked GDScript SOURCE는 현재 VERSION의 immutable Release asset을 가리킨다', async () => {
