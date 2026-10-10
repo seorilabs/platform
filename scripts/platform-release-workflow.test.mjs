@@ -56,22 +56,16 @@ describe('Platform release workflow 계약', () => {
     assert.doesNotMatch(source, /\b(?:gcloud|kubectl|firebase)\b/u);
   });
 
-  it('base publisher는 네 asset draft만 만들고 Fleet approval 전에는 공개하지 않는다', async () => {
-    const [workflowSource, publisherSource, approvalPublisherSource] = await Promise.all([
+  it('vX.Y.Z tag는 별도 승인 없이 GitHub Release를 latest로 공개한다', async () => {
+    const [workflowSource, publisherSource] = await Promise.all([
       workflow('publish-sdk-gdscript.yml'),
       readFile(resolve(root, 'scripts/publish-platform-release.mjs'), 'utf8'),
-      readFile(resolve(root, 'scripts/publish-platform-fleet-approval.mjs'), 'utf8'),
     ]);
-    assert.match(workflowSource, /approval 대기 draft/u);
-    assert.match(publisherSource, /AWAITING_FLEET_APPROVAL/u);
-    assert.doesNotMatch(publisherSource, /JSON\.stringify\(\{ draft: false \}\)/u);
-    assert.match(approvalPublisherSource, /immutable === true/u);
-    assert.match(approvalPublisherSource, /--grant-fd/u);
-    assert.match(approvalPublisherSource, /--policy-attestation/u);
-    assert.match(approvalPublisherSource, /--token-fd/u);
-    assert.match(approvalPublisherSource, /make_latest: 'true'/u);
-    assert.match(approvalPublisherSource, /releases\/latest/u);
-    assert.doesNotMatch(approvalPublisherSource, /--trusted-keys/u);
+    assert.match(workflowSource, /name: Platform SDK GitHub Release 공개/u);
+    assert.match(workflowSource, /name: Publish immutable GitHub Release/u);
+    assert.match(publisherSource, /JSON\.stringify\(\{ draft: false, make_latest: 'true' \}\)/u);
+    // by-tag 조회는 draft를 돌려주지 않아 재실행 때 draft를 중복 생성한다.
+    assert.doesNotMatch(publisherSource, /releases\/tags\/\$\{/u);
   });
 
   it('PR gate는 generator를 두 번 실행해 byte 차이를 검사한다', async () => {

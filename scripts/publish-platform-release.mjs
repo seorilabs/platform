@@ -12,6 +12,8 @@ const GITHUB_API_BASE = 'https://api.github.com';
 const GITHUB_UPLOAD_BASE = 'https://uploads.github.com';
 const RELEASE_REPOSITORY = 'seorilabs/platform';
 const RELEASE_REDIRECT_HOSTS = new Set(['release-assets.githubusercontent.com']);
+const MAX_RELEASE_PAGES = 10;
+const RELEASES_PER_PAGE = 100;
 
 function requiredString(value, label) {
   if (typeof value !== 'string' || value.length === 0) {
@@ -38,7 +40,6 @@ function requiredPositiveSize(value, label) {
 async function githubRequest(fetchImpl, url, token, options = {}) {
   const {
     accept = 'application/vnd.github+json',
-    allowNotFound = false,
     allowRedirect = false,
     headers = {},
     redirect = 'error',
@@ -57,7 +58,6 @@ async function githubRequest(fetchImpl, url, token, options = {}) {
   });
   if (
     !response.ok
-    && !(allowNotFound && response.status === 404)
     && !(allowRedirect && [301, 302, 303, 307, 308].includes(response.status))
   ) {
     const requestId = response.headers.get('x-github-request-id') ?? '';
@@ -121,13 +121,65 @@ async function loadReleaseAssets(directory, tag) {
   return { manifest, assets };
 }
 
-async function findRelease(fetchImpl, apiBase, repository, token, tag) {
-  const url = `${apiBase}/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`;
-  const response = await githubRequest(fetchImpl, url, token, { allowNotFound: true });
-  if (response.status === 404) {
-    return undefined;
+// GitHub의 by-tag 조회(`/releases/tags/{tag}`)는 공개 release만 돌려준다. 그 조회로는
+// 이전 실행이 남긴 draft를 찾지 못해 새 draft를 또 만들었고, 그래서 v0.7.9 draft가 두 개
+// 생겼다. draft까지 보이는 release 목록에서 exact tag를 찾는다.
+async function listReleasesForTag(fetchImpl, apiBase, repository, token, tag) {
+  const matches = [];
+  for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
+    const response = await githubRequest(
+      fetchImpl,
+      `${apiBase}/repos/${repository}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`,
+      token,
+    );
+    const batch = await response.json();
+    if (!Array.isArray(batch)) {
+      throw new Error('GitHub release 목록 형식이 올바르지 않습니다.');
+    }
+    matches.push(...batch.filter((release) => release?.tag_name === tag));
+    if (batch.length < RELEASES_PER_PAGE) {
+      return matches;
+    }
   }
+  throw new Error('GitHub release 목록이 탐색 범위를 초과했습니다.');
+}
+
+async function readRelease(fetchImpl, apiBase, repository, token, releaseId) {
+  const response = await githubRequest(
+    fetchImpl,
+    `${apiBase}/repos/${repository}/releases/${releaseId}`,
+    token,
+  );
   return response.json();
+}
+
+function assertReleaseIdentity(release, { draft, sourceSha, tag }) {
+  if (
+    !Number.isSafeInteger(release?.id)
+    || release.tag_name !== tag
+    || release.target_commitish !== sourceSha
+    || release.draft !== draft
+    || release.prerelease !== false
+    || !Array.isArray(release.assets)
+  ) {
+    const state = draft ? '공개 전 draft' : '공개';
+    throw new Error(`GitHub release가 exact source의 ${state} release가 아닙니다: ${tag}`);
+  }
+  return release;
+}
+
+// 조직 설정으로 공개 release는 immutable이 된다. 공개 상태인데 immutable이 아니면 tag나
+// asset이 바뀔 수 있으므로 성공으로 보고하지 않는다.
+function assertImmutable(release) {
+  if (release.immutable !== true) {
+    throw new Error(`공개 release가 immutable이 아닙니다. 조직 immutable releases 설정을 확인하세요: ${release.tag_name}`);
+  }
+}
+
+function assetIdentity(release) {
+  return release.assets
+    .map(({ id, name, size }) => `${name}\0${id}\0${size}`)
+    .sort();
 }
 
 async function readAssetResponse(response, maximum, label) {
@@ -256,8 +308,32 @@ export async function publishPlatformRelease({
   if (manifest.release.sourceSha !== sourceSha) {
     throw new Error(`manifest sourceSha가 workflow source SHA와 다릅니다: ${sourceSha}`);
   }
-  let release = await findRelease(fetchImpl, apiBase, repository, token, tag);
+  const identity = { sourceSha: manifest.release.sourceSha, tag };
+  const matches = await listReleasesForTag(fetchImpl, apiBase, repository, token, tag);
+  if (matches.some((release) => typeof release.draft !== 'boolean')) {
+    throw new Error(`GitHub release draft 상태를 확인하지 못했습니다: ${tag}`);
+  }
+  const published = matches.filter((release) => release.draft === false);
+  if (published.length > 0) {
+    // 공개 release는 immutable이라 고칠 수 없다. 재실행은 올라간 byte가 이번 빌드와 같은지만
+    // 확인하고 쓰기 없이 끝낸다.
+    if (published.length !== 1) {
+      throw new Error(`같은 tag의 공개 release가 여러 개입니다: ${tag}`);
+    }
+    const release = assertReleaseIdentity(published[0], { ...identity, draft: false });
+    assertImmutable(release);
+    await verifyReleaseAssets(fetchImpl, token, release, assets, apiBase, repository);
+    return { releaseId: release.id, state: 'ALREADY_PUBLISHED', tag };
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `같은 tag의 draft release가 ${matches.length}개입니다. 하나만 남기고 정리한 뒤 다시 실행하세요: ${tag}`,
+    );
+  }
 
+  // immutable release는 공개 순간 asset이 잠긴다. 그래서 draft로 만들어 asset을 모두 올리고
+  // 검증한 뒤에 공개한다.
+  let release = matches[0];
   if (!release) {
     const response = await githubRequest(
       fetchImpl,
@@ -274,6 +350,7 @@ export async function publishPlatformRelease({
             `Contract classification: \`${manifest.contract.classification}\``,
             `Contract revision: \`${manifest.contract.revision}\``,
             `Source SHA: \`${manifest.release.sourceSha}\``,
+            `Base source SHA: \`${manifest.release.baseSourceSha}\``,
           ].join('\n\n'),
           draft: true,
           prerelease: false,
@@ -283,16 +360,7 @@ export async function publishPlatformRelease({
     );
     release = await response.json();
   }
-  if (
-    !Number.isSafeInteger(release.id)
-    || release.tag_name !== tag
-    || release.target_commitish !== manifest.release.sourceSha
-    || release.draft !== true
-    || release.prerelease !== false
-    || !Array.isArray(release.assets)
-  ) {
-    throw new Error('GitHub release가 exact source의 approval 대기 draft가 아닙니다.');
-  }
+  assertReleaseIdentity(release, { ...identity, draft: true });
 
   const expectedNames = new Set(assets.map(({ name }) => name));
   const unexpected = release.assets.filter(({ name }) => !expectedNames.has(name));
@@ -328,23 +396,40 @@ export async function publishPlatformRelease({
     );
   }
 
-  const verificationResponse = await githubRequest(
+  const draftReadback = assertReleaseIdentity(
+    await readRelease(fetchImpl, apiBase, repository, token, release.id),
+    { ...identity, draft: true },
+  );
+  if (draftReadback.id !== release.id) {
+    throw new Error('draft release readback ID가 다릅니다.');
+  }
+  await verifyReleaseAssets(fetchImpl, token, draftReadback, assets, apiBase, repository);
+
+  await githubRequest(
     fetchImpl,
     `${apiBase}/repos/${repository}/releases/${release.id}`,
     token,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draft: false, make_latest: 'true' }),
+    },
   );
-  const persistedRelease = await verificationResponse.json();
+
+  // 검증과 공개 사이에 asset이 바뀌었다면 asset ID나 크기가 달라진다. 공개 뒤에는 고칠 수
+  // 없으므로 최소한 실패로 드러낸다.
+  const publishedReadback = assertReleaseIdentity(
+    await readRelease(fetchImpl, apiBase, repository, token, release.id),
+    { ...identity, draft: false },
+  );
+  assertImmutable(publishedReadback);
   if (
-    persistedRelease.id !== release.id
-    || persistedRelease.tag_name !== tag
-    || persistedRelease.target_commitish !== manifest.release.sourceSha
-    || persistedRelease.draft !== true
-    || persistedRelease.prerelease !== false
+    publishedReadback.id !== release.id
+    || JSON.stringify(assetIdentity(publishedReadback)) !== JSON.stringify(assetIdentity(draftReadback))
   ) {
-    throw new Error('approval 대기 draft release readback이 실행 경계와 다릅니다.');
+    throw new Error('공개 release asset이 검증한 draft asset과 다릅니다.');
   }
-  await verifyReleaseAssets(fetchImpl, token, persistedRelease, assets, apiBase, repository);
-  return { releaseId: release.id, state: 'AWAITING_FLEET_APPROVAL', tag };
+  return { releaseId: release.id, state: 'PUBLISHED', tag };
 }
 
 async function main() {
@@ -369,7 +454,10 @@ async function main() {
     tag: process.env.GITHUB_REF_NAME ?? '',
     token: process.env.GITHUB_TOKEN ?? '',
   });
-  console.log(`GitHub Release approval 대기 draft 준비 완료: ${result.tag} (id=${result.releaseId})`);
+  const message = result.state === 'ALREADY_PUBLISHED'
+    ? '이미 공개된 GitHub Release의 asset이 이번 빌드와 같음을 확인'
+    : 'GitHub Release를 latest로 공개';
+  console.log(`${message}: ${result.tag} (id=${result.releaseId})`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
