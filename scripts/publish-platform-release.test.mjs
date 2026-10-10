@@ -20,7 +20,7 @@ async function releaseDirectory(test) {
   const artifact = Buffer.from('deterministic-gdscript-artifact');
   const checksum = Buffer.from(`${sha256(artifact)}  ${artifactName}\n`);
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     release: {
       tag: 'v0.6.5',
       sourceSha: 'a'.repeat(40),
@@ -29,7 +29,7 @@ async function releaseDirectory(test) {
     sdk: {
       typescript: {
         package: '@seorilabs/platform-sdk',
-        registry: 'https://npm.pkg.github.com',
+        registry: 'https://registry.npmjs.org',
         version: '0.4.0',
         artifact: {
           name: typescriptName,
@@ -46,12 +46,6 @@ async function releaseDirectory(test) {
       },
     },
     contract: {
-      affectedCapabilities: ['core'],
-      affectedConsumers: {
-        cohort: 'backoffice-managed-product-apps',
-        resolution: 'reconcile-time',
-      },
-      affectedTracks: ['gdscript'],
       baseRevision: `sha256:${'d'.repeat(64)}`,
       classification: 'implementation-only',
       revision: `sha256:${'c'.repeat(64)}`,

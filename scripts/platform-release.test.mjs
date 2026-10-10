@@ -11,8 +11,8 @@ import {
   computeVendoredTreeChecksum,
   createDeterministicTarGz,
   createGdscriptRelease,
-  deriveReleaseImpact,
   parseOasdiffJson,
+  parsePlatformReleaseManifest,
   parseSupportedApiMajor,
   readTarGzEntries,
   sha256,
@@ -105,14 +105,13 @@ describe('계약 변경 분류', () => {
       }\n`),
     }];
     assert.deepEqual(compareConformanceContracts(before, after), {
-      changedFiles: [],
       additiveFiles: [],
       breakingFiles: [],
     });
   });
 
   it('oasdiff가 보고한 OpenAPI 변경을 breaking 우선으로 분류한다', () => {
-    const conformance = { changedFiles: [], additiveFiles: [], breakingFiles: [] };
+    const conformance = { additiveFiles: [], breakingFiles: [] };
     assert.equal(classifyContract({
       apiMajorChanged: false,
       openapiChanged: true,
@@ -135,7 +134,7 @@ describe('계약 변경 분류', () => {
       openapiChanged: true,
       changelog: [],
       breaking: [],
-      conformance: { changedFiles: [], additiveFiles: [], breakingFiles: [] },
+      conformance: { additiveFiles: [], breakingFiles: [] },
     }), 'contract-breaking');
   });
 
@@ -154,7 +153,7 @@ describe('계약 변경 분류', () => {
       openapiChanged: false,
       changelog: [{ id: 'endpoint-added' }],
       breaking: [],
-      conformance: { changedFiles: [], additiveFiles: [], breakingFiles: [] },
+      conformance: { additiveFiles: [], breakingFiles: [] },
     }), /일치하지 않습니다/u);
   });
 
@@ -164,71 +163,8 @@ describe('계약 변경 분류', () => {
       openapiChanged: true,
       changelog: [],
       breaking: [],
-      conformance: { changedFiles: [], additiveFiles: [], breakingFiles: [] },
+      conformance: { additiveFiles: [], breakingFiles: [] },
     }), 'implementation-only');
-  });
-});
-
-describe('영향 범위', () => {
-  it('계약 변경은 두 SDK track과 API/conformance capability를 함께 지정한다', () => {
-    const result = deriveReleaseImpact({
-      classification: 'contract-additive',
-      releasedTrack: 'gdscript',
-      changelog: [{ id: 'api-path-added', path: '/presence/heartbeat' }],
-      breaking: [],
-      conformance: {
-        changedFiles: ['spec/conformance/param-normalization.json'],
-        additiveFiles: ['spec/conformance/param-normalization.json'],
-        breakingFiles: [],
-      },
-      changedPaths: [],
-    });
-    assert.deepEqual(result, {
-      affectedConsumers: {
-        cohort: 'backoffice-managed-product-apps',
-        resolution: 'reconcile-time',
-      },
-      affectedTracks: ['gdscript', 'typescript'],
-      affectedCapabilities: ['events', 'presence'],
-    });
-  });
-
-  it('구현 변경은 실제로 바뀐 SDK track만 지정한다', () => {
-    const result = deriveReleaseImpact({
-      classification: 'implementation-only',
-      releasedTrack: 'gdscript',
-      changelog: [],
-      breaking: [],
-      conformance: { changedFiles: [], additiveFiles: [], breakingFiles: [] },
-      changedPaths: ['sdk-gdscript/addons/seorilabs_platform/core/presence_client.gd'],
-    });
-    assert.deepEqual(result, {
-      affectedConsumers: {
-        cohort: 'backoffice-managed-product-apps',
-        resolution: 'reconcile-time',
-      },
-      affectedTracks: ['gdscript'],
-      affectedCapabilities: ['presence'],
-    });
-  });
-
-  it('첫 Fleet release도 발행한 GDScript track과 core 영향을 남긴다', () => {
-    const result = deriveReleaseImpact({
-      classification: 'implementation-only',
-      releasedTrack: 'gdscript',
-      changelog: [],
-      breaking: [],
-      conformance: { changedFiles: [], additiveFiles: [], breakingFiles: [] },
-      changedPaths: [],
-    });
-    assert.deepEqual(result, {
-      affectedConsumers: {
-        cohort: 'backoffice-managed-product-apps',
-        resolution: 'reconcile-time',
-      },
-      affectedTracks: ['gdscript'],
-      affectedCapabilities: ['core'],
-    });
   });
 });
 
@@ -300,5 +236,54 @@ describe('TypeScript artifact와 canonical manifest', () => {
     assert.equal(canonicalJson(value), canonicalJson(value));
     assert.equal(canonicalJson(value).endsWith('\n'), true);
     assert.equal(canonicalJson(value).includes('generatedAt'), false);
+  });
+});
+
+describe('platform-release.json 계약', () => {
+  const typescriptArtifact = { name: 'seorilabs-platform-sdk-0.6.0.tgz', sha256: 'a'.repeat(64), size: 10 };
+  const gdscriptName = 'seorilabs-platform-gdscript-0.9.1.tar.gz';
+  const manifest = () => ({
+    schemaVersion: 2,
+    release: { tag: 'v0.9.1', sourceSha: 'a'.repeat(40), baseSourceSha: 'b'.repeat(40) },
+    sdk: {
+      typescript: {
+        package: '@seorilabs/platform-sdk',
+        version: '0.6.0',
+        registry: 'https://registry.npmjs.org',
+        artifact: typescriptArtifact,
+      },
+      gdscript: {
+        version: '0.9.1',
+        source: `https://github.com/seorilabs/platform/releases/download/v0.9.1/${gdscriptName}`,
+        treeChecksum: 'c'.repeat(64),
+        artifact: { name: gdscriptName, sha256: 'd'.repeat(64), size: 20 },
+        checksumArtifact: { name: `${gdscriptName}.sha256`, sha256: 'e'.repeat(64), size: 30 },
+      },
+    },
+    contract: {
+      revision: `sha256:${'f'.repeat(64)}`,
+      baseRevision: `sha256:${'0'.repeat(64)}`,
+      classification: 'contract-additive',
+      supportedApiMajor: 1,
+    },
+  });
+
+  it('generator가 쓰는 schemaVersion 2 manifest를 그대로 돌려준다', () => {
+    const value = manifest();
+    assert.deepEqual(parsePlatformReleaseManifest(canonicalJson(value)), value);
+  });
+
+  it('승인 체계 시절의 영향 필드나 이전 schema를 받지 않는다', () => {
+    const withImpact = manifest();
+    withImpact.contract.affectedTracks = ['gdscript', 'typescript'];
+    assert.throws(() => parsePlatformReleaseManifest(canonicalJson(withImpact)), /manifest\.contract 필드/u);
+    const schemaOne = { ...manifest(), schemaVersion: 1 };
+    assert.throws(() => parsePlatformReleaseManifest(canonicalJson(schemaOne)), /schema/u);
+  });
+
+  it('tag와 GDScript asset 이름이 어긋나면 거부한다', () => {
+    const value = manifest();
+    value.release.tag = 'v0.9.2';
+    assert.throws(() => parsePlatformReleaseManifest(canonicalJson(value)), /GDScript release tag/u);
   });
 });

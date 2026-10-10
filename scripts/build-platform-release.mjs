@@ -11,9 +11,10 @@ import {
   compareConformanceContracts,
   computeContractRevision,
   createGdscriptRelease,
-  deriveReleaseImpact,
   parseOasdiffJson,
+  parsePlatformReleaseManifest,
   parseSupportedApiMajor,
+  PLATFORM_RELEASE_SCHEMA_VERSION,
   sha256,
 } from './platform-release-lib.mjs';
 import { verifyTypescriptArtifactIntegrity } from './typescript-registry-artifact.mjs';
@@ -144,13 +145,6 @@ function readJson(revision, path) {
   }
 }
 
-function listChangedPaths(baseSha, sourceSha) {
-  return Buffer.from(run('git', ['diff', '--name-only', '-z', baseSha, sourceSha], {
-    encoding: null,
-    label: 'release 변경 경로 조회',
-  })).toString('utf8').split('\0').filter(Boolean);
-}
-
 function runOasdiff(executable, command, baseSha, sourceSha) {
   const output = run(executable, [
     command,
@@ -232,14 +226,6 @@ export async function buildPlatformRelease(options) {
     breaking,
     conformance,
   });
-  const impact = deriveReleaseImpact({
-    classification,
-    releasedTrack: 'gdscript',
-    changelog,
-    breaking,
-    conformance,
-    changedPaths: listChangedPaths(baseSourceSha, sourceSha),
-  });
 
   const typescriptPackage = readJson(sourceSha, 'packages/sdk-ts/package.json');
   if (
@@ -285,7 +271,7 @@ export async function buildPlatformRelease(options) {
   });
 
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: PLATFORM_RELEASE_SCHEMA_VERSION,
     release: {
       tag: releaseTag,
       sourceSha,
@@ -323,12 +309,11 @@ export async function buildPlatformRelease(options) {
       baseRevision: computeContractRevision(baseContractFiles),
       classification,
       supportedApiMajor,
-      affectedConsumers: impact.affectedConsumers,
-      affectedTracks: impact.affectedTracks,
-      affectedCapabilities: impact.affectedCapabilities,
     },
   };
   const manifestContent = Buffer.from(canonicalJson(manifest), 'utf8');
+  // publisher가 tag push 때 거부할 manifest를 PR check 단계에서 먼저 잡는다.
+  parsePlatformReleaseManifest(manifestContent);
   const outputDirectory = resolve(options['--output-dir']);
   await mkdir(outputDirectory, { recursive: true });
   const outputs = [
