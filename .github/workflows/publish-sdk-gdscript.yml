@@ -23,7 +23,7 @@ jobs:
         bash scripts/check_sdk_gdscript.sh
 
   publish:
-    name: Platform SDK approval 대기 draft 준비
+    name: Platform SDK GitHub Release 공개
     needs: sdk
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -66,12 +66,12 @@ jobs:
       - name: Verify GDScript SDK
         run: bash scripts/sdk_gdscript_checksum.sh --check
 
-      - name: Resolve approved release base
+      - name: Resolve previous release base
         id: release-base
         shell: bash
         run: |
           set -euo pipefail
-          base_sha="$(node scripts/resolve-platform-release-base.mjs)"
+          base_sha="$(node scripts/resolve-platform-release-base.mjs "$GITHUB_REF_NAME")"
           echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -107,7 +107,7 @@ jobs:
             --oasdiff "$RUNNER_TEMP/oasdiff" \
             --output-dir "$RUNNER_TEMP/platform-release"
 
-      - name: Prepare immutable GitHub Release draft
+      - name: Publish immutable GitHub Release
         run: node scripts/publish-platform-release.mjs "$RUNNER_TEMP/platform-release"
         env:
           GITHUB_TOKEN: ${{ github.token }}

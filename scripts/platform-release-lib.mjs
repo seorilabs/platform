@@ -146,7 +146,6 @@ export function compareConformanceContracts(baseFiles, currentFiles) {
   if (base.size !== baseFiles.length || current.size !== currentFiles.length) {
     throw new Error('conformance 파일 경로가 중복되었습니다.');
   }
-  const changedFiles = [];
   const additiveFiles = [];
   const breakingFiles = [];
   const paths = [...new Set([...base.keys(), ...current.keys()])].sort(compareUtf8);
@@ -156,13 +155,11 @@ export function compareConformanceContracts(baseFiles, currentFiles) {
     const after = current.get(path);
     if (!before) {
       parseConformanceJson(after);
-      changedFiles.push(path);
       additiveFiles.push(path);
       continue;
     }
     if (!after) {
       parseConformanceJson(before);
-      changedFiles.push(path);
       breakingFiles.push(path);
       continue;
     }
@@ -176,7 +173,6 @@ export function compareConformanceContracts(baseFiles, currentFiles) {
     if (preservesBefore && isJsonSubset(afterJson, beforeJson)) {
       continue;
     }
-    changedFiles.push(path);
     if (preservesBefore) {
       additiveFiles.push(path);
     } else {
@@ -184,7 +180,7 @@ export function compareConformanceContracts(baseFiles, currentFiles) {
     }
   }
 
-  return { changedFiles, additiveFiles, breakingFiles };
+  return { additiveFiles, breakingFiles };
 }
 
 export function parseOasdiffJson(output, label) {
@@ -230,138 +226,132 @@ export function classifyContract({
   return 'implementation-only';
 }
 
-function capabilityFromApiPath(path) {
-  if (typeof path !== 'string') {
-    return undefined;
+const MANIFEST_SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/u;
+const MANIFEST_SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const MANIFEST_REVISION_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const MANIFEST_SEMVER_PATTERN = /^\d+\.\d+\.\d+$/u;
+const CONTRACT_CLASSIFICATIONS = ['implementation-only', 'contract-additive', 'contract-breaking'];
+
+// schemaVersion 2는 소비 앱 cohort·영향 track·capability 필드를 뺐다. 그 필드는 SDK 승인
+// 체계의 reconciler만 읽었고, 승인 체계를 은퇴하면서 읽는 쪽이 사라졌다.
+export const PLATFORM_RELEASE_SCHEMA_VERSION = 2;
+
+function assertManifestKeys(value, expected, label) {
+  if (!isRecord(value)) {
+    throw new Error(`${label} 형식이 올바르지 않습니다.`);
   }
-  const segment = path.split('/').filter(Boolean).find((part) => !/^v\d+$/u.test(part));
-  return segment && /^[a-z][a-z0-9_-]*$/u.test(segment) ? segment : undefined;
+  const actual = Object.keys(value).sort(compareUtf8);
+  const wanted = [...expected].sort(compareUtf8);
+  if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+    throw new Error(`${label} 필드가 올바르지 않습니다: ${actual.join(', ')}`);
+  }
 }
 
-function collectApiPaths(value, collected = new Set()) {
-  if (typeof value === 'string') {
-    if (value.startsWith('/')) {
-      collected.add(value);
-    }
-    return collected;
+function assertManifestString(value, label, pattern) {
+  if (typeof value !== 'string' || value.length === 0 || (pattern && !pattern.test(value))) {
+    throw new Error(`${label} 값이 올바르지 않습니다.`);
   }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectApiPaths(item, collected);
-    }
-    return collected;
-  }
-  if (isRecord(value)) {
-    for (const item of Object.values(value)) {
-      collectApiPaths(item, collected);
-    }
-  }
-  return collected;
 }
 
-function capabilityFromConformancePath(path) {
-  const name = path.split('/').at(-1)?.replace(/\.json$/u, '') ?? '';
-  if (name === 'param-normalization') {
-    return 'events';
+function assertManifestArtifact(value, label) {
+  assertManifestKeys(value, ['name', 'sha256', 'size'], label);
+  assertManifestString(value.name, `${label}.name`, /^[A-Za-z0-9._-]+$/u);
+  assertManifestString(value.sha256, `${label}.sha256`, MANIFEST_SHA256_PATTERN);
+  if (!Number.isSafeInteger(value.size) || value.size < 1) {
+    throw new Error(`${label}.size 값이 올바르지 않습니다.`);
   }
-  if (name === 'backoff' || name === 'envelope') {
-    return 'transport';
-  }
-  return 'core';
 }
 
-function capabilitiesFromImplementationPath(path) {
-  const lower = path.toLowerCase();
-  const capabilities = [];
-  const mappings = [
-    ['presence', 'presence'],
-    ['reward', 'ads'],
-    ['admob', 'ads'],
-    ['iap', 'iap'],
-    ['purchase', 'iap'],
-    ['entitlement', 'iap'],
-    ['event', 'events'],
-    ['param_normal', 'events'],
-    ['config', 'config'],
-    ['content', 'content'],
-    ['identity', 'auth'],
-    ['session', 'auth'],
-    ['auth', 'auth'],
-    ['backoff', 'transport'],
-    ['envelope', 'transport'],
-    ['transport', 'transport'],
-  ];
-  for (const [needle, capability] of mappings) {
-    if (lower.includes(needle)) {
-      capabilities.push(capability);
-    }
+// generator가 쓴 manifest와 publisher가 올리는 manifest가 같은 계약을 따르는지 한 곳에서
+// 확인한다. 정확한 키 집합을 요구해 모르는 필드가 섞인 manifest를 불변 release에 올리지 않는다.
+export function parsePlatformReleaseManifest(manifestContent) {
+  let manifest;
+  try {
+    manifest = JSON.parse(asBuffer(manifestContent).toString('utf8'));
+  } catch (error) {
+    throw new Error('platform-release.json을 해석하지 못했습니다.', { cause: error });
   }
-  return capabilities.length > 0 ? capabilities : ['core'];
-}
-
-export function deriveReleaseImpact({
-  classification,
-  releasedTrack,
-  changelog,
-  breaking,
-  conformance,
-  changedPaths,
-}) {
-  if (!['gdscript', 'typescript'].includes(releasedTrack)) {
-    throw new Error(`알 수 없는 release track입니다: ${releasedTrack}`);
-  }
-  const tracks = new Set([releasedTrack]);
-  const capabilities = new Set();
-
-  if (classification === 'contract-additive' || classification === 'contract-breaking') {
-    tracks.add('typescript');
-    tracks.add('gdscript');
-    for (const change of [...changelog, ...breaking]) {
-      const paths = collectApiPaths(change);
-      for (const path of paths) {
-        const capability = capabilityFromApiPath(path);
-        if (capability) {
-          capabilities.add(capability);
-        }
-      }
-    }
-    for (const path of conformance.changedFiles) {
-      capabilities.add(capabilityFromConformancePath(path));
-    }
-    if (capabilities.size === 0) {
-      capabilities.add('core');
-    }
-  } else if (classification === 'implementation-only') {
-    for (const path of changedPaths) {
-      if (path.startsWith('packages/sdk-ts/')) {
-        tracks.add('typescript');
-        for (const capability of capabilitiesFromImplementationPath(path)) {
-          capabilities.add(capability);
-        }
-      }
-      if (path.startsWith('sdk-gdscript/')) {
-        tracks.add('gdscript');
-        for (const capability of capabilitiesFromImplementationPath(path)) {
-          capabilities.add(capability);
-        }
-      }
-    }
-  } else {
-    throw new Error(`알 수 없는 계약 분류입니다: ${classification}`);
+  assertManifestKeys(manifest, ['contract', 'release', 'schemaVersion', 'sdk'], 'manifest');
+  if (manifest.schemaVersion !== PLATFORM_RELEASE_SCHEMA_VERSION) {
+    throw new Error(`지원하지 않는 platform release schema입니다: ${manifest.schemaVersion}`);
   }
 
-  if (capabilities.size === 0) {
-    capabilities.add('core');
+  const { release } = manifest;
+  assertManifestKeys(release, ['baseSourceSha', 'sourceSha', 'tag'], 'manifest.release');
+  assertManifestString(release.sourceSha, 'manifest.release.sourceSha', MANIFEST_SOURCE_SHA_PATTERN);
+  assertManifestString(
+    release.baseSourceSha,
+    'manifest.release.baseSourceSha',
+    MANIFEST_SOURCE_SHA_PATTERN,
+  );
+  assertManifestString(release.tag, 'manifest.release.tag', /^v\d+\.\d+\.\d+$/u);
+  if (release.sourceSha === release.baseSourceSha) {
+    throw new Error('manifest source SHA와 base SHA가 같습니다.');
   }
 
-  return {
-    affectedConsumers: {
-      cohort: 'backoffice-managed-product-apps',
-      resolution: 'reconcile-time',
-    },
-    affectedTracks: [...tracks].sort(compareUtf8),
-    affectedCapabilities: [...capabilities].sort(compareUtf8),
-  };
+  assertManifestKeys(manifest.sdk, ['gdscript', 'typescript'], 'manifest.sdk');
+  const { typescript, gdscript } = manifest.sdk;
+  assertManifestKeys(
+    typescript,
+    ['artifact', 'package', 'registry', 'version'],
+    'manifest.sdk.typescript',
+  );
+  if (
+    typescript.package !== '@seorilabs/platform-sdk'
+    || typescript.registry !== 'https://registry.npmjs.org'
+  ) {
+    throw new Error('TypeScript SDK package 또는 registry가 허용된 값과 다릅니다.');
+  }
+  assertManifestString(typescript.version, 'manifest.sdk.typescript.version', MANIFEST_SEMVER_PATTERN);
+  assertManifestArtifact(typescript.artifact, 'manifest.sdk.typescript.artifact');
+  if (typescript.artifact.name !== `seorilabs-platform-sdk-${typescript.version}.tgz`) {
+    throw new Error('TypeScript SDK artifact 이름이 package version과 일치하지 않습니다.');
+  }
+
+  assertManifestKeys(
+    gdscript,
+    ['artifact', 'checksumArtifact', 'source', 'treeChecksum', 'version'],
+    'manifest.sdk.gdscript',
+  );
+  assertManifestString(gdscript.version, 'manifest.sdk.gdscript.version', MANIFEST_SEMVER_PATTERN);
+  assertManifestString(
+    gdscript.treeChecksum,
+    'manifest.sdk.gdscript.treeChecksum',
+    MANIFEST_SHA256_PATTERN,
+  );
+  assertManifestArtifact(gdscript.artifact, 'manifest.sdk.gdscript.artifact');
+  assertManifestArtifact(gdscript.checksumArtifact, 'manifest.sdk.gdscript.checksumArtifact');
+  const expectedTag = `v${gdscript.version}`;
+  const expectedArtifactName = `seorilabs-platform-gdscript-${gdscript.version}.tar.gz`;
+  const expectedSource = `https://github.com/${GITHUB_REPOSITORY}/releases/download/${expectedTag}/${expectedArtifactName}`;
+  if (
+    release.tag !== expectedTag
+    || gdscript.artifact.name !== expectedArtifactName
+    || gdscript.checksumArtifact.name !== `${expectedArtifactName}.sha256`
+    || gdscript.source !== expectedSource
+  ) {
+    throw new Error('GDScript release tag, asset 또는 고정 source URL이 일치하지 않습니다.');
+  }
+
+  const { contract } = manifest;
+  assertManifestKeys(
+    contract,
+    ['baseRevision', 'classification', 'revision', 'supportedApiMajor'],
+    'manifest.contract',
+  );
+  assertManifestString(contract.revision, 'manifest.contract.revision', MANIFEST_REVISION_PATTERN);
+  assertManifestString(
+    contract.baseRevision,
+    'manifest.contract.baseRevision',
+    MANIFEST_REVISION_PATTERN,
+  );
+  if (!CONTRACT_CLASSIFICATIONS.includes(contract.classification)) {
+    throw new Error(`알 수 없는 계약 분류입니다: ${contract.classification}`);
+  }
+  if (!Number.isSafeInteger(contract.supportedApiMajor) || contract.supportedApiMajor < 1) {
+    throw new Error('manifest.contract.supportedApiMajor 값이 올바르지 않습니다.');
+  }
+  return manifest;
 }
 
 function writeTarString(header, offset, length, value) {

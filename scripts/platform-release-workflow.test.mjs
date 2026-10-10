@@ -56,22 +56,33 @@ describe('Platform release workflow 계약', () => {
     assert.doesNotMatch(source, /\b(?:gcloud|kubectl|firebase)\b/u);
   });
 
-  it('base publisher는 네 asset draft만 만들고 Fleet approval 전에는 공개하지 않는다', async () => {
-    const [workflowSource, publisherSource, approvalPublisherSource] = await Promise.all([
+  it('vX.Y.Z tag는 별도 승인 없이 GitHub Release를 latest로 공개한다', async () => {
+    const [workflowSource, publisherSource] = await Promise.all([
       workflow('publish-sdk-gdscript.yml'),
       readFile(resolve(root, 'scripts/publish-platform-release.mjs'), 'utf8'),
-      readFile(resolve(root, 'scripts/publish-platform-fleet-approval.mjs'), 'utf8'),
     ]);
-    assert.match(workflowSource, /approval 대기 draft/u);
-    assert.match(publisherSource, /AWAITING_FLEET_APPROVAL/u);
-    assert.doesNotMatch(publisherSource, /JSON\.stringify\(\{ draft: false \}\)/u);
-    assert.match(approvalPublisherSource, /immutable === true/u);
-    assert.match(approvalPublisherSource, /--grant-fd/u);
-    assert.match(approvalPublisherSource, /--policy-attestation/u);
-    assert.match(approvalPublisherSource, /--token-fd/u);
-    assert.match(approvalPublisherSource, /make_latest: 'true'/u);
-    assert.match(approvalPublisherSource, /releases\/latest/u);
-    assert.doesNotMatch(approvalPublisherSource, /--trusted-keys/u);
+    assert.match(workflowSource, /name: Platform SDK GitHub Release 공개/u);
+    assert.match(workflowSource, /name: Publish immutable GitHub Release/u);
+    assert.match(publisherSource, /JSON\.stringify\(\{ draft: false, make_latest: 'true' \}\)/u);
+    // by-tag 조회는 draft를 돌려주지 않아 재실행 때 draft를 중복 생성한다.
+    assert.doesNotMatch(publisherSource, /releases\/tags\/\$\{/u);
+  });
+
+  it('SDK release 경로에 은퇴한 승인 체계가 남지 않는다', async () => {
+    const files = [
+      '.github/workflows/checks-platform-release.yml',
+      '.github/workflows/publish-sdk-gdscript.yml',
+      '.github/workflows/publish-sdk-ts.yml',
+      'scripts/build-platform-release.mjs',
+      'scripts/platform-release-lib.mjs',
+      'scripts/publish-platform-release.mjs',
+      'scripts/resolve-platform-release-base.mjs',
+      'README.md',
+    ];
+    for (const name of files) {
+      const source = await readFile(resolve(root, name), 'utf8');
+      assert.doesNotMatch(source, /fleet|canary/iu, name);
+    }
   });
 
   it('PR gate는 generator를 두 번 실행해 byte 차이를 검사한다', async () => {
@@ -98,21 +109,16 @@ describe('Platform release workflow 계약', () => {
     assert.match(source, /npm publish "\$\{\{ steps\.pack\.outputs\.tarball \}\}"/u);
   });
 
-  it('release builder는 mutable tag 추론 없이 승인 또는 bootstrap exact base만 요구한다', async () => {
-    const [builderSource, bootstrapSource] = await Promise.all([
-      readFile(resolve(root, 'scripts/build-platform-release.mjs'), 'utf8'),
-      readFile(resolve(root, '.github/platform-release-bootstrap-base.json'), 'utf8'),
-    ]);
-    const bootstrap = JSON.parse(bootstrapSource);
+  it('release builder는 tag 추론 없이 resolver가 고른 직전 공개 release만 base로 받는다', async () => {
+    const builderSource = await readFile(resolve(root, 'scripts/build-platform-release.mjs'), 'utf8');
     assert.doesNotMatch(builderSource, /git['"], \['describe'/u);
     assert.match(builderSource, /'--base-ref'/u);
-    assert.match(builderSource, /검증된 Fleet 승인 또는 bootstrap base revision/u);
-    assert.deepEqual(bootstrap, {
-      schemaVersion: 1,
-      purpose: 'seorilabs-platform-release-bootstrap-base-v1',
-      releaseTag: 'v0.6.6',
-      sourceSha: '97f046ce2d9df5d72bc7a49fc81bb7c366ebaa17',
-    });
+    assert.match(builderSource, /직전 공개 release의 base revision/u);
+    // 지금 만드는 tag를 resolver에 넘겨야 같은 tag의 재실행이 자기 release를 base로 삼지 않는다.
+    for (const name of ['checks-platform-release.yml', 'publish-sdk-gdscript.yml', 'publish-sdk-ts.yml']) {
+      const source = await workflow(name);
+      assert.match(source, /resolve-platform-release-base\.mjs "\$(?:release_tag|GITHUB_REF_NAME)"/u, name);
+    }
   });
 
   it('tracked GDScript SOURCE는 현재 VERSION의 immutable Release asset을 가리킨다', async () => {

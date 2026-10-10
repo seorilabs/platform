@@ -14,8 +14,6 @@ on:
       - ".github/workflows/checks-platform-release.yml"
       - ".github/workflows/publish-sdk-gdscript.yml"
       - ".github/workflows/publish-sdk-ts.yml"
-      - ".github/platform-release-bootstrap-base.json"
-      - ".github/platform-fleet-trusted-release-keys.json"
   push:
     branches: [main]
     paths:
@@ -30,8 +28,6 @@ on:
       - ".github/workflows/checks-platform-release.yml"
       - ".github/workflows/publish-sdk-gdscript.yml"
       - ".github/workflows/publish-sdk-ts.yml"
-      - ".github/platform-release-bootstrap-base.json"
-      - ".github/platform-fleet-trusted-release-keys.json"
 
 permissions:
   contents: read
@@ -76,12 +72,13 @@ jobs:
       - name: Install pinned oasdiff
         run: node scripts/install-oasdiff.mjs "$RUNNER_TEMP/oasdiff"
 
-      - name: Resolve approved release base
+      - name: Resolve previous release base
         id: release-base
         shell: bash
         run: |
           set -euo pipefail
-          base_sha="$(node scripts/resolve-platform-release-base.mjs)"
+          release_tag="v$(tr -d '[:space:]' < sdk-gdscript/VERSION)"
+          base_sha="$(node scripts/resolve-platform-release-base.mjs "$release_tag")"
           echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
         env:
           GITHUB_TOKEN: ${{ github.token }}

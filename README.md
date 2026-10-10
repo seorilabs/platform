@@ -62,21 +62,32 @@ flowchart LR
 | 구성 요소 | 버전 / 상태 |
 |---|---|
 | 서버 | production. Cloud Run `asia-northeast3`, 6개 role(`api` `iap` `ingest` `ads` `admin` `worker`) |
-| TypeScript SDK | `@seorilabs/platform-sdk` **0.4.0** |
-| GDScript SDK | **0.6.7** — `v0.6.5`는 철회됐다 |
-| 통합 릴리스 | [`v0.6.7`](https://github.com/seorilabs/platform/releases/tag/v0.6.7) — 두 SDK 산출물과 `platform-release.json` 매니페스트 |
+| TypeScript SDK | `@seorilabs/platform-sdk` **0.6.0** |
+| GDScript SDK | **0.9.0** |
+| 통합 릴리스 | [`v0.9.0`](https://github.com/seorilabs/platform/releases/tag/v0.9.0) — 두 SDK 산출물과 `platform-release.json` 매니페스트 |
 | 등록 앱 | 13개 → [`registry/apps/`](registry/apps/README.md) |
 
 API 계약은 `/v1` 하나이고 **영구히 깨지 않는다.** 마켓에 배포된 구버전 SDK가
 2~3년 산다. 필드는 추가만 하고, 제거나 의미 변경은 `/v2`다.
 
-새 `platform-release.json`은 source SHA, 두 SDK의 exact version·artifact digest,
-OpenAPI/conformance revision, 변경 분류와 함께 영향 consumer 선택 계약을 서명 대상에
-포함한다. consumer repo 목록은 release 뒤에도 바뀌므로 immutable asset에 복사하지 않고
-`backoffice-managed-product-apps` cohort를 `reconcile-time`에 exact repo ID로 확정하며, 하나라도
-관측이 빠지면 전체 fan-out을 중단한다.
-이미 발행된 `v0.6.7`에 선택 필드가 없던 경우만 같은 cohort로 읽으며, 다른 version의
-누락은 계약 오류로 거부한다.
+## SDK 릴리스
+
+`main`의 commit에 `vX.Y.Z` tag를 push하면 두 SDK 산출물과 `platform-release.json`을
+만들어 GitHub Release를 바로 공개하고 latest로 표시한다. `sdk-ts-vX.Y.Z` tag는
+TypeScript SDK를 npm에 공개한다. 별도 승인 단계는 없다. 소비 앱은 새 release를 일반
+PR로 올린다.
+
+`platform-release.json`은 source SHA, 두 SDK의 exact version·artifact digest,
+OpenAPI/conformance revision과 계약 분류를 담는다. 분류는 직전에 공개된 release와
+비교한 결과다.
+
+| 분류 | 뜻 |
+|---|---|
+| `implementation-only` | API 계약과 conformance 벡터가 그대로다 |
+| `contract-additive` | 기존 계약을 유지한 채 추가만 있다 |
+| `contract-breaking` | 기존 계약이 바뀌거나 빠졌다. API major 변경도 포함한다 |
+
+release와 tag는 조직 설정으로 immutable이다. 공개 뒤에는 asset과 tag를 바꿀 수 없다.
 
 ## 구조
 
@@ -89,7 +100,6 @@ examples/       레퍼런스 배선 — React Native, Godot
 registry/apps/  앱 레지스트리. git이 SoT이고 regsync가 Firestore로 올린다
 scripts/        릴리스·검증 스크립트
 deploy/         RPI edge 배포 매니페스트
-docs/           자동화가 직접 검사하는 실행 계약만 둔다
 ```
 
 ## 문서
@@ -102,7 +112,6 @@ docs/           자동화가 직접 검사하는 실행 계약만 둔다
 | 두 SDK가 같이 통과해야 하는 행동 벡터 | [`spec/conformance/`](spec/conformance/README.md) |
 | 앱 레지스트리 형식과 규칙 | [`registry/apps/README.md`](registry/apps/README.md) |
 | GDScript SDK 상세 | [`sdk-gdscript/README.md`](sdk-gdscript/README.md) |
-| Fleet 승인 게시 계약 | [`docs/platform-fleet-approval-publisher.md`](docs/platform-fleet-approval-publisher.md) |
 
 설계 결정 기록(ADR), 운영 런북, 작업 로그는 비공개 원장에 있다. 이 저장소에는
 코드와 자동화가 검사하는 계약만 남긴다.
