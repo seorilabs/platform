@@ -68,6 +68,23 @@ describe('Platform release workflow 계약', () => {
     assert.doesNotMatch(publisherSource, /releases\/tags\/\$\{/u);
   });
 
+  it('SDK release 경로에 은퇴한 승인 체계가 남지 않는다', async () => {
+    const files = [
+      '.github/workflows/checks-platform-release.yml',
+      '.github/workflows/publish-sdk-gdscript.yml',
+      '.github/workflows/publish-sdk-ts.yml',
+      'scripts/build-platform-release.mjs',
+      'scripts/platform-release-lib.mjs',
+      'scripts/publish-platform-release.mjs',
+      'scripts/resolve-platform-release-base.mjs',
+      'README.md',
+    ];
+    for (const name of files) {
+      const source = await readFile(resolve(root, name), 'utf8');
+      assert.doesNotMatch(source, /fleet|canary/iu, name);
+    }
+  });
+
   it('PR gate는 generator를 두 번 실행해 byte 차이를 검사한다', async () => {
     const source = await workflow('checks-platform-release.yml');
     assert.match(source, /for output in first second/u);
