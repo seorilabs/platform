@@ -54,6 +54,7 @@ func _initialize() -> void:
 	_check_client_defaults()
 	_check_firebase_custom_token_bridge()
 	_check_account_link()
+	_check_account_link_recovery()
 	_check_auth_role_routing()
 	_check_event_context()
 	_check_event_context_request()
@@ -1473,3 +1474,54 @@ func _fail(message: String) -> void:
 func _expect(condition: bool, message: String) -> void:
 	if not condition:
 		_fail(message)
+
+
+func _check_account_link_recovery() -> void:
+	var client := PlatformClient.new()
+	var transport := ScriptedTransport.new()
+	client._transport = transport
+	client.add_child(transport)
+	root.add_child(client)
+	if not client.has_method("begin_account_link_recovery") or not client.has_method("recover_account_link"):
+		_fail("AR-1: 공개 SDK에 중단된 계정 채택 복구 함수가 없다")
+		client.queue_free()
+		return
+	client._store_session(_session_result("guest-token", "guest-refresh", 3600))
+	var replies: Array[Dictionary] = []
+	var callback := func(value: Dictionary): replies.append(value)
+	for uid in ["", ".", "..", "bad/uid", "가".repeat(43)]:
+		client.call("begin_account_link_recovery", "apple", uid, "app-check", callback)
+	_expect(transport.requests.is_empty() and replies.size()==5, "AR-3: 손상된 target UID를 전송했다")
+	client.call("begin_account_link_recovery", "apple", "target", "app-check", callback)
+	_expect(transport.requests.size()==1, "AR-1: 복구 challenge가 없다")
+	var request: Dictionary = transport.requests[0]
+	_expect(request.path=="/v1/auth/account-link-recovery-challenges" and request.body.expectedAppUserId=="target" and request.no_retry and request.app_check_token=="app-check", "AR-7: 복구 challenge 계약이 다르다")
+	transport.respond(0,_success_response({"provider":"apple","nonce":"nonce","expiresAt":"2030-01-01T00:00:00Z"}))
+	var target := _session_result("target-token", "target-refresh", 3600)
+	target["appUserId"]="target"
+	target["isLinkedAccount"]=true
+	var valid := {"provider":"apple","restored":true,"firebaseCustomToken":"fresh-custom-token","session":target}
+	for mutation in ["wrong uid", "unlinked", "anonymous", "wrong provider", "missing token", "bad restored"]:
+		var bad: Dictionary=valid.duplicate(true)
+		match mutation:
+			"wrong uid": bad.session.appUserId="other"
+			"unlinked": bad.session.isLinkedAccount=false
+			"anonymous": bad.session.isAnonymous=true
+			"wrong provider": bad.provider="google"
+			"missing token": bad.firebaseCustomToken=""
+			"bad restored": bad.restored="true"
+		var before: Dictionary=client.current_session().duplicate(true)
+		var before_generation: int=client.authentication_generation()
+		client.call("recover_account_link","apple","fresh-proof","nonce","target","app-check",callback)
+		transport.respond(transport.requests.size()-1,_success_response(bad))
+		_expect(not replies.back().get("ok",true) and client.current_session()==before and client.authentication_generation()==before_generation, "AR-3: 잘못된 복구 응답이 신원을 바꿨다: "+mutation)
+	client.call("recover_account_link","apple","fresh-proof","nonce","target","app-check",callback)
+	var pending: int=transport.requests.size()-1
+	client.sign_in({"kind":"firebase-id-token","value":"different-login"},callback)
+	transport.respond(transport.requests.size()-1,_session_response("new-token","new-refresh",3600))
+	transport.respond(pending,_success_response(valid))
+	_expect(client.current_session().get("platformToken")=="new-token" and not replies.back().get("ok",true), "AR-4: 늦은 복구가 다른 로그인을 덮어썼다")
+	client.call("recover_account_link","apple","fresh-proof","nonce","target","app-check",callback)
+	transport.respond(transport.requests.size()-1,_success_response(valid))
+	_expect(replies.back().get("ok",false) and client.current_session().get("appUserId")=="target" and client.is_account_linked(), "AR-1: 검증된 복구 세션을 설치하지 못했다")
+	client.queue_free()
