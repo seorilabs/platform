@@ -129,6 +129,21 @@ iOS 앱은 StoreKit에서 확인한 실제 환경을 제공해야 한다. 명시
 환경이 비었거나 잘못됐으면 네트워크 요청을 보내지 않는다. 클라이언트 설정은
 지급 증거가 아니며 서버의 앱별 환경 허용과 Apple 거래 검증이 필요하다.
 
+### 중단된 계정 채택 복구 (미발행 0.10.0 후보)
+
+이 API는 [개발 PR #225](https://github.com/seorilabs/platform/pull/225)의 후보이며 운영 반영·정식 SDK 공개가 완료되지 않았다. 앱은 검사한 exact Git source snapshot을 SOURCE/CHECKSUM과 함께 고정해야 한다. `0.10.0` VERSION이나 예정 asset URL만으로 공개 상태를 판단하지 않는다.
+
+서버 연결 응답 뒤 앱이 `adopting` 대상 UID를 내구성 있게 기록했지만 보호 신원을 채택하지 못한 경우:
+
+1. 기기 진행과 불변 사본, 원래 provider/source UID/대상 UID를 유지하고 백업을 중지한다. token·nonce·공급자 subject는 journal에 저장하지 않는다.
+2. 보호 저장을 다시 읽는다. 대상 UID가 이미 저장됐으면 Firebase/Platform 재인증 및 linked 상태 확인 뒤 기존 비교로 이어간다.
+3. 원래 보호 UID가 남았으면 사용자의 명시적 행동 후 `begin_account_link_recovery(provider, expected_app_user_id, app_check_token, callback)`으로 새 challenge를 받는다.
+4. 새 native provider proof를 받는다. Apple에는 nonce SHA-256을 전달하며, `recover_account_link(provider, id_token, original_nonce, expected_app_user_id, app_check_token, callback)`에는 원본 nonce를 보낸다.
+5. 성공한 `result`를 기존 공개 `await identity.adopt_account_link(result)`에 전달한다. 대상 Firebase UID와 새 Platform linked session을 확인한 뒤에만 계정 journal을 보완한다.
+6. 원격 진행을 읽고 기존 비교 화면에서 사용자가 기기/클라우드 진행을 선택한다. 선택 journal commit 전에는 업로드하지 않는다.
+
+대상 UID는 소유권 증명이 아니다. 서버는 기존 provider mapping, 현재 source/target, 삭제·차단·challenge 목적/만료를 다시 확인하며 새 mapping을 생성·이동하지 않는다. 취소·쓰기/readback 실패·SDK/API 미지원·새 로그인 경합에서는 원본과 barrier를 유지한다. 일반 `complete_account_link`를 복구 fallback으로 호출하지 않는다. 서버 응답과 adopting 기록 저장 사이 target이 유실된 구간에는 별도 receipt 계약이 필요하다.
+
 ### Firebase 인증과 AdMob SSV
 
 게임은 Custom Token 교환과 reward claim 상태 전이를 다시 구현하지 않는다.
