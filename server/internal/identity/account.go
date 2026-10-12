@@ -35,6 +35,8 @@ type AccountRepository interface {
 	) (ConnectedAccount, error)
 	DisconnectAccount(ctx context.Context, appID, provider, subject string) error
 	IsAccountLinked(ctx context.Context, appID, platformUserID string) (bool, error)
+	CreateAccountLinkRecoveryChallenge(ctx context.Context, appID, platformUserID, provider, nonce, expectedAppUserID string, expiresAt time.Time) error
+	RecoverAccount(ctx context.Context, appID, currentPlatformUserID, provider, subject, nonce, expectedAppUserID string, now time.Time) (ConnectedAccount, error)
 }
 
 type ConnectedAccount struct {

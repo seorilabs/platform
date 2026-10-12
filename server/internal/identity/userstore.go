@@ -97,15 +97,17 @@ type refreshDoc struct {
 }
 
 type accountChallengeDoc struct {
-	AppID          string    `firestore:"appId"`
-	PlatformUserID string    `firestore:"platformUserId"`
-	Provider       string    `firestore:"provider"`
-	ExpiresAt      time.Time `firestore:"expiresAt"`
-	CreatedAt      time.Time `firestore:"createdAt"`
-	ConsumedAt     time.Time `firestore:"consumedAt,omitempty"`
-	SubjectHash    string    `firestore:"subjectHash,omitempty"`
-	TargetUserID   string    `firestore:"targetPlatformUserId,omitempty"`
-	TTLAt          time.Time `firestore:"ttlAt"`
+	Purpose           string    `firestore:"purpose,omitempty"`
+	ExpectedAppUserID string    `firestore:"expectedAppUserId,omitempty"`
+	AppID             string    `firestore:"appId"`
+	PlatformUserID    string    `firestore:"platformUserId"`
+	Provider          string    `firestore:"provider"`
+	ExpiresAt         time.Time `firestore:"expiresAt"`
+	CreatedAt         time.Time `firestore:"createdAt"`
+	ConsumedAt        time.Time `firestore:"consumedAt,omitempty"`
+	SubjectHash       string    `firestore:"subjectHash,omitempty"`
+	TargetUserID      string    `firestore:"targetPlatformUserId,omitempty"`
+	TTLAt             time.Time `firestore:"ttlAt"`
 }
 
 type providerIdentityDoc struct {
@@ -782,7 +784,7 @@ func (r *StoreRepository) ConnectAccount(
 		if err := challengeSnap.DataTo(&challenge); err != nil {
 			return err
 		}
-		if challenge.AppID != appID || challenge.PlatformUserID != currentPlatformUserID ||
+		if (challenge.Purpose != "" && challenge.Purpose != "link") || challenge.AppID != appID || challenge.PlatformUserID != currentPlatformUserID ||
 			challenge.Provider != provider {
 			return platformerr.New(platformerr.CodeAuthInvalid, "다른 로그인 요청이에요")
 		}

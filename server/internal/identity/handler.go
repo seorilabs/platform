@@ -78,6 +78,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/firebase-custom-token", httpx.Wrap(h.createFirebaseCustomToken))
 	mux.HandleFunc("POST /v1/auth/account-link-challenges", httpx.Wrap(h.createAccountLinkChallenge))
 	mux.HandleFunc("POST /v1/auth/account-links", httpx.Wrap(h.createAccountLink))
+	mux.HandleFunc("POST /v1/auth/account-link-recovery-challenges", httpx.Wrap(h.createAccountLinkRecoveryChallenge))
+	mux.HandleFunc("POST /v1/auth/account-link-recoveries", httpx.Wrap(h.createAccountLinkRecovery))
 	if h.kakaoUnlink != nil {
 		mux.HandleFunc("POST /v1/auth/webhooks/kakao/unlink", httpx.Wrap(h.kakaoUnlinkWebhook))
 	}
