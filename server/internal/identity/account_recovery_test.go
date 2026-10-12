@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/registry"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -200,5 +201,55 @@ func TestAccountRecoveryHTTPContract(t *testing.T) {
 	}
 	if recovered.Result.Session.AppUserID != "target-uid" || !recovered.Result.Session.IsLinkedAccount || recovered.Result.Session.IsAnonymous || !recovered.Result.Restored {
 		t.Fatal("AR-1: response is not the verified canonical target")
+	}
+}
+
+func TestAccountRecoveryHTTPAttestationAndAuthentication(t *testing.T) {
+	accounts := newMemoryAccountRepo()
+	provider := &fakeAccountProvider{name: "kakao", subject: "subject"}
+	tokens := &fakeCustomTokenIssuer{token: "custom-token"}
+	svc := newAccountTestService(t, accounts, provider, tokens)
+	app := testApp()
+	app.Auth.AccountProviders = map[string]registry.AuthProviderConfig{"kakao": {Audience: "kakao-client-id"}}
+	app.Auth.RequireAccountLinkAppCheck = true
+	app.Features = map[string]bool{"firebase_custom_token_bridge": true}
+	app.FirebaseCustomTokenServiceAccount = "platform-auth@lizard-tycoon.iam.gserviceaccount.com"
+	svc.registry = registry.New(fakeSource{apps: []registry.App{app}})
+	svc.WithAppCheckVerifier(&fakeAppCheckVerifier{})
+	guest, err := svc.CreateSession(context.Background(), app.AppID, Credential{Kind: KindFirebaseIDToken, Value: "source"}, ClientInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	NewHandler(svc).Register(mux)
+	for _, path := range []string{"/v1/auth/account-link-recovery-challenges", "/v1/auth/account-link-recoveries"} {
+		for _, name := range []string{"missing token", "wrong app", "missing attestation", "unknown field"} {
+			t.Run(path+"/"+name, func(t *testing.T) {
+				body := map[string]string{"provider": "kakao", "expectedAppUserId": "target"}
+				if path == "/v1/auth/account-link-recoveries" {
+					body["nonce"] = "nonce"
+					body["idToken"] = "proof"
+				}
+				if name == "unknown field" {
+					body["recoveryOnly"] = "true"
+				}
+				encoded, _ := json.Marshal(body)
+				req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(encoded))
+				setAccountLinkHeaders(req, guest.PlatformToken)
+				switch name {
+				case "missing token":
+					req.Header.Del("Authorization")
+				case "wrong app":
+					req.Header.Set(AppHeader, "other-app")
+				case "missing attestation":
+					req.Header.Del("X-Firebase-AppCheck")
+				}
+				response := httptest.NewRecorder()
+				mux.ServeHTTP(response, req)
+				if response.Code < 400 || tokens.uid != "" || provider.token != "" {
+					t.Fatal("AR-3: unauthenticated request reached proof/mint")
+				}
+			})
+		}
 	}
 }
