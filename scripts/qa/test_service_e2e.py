@@ -28,7 +28,8 @@ class EvidenceGuards(unittest.TestCase):
             self.assertNotIn('synthetic-secret',''.join(p.read_text() for p in output.iterdir()))
             self.assertFalse(list(output.glob('development-evidence.*.json')))
             self.assertFalse((output/'runtime-result.json').exists())
-            with self.assertRaises(ValueError):passed_tests((output/'test-events.json').read_text().splitlines(),{'TestFailed'})
+            with self.assertRaisesRegex(ValueError,'failed or skipped'):
+                passed_tests([json.dumps(e) for e in json.loads((output/'test-events.json').read_text())],{'TestFailed'})
 
     def test_inventory_covers_source_routes(self):
         inventory=json.loads((ROOT/'docs/qa/feature-inventory.json').read_text())
