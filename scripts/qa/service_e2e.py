@@ -59,7 +59,7 @@ def passed_tests(lines, required):
 def preserve_failure(raw, output, sha, exit_code):
     events = []
     unstructured = 0
-    for line in raw.read_text().splitlines():
+    for line in raw.read_text(errors="replace").splitlines():
         try:
             event = json.loads(line)
             if not isinstance(event, dict) or "Action" not in event:
@@ -74,6 +74,19 @@ def preserve_failure(raw, output, sha, exit_code):
     (output / "test-events.json").write_text(json.dumps(events, indent=2) + "\n")
     (output / "failure-result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result))  # Only test names, packages, status and digest; no Output.
+
+
+def run_tests(private, output, sha, env, raw):
+    try:
+        run = subprocess.run(["go", "test", "-race", "-p=1", "-tags=integration", "-timeout=240s", "-count=1", "-json", *PACKAGES], cwd=ROOT / "server", env=env, stdout=raw, stderr=subprocess.STDOUT, timeout=600)
+    except subprocess.TimeoutExpired:
+        raw.flush()
+        preserve_failure(private / "go-raw.jsonl", output, sha, 124)
+        raise
+    if run.returncode != 0:
+        raw.flush()
+        preserve_failure(private / "go-raw.jsonl", output, sha, run.returncode)
+        raise ValueError(f"runtime exit {run.returncode}; private diagnostics: {private}")
 
 
 def fingerprint():
@@ -119,11 +132,7 @@ def execute(jar, output):
                 except OSError:
                     time.sleep(0.1)
             started = stamp()
-            run = subprocess.run(["go", "test", "-race", "-p=1", "-tags=integration", "-timeout=240s", "-count=1", "-json", *PACKAGES], cwd=ROOT / "server", env=env, stdout=raw, stderr=subprocess.STDOUT, timeout=600)
-            if run.returncode != 0:
-                raw.flush()
-                preserve_failure(private / "go-raw.jsonl", output, sha, run.returncode)
-                raise ValueError(f"runtime exit {run.returncode}; private diagnostics: {private}")
+            run_tests(private, output, sha, env, raw)
         finally:
             if process is not None:
                 process.terminate()

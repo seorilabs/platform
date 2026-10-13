@@ -5,14 +5,30 @@ import re
 import unittest
 from unittest.mock import patch
 import tempfile
+import subprocess
 import urllib.request
 from urllib.parse import urlsplit, parse_qs
 from archive_service_evidence import store, request, validate_bundle, NoCredentialRedirect
-from service_e2e import passed_tests, validate_plan, preserve_failure
+from service_e2e import passed_tests, validate_plan, preserve_failure, run_tests
 
 ROOT = Path(__file__).resolve().parents[2]
 
 class EvidenceGuards(unittest.TestCase):
+    def test_runtime_timeout_preserves_safe_failure_and_remains_failed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            private=Path(directory)
+            output=private/'public';output.mkdir()
+            path=private/'go-raw.jsonl'
+            path.write_bytes(b'non-UTF-8 \xff synthetic-secret\n')
+            with path.open('a') as raw,patch('subprocess.run',side_effect=subprocess.TimeoutExpired(['go','test'],600)),patch('builtins.print'):
+                with self.assertRaises(subprocess.TimeoutExpired):run_tests(private,output,'a'*40,{},raw)
+            result=json.loads((output/'failure-result.json').read_text())
+            self.assertEqual(result['exitCode'],124)
+            self.assertEqual(result['status'],'failed')
+            self.assertEqual(result['unstructuredLines'],1)
+            self.assertFalse(list(output.glob('development-evidence.*.json')))
+            self.assertNotIn('synthetic-secret',''.join(p.read_text() for p in output.iterdir()))
+
     def test_failed_execution_preserves_only_metadata_and_cannot_unlock_build(self):
         with tempfile.TemporaryDirectory() as directory:
             directory=Path(directory)
