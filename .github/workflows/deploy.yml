@@ -136,6 +136,10 @@ jobs:
           SERVICE_E2E_EVIDENCE_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+          # 고정 Firestore JAR의 class version65는 Java21을 요구한다.
+          export JAVA_HOME="${JAVA_HOME_21_X64:?GitHub-hosted Java21 is required}"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
           curl --fail --location --silent --show-error \
             https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar \
             --output "$RUNNER_TEMP/firestore-emulator.jar"
