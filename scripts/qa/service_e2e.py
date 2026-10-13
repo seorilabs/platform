@@ -56,6 +56,39 @@ def passed_tests(lines, required):
     return safe, counts
 
 
+def preserve_failure(raw, output, sha, exit_code):
+    events = []
+    unstructured = 0
+    for line in raw.read_text(errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+            if not isinstance(event, dict) or "Action" not in event:
+                raise ValueError("not a test event")
+        except ValueError:
+            unstructured += 1
+            continue
+        events.append({k: event[k] for k in ("Time", "Action", "Package", "Test", "Elapsed") if k in event})
+    result = {"sourceSha": sha, "status": "failed", "exitCode": exit_code,
+              "failed": [e for e in events if e["Action"] in ("fail", "build-fail")],
+              "unstructuredLines": unstructured, "rawLogSha256": hashlib.sha256(raw.read_bytes()).hexdigest()}
+    (output / "test-events.json").write_text(json.dumps(events, indent=2) + "\n")
+    (output / "failure-result.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result))  # Only test names, packages, status and digest; no Output.
+
+
+def run_tests(private, output, sha, env, raw):
+    try:
+        run = subprocess.run(["go", "test", "-race", "-p=1", "-tags=integration", "-timeout=240s", "-count=1", "-json", *PACKAGES], cwd=ROOT / "server", env=env, stdout=raw, stderr=subprocess.STDOUT, timeout=600)
+    except subprocess.TimeoutExpired:
+        raw.flush()
+        preserve_failure(private / "go-raw.jsonl", output, sha, 124)
+        raise
+    if run.returncode != 0:
+        raw.flush()
+        preserve_failure(private / "go-raw.jsonl", output, sha, run.returncode)
+        raise ValueError(f"runtime exit {run.returncode}; private diagnostics: {private}")
+
+
 def fingerprint():
     files = [ROOT / "docs/qa/feature-inventory.json", ROOT / "docs/qa/service-e2e-plan.json", ROOT / ".github/workflows/deploy.yml", ROOT / "server/go.mod", ROOT / "server/go.sum"]
     files += sorted((ROOT / "registry/apps").glob("*.json"))
@@ -99,9 +132,7 @@ def execute(jar, output):
                 except OSError:
                     time.sleep(0.1)
             started = stamp()
-            run = subprocess.run(["go", "test", "-race", "-p=1", "-tags=integration", "-timeout=240s", "-count=1", "-json", *PACKAGES], cwd=ROOT / "server", env=env, stdout=raw, stderr=subprocess.STDOUT, timeout=600)
-            if run.returncode != 0:
-                raise ValueError(f"runtime exit {run.returncode}; private diagnostics: {private}")
+            run_tests(private, output, sha, env, raw)
         finally:
             if process is not None:
                 process.terminate()
