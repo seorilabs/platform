@@ -81,25 +81,25 @@ def execute(jar, output):
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     env = dict(os.environ)
-    env.update(FIRESTORE_EMULATOR_HOST=f"127.0.0.1:{port}", GOOGLE_CLOUD_PROJECT="demo-platform-service-e2e", GCLOUD_PROJECT="demo-platform-service-e2e")
+    env.update(GOMAXPROCS="2", FIRESTORE_EMULATOR_HOST=f"127.0.0.1:{port}", GOOGLE_CLOUD_PROJECT="demo-platform-service-e2e", GCLOUD_PROJECT="demo-platform-service-e2e")
     # The emulator owns all of this disposable database. No production identity is inherited.
     for key in ("GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", "FIREBASE_TOKEN"):
         env.pop(key, None)
     process = None
     with (private / "emulator.log").open("w") as emulator_log, (private / "go-raw.jsonl").open("w") as raw:
         try:
-            process = subprocess.Popen(["java", "-jar", str(jar), "--host", "127.0.0.1", "--port", str(port), "--project_id", "demo-platform-service-e2e"], stdout=emulator_log, stderr=subprocess.STDOUT, env=env)
-            deadline = time.monotonic() + 45
+            process = subprocess.Popen(["java", "-Xmx512m", "-XX:ActiveProcessorCount=2", "-jar", str(jar), "--host", "127.0.0.1", "--port", str(port), "--project_id", "demo-platform-service-e2e"], stdout=emulator_log, stderr=subprocess.STDOUT, env=env)
+            deadline = time.monotonic() + 120
             while True:
                 if process.poll() is not None or time.monotonic() >= deadline:
-                    raise ValueError("emulator failed to start")
+                    raise ValueError(f"emulator failed to start; private diagnostics: {private}")
                 try:
                     with socket.create_connection(("127.0.0.1", port), timeout=0.3):
                         break
                 except OSError:
                     time.sleep(0.1)
             started = stamp()
-            run = subprocess.run(["go", "test", "-race", "-tags=integration", "-timeout=240s", "-count=1", "-json", *PACKAGES], cwd=ROOT / "server", env=env, stdout=raw, stderr=subprocess.STDOUT, timeout=600)
+            run = subprocess.run(["go", "test", "-race", "-p=1", "-tags=integration", "-timeout=240s", "-count=1", "-json", *PACKAGES], cwd=ROOT / "server", env=env, stdout=raw, stderr=subprocess.STDOUT, timeout=600)
             if run.returncode != 0:
                 raise ValueError(f"runtime exit {run.returncode}; private diagnostics: {private}")
         finally:
@@ -121,7 +121,7 @@ def execute(jar, output):
                "rawLogSha256": raw_hash, "isolation": "fresh owned loopback Firestore emulator; demo-platform-service-e2e plus test-only projects/prefixes; no production credentials"}
     (output / "runtime-result.json").write_text(json.dumps(context, ensure_ascii=False, indent=2) + "\n")
     evidence_base = os.environ.get("SERVICE_E2E_EVIDENCE_URL", str(output))
-    result_ref = f"{evidence_base}; development-evidence draft asset runtime-result.{sha}.json"
+    result_ref = f"{evidence_base}; development-evidence draft asset runtime-result.{sha}.{raw_hash}.json"
     scenarios = [{"id": s["id"], "status": "passed", "featureIds": s["featureIds"], "evidence": [result_ref + "#" + t for t in s["requiredTests"]]} for s in plan["scenarios"]]
     acceptance = [{"id": ac, "status": "passed", "evidence": [result_ref]} for ac in plan["acceptance"]]
     tdd = [{"acceptanceId": "AC-DELETE-CODE", "mode": "test-first", "redEvidence": "source f58999a runtime-ninth 500/403: " + json.dumps(plan["redEvidence"], sort_keys=True), "greenEvidence": result_ref + "#TestServiceRuntimeDeletionRequestWorkerRetryAndReceipt"}]

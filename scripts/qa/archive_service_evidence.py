@@ -8,6 +8,18 @@ from pathlib import Path
 import re
 import subprocess
 import urllib.request
+from urllib.parse import urlsplit
+from service_e2e import passed_tests
+
+class NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlsplit(newurl).scheme != "https":
+            raise ValueError("insecure archive redirect")
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if urlsplit(req.full_url).netloc != urlsplit(newurl).netloc:
+            redirected.remove_header("Authorization")
+        return redirected
+
 
 REPOSITORY = "seorilabs/platform"
 TAG = "development-evidence"
@@ -20,7 +32,7 @@ def request(path, token, body=None, binary=False):
     if body is not None:
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         headers["Content-Type"] = "application/octet-stream" if isinstance(body, bytes) else "application/json"
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers, data=data), timeout=45) as response:
+    with urllib.request.build_opener(NoCredentialRedirect()).open(urllib.request.Request(url, headers=headers, data=data), timeout=45) as response:
         raw = response.read()
     return raw if binary else json.loads(raw)
 
@@ -44,7 +56,12 @@ def store(directory):
     sha = document["sourceSha"]
     if not re.fullmatch(r"[a-f0-9]{40}", sha) or document["repository"] != REPOSITORY:
         raise ValueError("evidence candidate mismatch")
-    assets = {files[0].name: files[0].read_bytes(), f"runtime-result.{sha}.json": (directory / "runtime-result.json").read_bytes(), f"test-events.{sha}.json": (directory / "test-events.json").read_bytes()}
+    runtime = json.loads((directory / "runtime-result.json").read_text())
+    digest = runtime["rawLogSha256"]
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise ValueError("invalid raw log fingerprint")
+    # The canonical asset is uploaded last. Interrupted writes cannot unlock builds.
+    assets = {f"runtime-result.{sha}.{digest}.json": (directory / "runtime-result.json").read_bytes(), f"test-events.{sha}.{digest}.json": (directory / "test-events.json").read_bytes(), files[0].name: files[0].read_bytes()}
     for raw in assets.values():
         if re.search(rb"-----BEGIN .*PRIVATE KEY|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", raw):
             raise ValueError("secret-shaped data in archive")
@@ -70,7 +87,25 @@ def store(directory):
         previous = json.loads(request(canonical[0]["url"], token, binary=True))
         if previous["sourceSha"] != sha or previous["e2e"]["environment"]["configurationFingerprint"] != document["e2e"]["environment"]["configurationFingerprint"]:
             raise ValueError("existing evidence configuration differs; never overwrite")
-        print("동일 후보의 최초 근거 보존; 최신 중앙 readback이 유효기간과 전체 내용을 다시 판정한다.")
+        ref = previous["acceptance"][0]["evidence"][0]
+        match = re.search(r"runtime-result\." + sha + r"\.([a-f0-9]{64})\.json", ref)
+        if match is None:
+            raise ValueError("canonical evidence lacks durable runtime reference")
+        prior_hash = match.group(1)
+        restored = {}
+        for name in [f"runtime-result.{sha}.{prior_hash}.json", f"test-events.{sha}.{prior_hash}.json"]:
+            found = [a for a in existing if a["name"] == name]
+            if len(found) != 1:
+                raise ValueError("incomplete canonical evidence archive")
+            restored[name] = json.loads(request(found[0]["url"], token, binary=True))
+        prior_runtime = restored[f"runtime-result.{sha}.{prior_hash}.json"]
+        if prior_runtime["sourceSha"] != sha or prior_runtime["configurationFingerprint"] != previous["e2e"]["environment"]["configurationFingerprint"] or prior_runtime["completedAt"] != previous["e2e"]["completedAt"]:
+            raise ValueError("archived runtime candidate mismatch")
+        root = Path(__file__).resolve().parents[2]
+        plan = json.loads((root / "docs/qa/service-e2e-plan.json").read_text())
+        required = {t for s in plan["scenarios"] for t in s["requiredTests"]}
+        passed_tests([json.dumps(event) for event in restored[f"test-events.{sha}.{prior_hash}.json"]], required)
+        print("최초 후보 근거와 두 실행 자산 readback 확인; 중앙 검증이 유효기간을 다시 판정한다.")
         return
     for name, raw in assets.items():
         matches = [a for a in existing if a["name"] == name]

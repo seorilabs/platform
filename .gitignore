@@ -39,3 +39,6 @@ firestore-debug.log
 node_modules/
 service-account*.json
 ui-debug.log
+
+# Python validation cache
+__pycache__/
