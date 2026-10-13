@@ -50,14 +50,18 @@ func TestServiceRuntimeDeletionRequestWorkerRetryAndReceipt(t *testing.T) {
 	now := time.Now()
 	queue := identity.NewStoreRepository(f.store).WithClock(func() time.Time { return now })
 	providers := &runtimeDeletionProviders{now: &now, fail: true}
-	w := &identity.DeletionWorker{Queue: queue, Registry: f.registry, Firebase: providers, Ads: ads.NewStoreRepository(f.store), Events: providers, Identity: queue}
+	newWorker := func() *identity.DeletionWorker {
+		queue = identity.NewStoreRepository(f.store).WithClock(func() time.Time { return now })
+		return &identity.DeletionWorker{Queue: queue, Registry: f.registry, Firebase: providers, Ads: ads.NewStoreRepository(f.store), Events: providers, Identity: queue}
+	}
+	w := newWorker()
 	if err := w.RunOnce(t.Context()); err == nil {
 		t.Fatal("provider failure must be recorded for retry")
 	}
 	// 저장된 재시도·보존기간을 가상 시계로 진행한다. 실시간 경과 증거가 아니다.
 	f.restart()
 	now = now.Add(6 * time.Minute)
-	w.Registry = f.registry
+	w = newWorker()
 	for range 3 {
 		if err := w.RunOnce(t.Context()); err != nil {
 			t.Fatal(err)
