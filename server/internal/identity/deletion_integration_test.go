@@ -26,7 +26,8 @@ func TestDeletionTransactionRecoveryAndCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	now := time.Now().UTC()
+	// 운영체제 시계 정밀도에 기대지 않고 Firestore의 마이크로초 저장을 검증한다.
+	now := time.Date(2026, 10, 14, 0, 0, 0, 123456789, time.UTC)
 	repo := NewStoreRepository(st)
 	repo.now = func() time.Time { return now }
 	app := deletionTestApp()
@@ -104,8 +105,13 @@ func TestDeletionTransactionRecoveryAndCleanup(t *testing.T) {
 			if err != nil || len(jobs) != 1 || jobs[0].AnalyticsJobRef != "asia-northeast3/long-job" {
 				t.Fatal("long query reference lost", err)
 			}
-			if jobs[0].AnalyticsPhaseAcceptedAt == nil || !jobs[0].AnalyticsPhaseAcceptedAt.Equal(accepted) {
+			// Firestore는 마이크로초 아래를 내림한다. 재시도는 저장된 접수 시각을 보존해야 한다.
+			expectedAccepted := accepted.Truncate(time.Microsecond)
+			if jobs[0].AnalyticsPhaseAcceptedAt == nil || !jobs[0].AnalyticsPhaseAcceptedAt.Equal(expectedAccepted) {
 				t.Fatal("Google acceptance was lost across copy cleanup retry")
+			}
+			if jobs[0].GoogleDeletionRequestedAt == nil || !jobs[0].GoogleDeletionRequestedAt.Equal(expectedAccepted) {
+				t.Fatal("Google request time was lost across copy cleanup retry")
 			}
 		}
 		if step == 3 {
