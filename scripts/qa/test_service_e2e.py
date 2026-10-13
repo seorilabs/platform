@@ -8,11 +8,28 @@ import tempfile
 import urllib.request
 from urllib.parse import urlsplit, parse_qs
 from archive_service_evidence import store, request, validate_bundle, NoCredentialRedirect
-from service_e2e import passed_tests, validate_plan
+from service_e2e import passed_tests, validate_plan, preserve_failure
 
 ROOT = Path(__file__).resolve().parents[2]
 
 class EvidenceGuards(unittest.TestCase):
+    def test_failed_execution_preserves_only_metadata_and_cannot_unlock_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory=Path(directory)
+            raw=directory/'private-raw.jsonl'
+            raw.write_text(json.dumps({'Action':'fail','Package':'synthetic/package','Test':'TestFailed','Output':'synthetic-secret'})+'\n'+'unstructured synthetic-secret\n')
+            output=directory/'public'
+            output.mkdir()
+            with patch('builtins.print'):preserve_failure(raw,output,'a'*40,1)
+            result=json.loads((output/'failure-result.json').read_text())
+            self.assertEqual(result['status'],'failed')
+            self.assertEqual(result['failed'][0]['Test'],'TestFailed')
+            self.assertEqual(result['unstructuredLines'],1)
+            self.assertNotIn('synthetic-secret',''.join(p.read_text() for p in output.iterdir()))
+            self.assertFalse(list(output.glob('development-evidence.*.json')))
+            self.assertFalse((output/'runtime-result.json').exists())
+            with self.assertRaises(ValueError):passed_tests((output/'test-events.json').read_text().splitlines(),{'TestFailed'})
+
     def test_inventory_covers_source_routes(self):
         inventory=json.loads((ROOT/'docs/qa/feature-inventory.json').read_text())
         plan=json.loads((ROOT/'docs/qa/service-e2e-plan.json').read_text())
