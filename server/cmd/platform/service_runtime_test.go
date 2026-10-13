@@ -192,7 +192,7 @@ func (f *runtimeFixture) request(method, path, token string, body any, want int)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	var envelope map[string]any
 	if err = json.NewDecoder(response.Body).Decode(&envelope); err != nil && err != io.EOF && strings.Contains(response.Header.Get("Content-Type"), "application/json") {
 		f.t.Fatalf("decode %s: %v", path, err)

@@ -92,7 +92,7 @@ func TestServiceRuntimeEventIngestRelayDebugAndRecovery(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		if res.StatusCode != want {
 			t.Fatalf("ingest status=%d want=%d", res.StatusCode, want)
 		}

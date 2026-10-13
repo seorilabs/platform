@@ -29,7 +29,7 @@ func TestServiceRuntimeOperationalDeliveryRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	now := time.Now().UTC()
 	repo := NewRepository(st)
 	repo.now = func() time.Time { return now }
@@ -47,8 +47,8 @@ func TestServiceRuntimeOperationalDeliveryRestart(t *testing.T) {
 			return
 		}
 		mac := hmac.New(sha256.New, secret)
-		mac.Write([]byte(r.Header.Get("X-Seori-Timestamp") + "."))
-		mac.Write(body)
+		_, _ = mac.Write([]byte(r.Header.Get("X-Seori-Timestamp") + "."))
+		_, _ = mac.Write(body)
 		want := "v1=" + hex.EncodeToString(mac.Sum(nil))
 		if !hmac.Equal([]byte(want), []byte(r.Header.Get("X-Seori-Signature"))) {
 			t.Error("invalid signature")

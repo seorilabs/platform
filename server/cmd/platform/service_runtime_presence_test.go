@@ -58,7 +58,7 @@ func TestServiceRuntimePresenceSignedTokenAndEdgeRetry(t *testing.T) {
 	edgeMux := http.NewServeMux()
 	presenceedge.NewHandler(verifier, projection).WithClock(func() time.Time { return time.Unix(0, clock.Load()).UTC() }).Register(edgeMux)
 	edge := httptest.NewServer(edgeMux)
-	defer edge.Close()
+	defer func() { _ = edge.Close() }()
 	f.register = func(mux *http.ServeMux) { presence.NewHandler(f.registry, issuer, edge.URL).Register(mux) }
 	f.saveApp()
 	issue := func(debug bool) map[string]any {
@@ -73,7 +73,7 @@ func TestServiceRuntimePresenceSignedTokenAndEdgeRetry(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		var envelope struct {
 			Result map[string]any `json:"result"`
 		}
@@ -95,7 +95,7 @@ func TestServiceRuntimePresenceSignedTokenAndEdgeRetry(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		res.Body.Close()
+		_ = res.Body.Close()
 		if res.StatusCode != status {
 			t.Fatalf("heartbeat %d want %d", res.StatusCode, status)
 		}
