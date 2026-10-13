@@ -25,6 +25,14 @@ def require(condition: bool, message: str) -> None:
         raise SystemExit(1)
 
 
+require("needs: [service-e2e]" in text, "빌드 전 service E2E 의존성이 없다.")
+require("needs: [build, approval-target, service-e2e]" in text, "배포에 검증 job 의존성이 없다.")
+require("Latest central before-deploy gate" in text, "배포 전 최신 중앙 검증이 없다.")
+require("--phase before-build" in text and "--phase before-deploy" in text, "중앙 검증 두 단계가 필요하다.")
+require("--configuration-fingerprint" in text, "설정 지문 대조가 없다.")
+require(text.find("Latest central before-deploy gate") < text.find("gcloud run deploy platform-api"), "운영 변경 전에 중앙 검증이 필요하다.")
+require("environment: production" in text, "기존 production 승인 경계를 유지해야 한다.")
+
 ads_start = text.find("gcloud run deploy platform-ads")
 require(ads_start >= 0, "platform-ads 배포 명령이 없다.")
 ads_end = text.find("--quiet", ads_start)

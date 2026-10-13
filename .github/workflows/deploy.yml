@@ -109,8 +109,63 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  service-e2e:
+    name: Service runtime and central before-build gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      # 중앙 verifier가 draft evidence Release를 읽으려면 push 권한이 필요하다.
+      contents: write
+    outputs:
+      fingerprint: ${{ steps.runtime.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          check-latest: false
+      - name: Execute isolated whole service runtime
+        id: runtime
+        env:
+          SERVICE_E2E_EVIDENCE_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar \
+            --output "$RUNNER_TEMP/firestore-emulator.jar"
+          python3 scripts/qa/service_e2e.py --emulator-jar "$RUNNER_TEMP/firestore-emulator.jar" \
+            --output "$RUNNER_TEMP/service-evidence"
+          echo "fingerprint=$(python3 scripts/qa/service_e2e.py --fingerprint)" >> "$GITHUB_OUTPUT"
+      - name: Latest central validation and durable archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/seorilabs/.github.git "$RUNNER_TEMP/central-before-build"
+          npm ci --prefix "$RUNNER_TEMP/central-before-build" --ignore-scripts --no-audit --no-fund
+          node "$RUNNER_TEMP/central-before-build/scripts/release/verify-development-evidence.mjs" \
+            --file "$RUNNER_TEMP/service-evidence/development-evidence.${GITHUB_SHA}.service.before-build.json" \
+            --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --target service --phase before-build \
+            --configuration-fingerprint "${{ steps.runtime.outputs.fingerprint }}"
+          python3 scripts/qa/archive_service_evidence.py --directory "$RUNNER_TEMP/service-evidence"
+          node "$RUNNER_TEMP/central-before-build/scripts/release/verify-development-evidence.mjs" \
+            --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --target service --phase before-build \
+            --configuration-fingerprint "${{ steps.runtime.outputs.fingerprint }}"
+          git -C "$RUNNER_TEMP/central-before-build" rev-parse HEAD
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: service-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/service-evidence/
+          if-no-files-found: error
+          retention-days: 3
+
   build:
     name: Build and push image
+    needs: [service-e2e]
     # 빌드는 Cloud Build에서 돌므로 러너에는 gcloud만 있으면 된다.
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -184,16 +239,38 @@ jobs:
 
   deploy:
     name: Deploy production runtime
-    needs: [build, approval-target]
+    needs: [build, approval-target, service-e2e]
     # gcloud만 쓰므로 Docker가 필요 없다.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # public 전환으로 environment 보호 규칙을 쓸 수 있게 됐다. required
     # reviewer가 걸려 있으면 main 머지가 곧바로 배포되지 않고 여기서 멈춘다.
     environment: production
+    permissions:
+      contents: write # draft 보관함 readback에 필요한 최소 GitHub 권한
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          check-latest: false
+      - name: Latest central before-deploy gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected="${{ needs.service-e2e.outputs.fingerprint }}"
+          actual="$(python3 scripts/qa/service_e2e.py --fingerprint)"
+          test "$actual" = "$expected"
+          git clone --depth=1 https://github.com/seorilabs/.github.git "$RUNNER_TEMP/central-before-deploy"
+          npm ci --prefix "$RUNNER_TEMP/central-before-deploy" --ignore-scripts --no-audit --no-fund
+          node "$RUNNER_TEMP/central-before-deploy/scripts/release/verify-development-evidence.mjs" \
+            --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --target service --phase before-deploy \
+            --configuration-fingerprint "$actual"
+          git -C "$RUNNER_TEMP/central-before-deploy" rev-parse HEAD
 
       # 신규 앱은 registry의 앱별 환경을 사용한다. 전역 환경은 기존 경로를
       # 유지하는 legacy 앱에만 적용되므로 그 앱만 production 고정값과 대조한다.

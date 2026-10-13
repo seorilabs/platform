@@ -28,6 +28,8 @@ on:
       - "registry/**"
       - "deploy/rpi/**"
       - "scripts/check_deploy_workflow.sh"
+      - "scripts/qa/**"
+      - "docs/qa/*.json"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
       - ".github/workflows/deploy.yml"
@@ -40,6 +42,8 @@ on:
       - "registry/**"
       - "deploy/rpi/**"
       - "scripts/check_deploy_workflow.sh"
+      - "scripts/qa/**"
+      - "docs/qa/*.json"
       - "scripts/check_spec_routes.sh"
       - ".github/workflows/checks-go.yml"
       - ".github/workflows/deploy.yml"
@@ -76,6 +80,10 @@ jobs:
       - name: 스펙과 라우트 대조
         working-directory: .
         run: bash scripts/check_spec_routes.sh
+
+      - name: 서비스 근거 누락/skip/보관 안전성 검사
+        working-directory: .
+        run: python3 -m unittest discover -s scripts/qa -v
 
       - name: production 배포 경계 검증
         working-directory: .
