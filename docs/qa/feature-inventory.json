@@ -1,0 +1,427 @@
+{
+  "schemaVersion": 1,
+  "features": [
+    {
+      "id": "identity-session",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/identity/**"
+      ]
+    },
+    {
+      "id": "firebase-bridge",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/identity/**"
+      ]
+    },
+    {
+      "id": "account-link-recovery",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/identity/**"
+      ]
+    },
+    {
+      "id": "account-deletion",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/identity/**"
+      ]
+    },
+    {
+      "id": "configuration",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/remoteconfig/**"
+      ]
+    },
+    {
+      "id": "content",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/content/**"
+      ]
+    },
+    {
+      "id": "inbox",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/inbox/**"
+      ]
+    },
+    {
+      "id": "ads-rewards",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/ads/**"
+      ]
+    },
+    {
+      "id": "purchase-entitlements",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/iap/**"
+      ]
+    },
+    {
+      "id": "economy-boxes",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/iap/**"
+      ]
+    },
+    {
+      "id": "refund-sandbox-reset",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/iap/**"
+      ]
+    },
+    {
+      "id": "operator-administration",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/admin/**"
+      ]
+    },
+    {
+      "id": "events-analytics",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/events/**"
+      ]
+    },
+    {
+      "id": "presence",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/presence*/**"
+      ]
+    },
+    {
+      "id": "operational-outbox",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/operational/**"
+      ]
+    },
+    {
+      "id": "role-registry-routing",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/cmd/platform/**"
+      ]
+    }
+  ],
+  "apiRoutes": [
+    {
+      "path": "/inbox",
+      "featureId": "inbox"
+    },
+    {
+      "path": "/inbox/{id}/read",
+      "featureId": "inbox"
+    },
+    {
+      "path": "/inbox/{id}/claim",
+      "featureId": "inbox"
+    },
+    {
+      "path": "/inbox/claim-batch",
+      "featureId": "inbox"
+    },
+    {
+      "path": "/admin/apps/{appId}/inbox",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/auth/session",
+      "featureId": "identity-session"
+    },
+    {
+      "path": "/auth/refresh",
+      "featureId": "identity-session"
+    },
+    {
+      "path": "/auth/firebase-custom-token",
+      "featureId": "firebase-bridge"
+    },
+    {
+      "path": "/auth/account-link-challenges",
+      "featureId": "account-link-recovery"
+    },
+    {
+      "path": "/auth/account-links",
+      "featureId": "account-link-recovery"
+    },
+    {
+      "path": "/auth/account-link-recovery-challenges",
+      "featureId": "account-link-recovery"
+    },
+    {
+      "path": "/auth/account-link-recoveries",
+      "featureId": "account-link-recovery"
+    },
+    {
+      "path": "/auth/webhooks/kakao/unlink",
+      "featureId": "identity-session"
+    },
+    {
+      "path": "/auth/account-deletions",
+      "featureId": "account-deletion"
+    },
+    {
+      "path": "/auth/account-deletions/status",
+      "featureId": "account-deletion"
+    },
+    {
+      "path": "/auth/firebase-account",
+      "featureId": "firebase-bridge"
+    },
+    {
+      "path": "/config",
+      "featureId": "configuration"
+    },
+    {
+      "path": "/content/version",
+      "featureId": "content"
+    },
+    {
+      "path": "/content/readings:resolve",
+      "featureId": "content"
+    },
+    {
+      "path": "/content/pairings:resolve",
+      "featureId": "content"
+    },
+    {
+      "path": "/content/terms/{termId}",
+      "featureId": "content"
+    },
+    {
+      "path": "/content/deep-access",
+      "featureId": "content"
+    },
+    {
+      "path": "/presence/token",
+      "featureId": "presence"
+    },
+    {
+      "path": "/presence/heartbeat",
+      "featureId": "presence"
+    },
+    {
+      "path": "/events",
+      "featureId": "events-analytics"
+    },
+    {
+      "path": "/users/me",
+      "featureId": "identity-session"
+    },
+    {
+      "path": "/admin/apps/{appId}/iap/economy/{puid}",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/iap/economy/{puid}/tester",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/iap/economy",
+      "featureId": "economy-boxes"
+    },
+    {
+      "path": "/iap/economy/transactions",
+      "featureId": "economy-boxes"
+    },
+    {
+      "path": "/iap/boxes",
+      "featureId": "economy-boxes"
+    },
+    {
+      "path": "/iap/boxes/open",
+      "featureId": "economy-boxes"
+    },
+    {
+      "path": "/iap/verify",
+      "featureId": "purchase-entitlements"
+    },
+    {
+      "path": "/iap/entitlements",
+      "featureId": "purchase-entitlements"
+    },
+    {
+      "path": "/iap/account-references",
+      "featureId": "purchase-entitlements"
+    },
+    {
+      "path": "/iap/webhooks/apple",
+      "featureId": "refund-sandbox-reset"
+    },
+    {
+      "path": "/iap/webhooks/play",
+      "featureId": "refund-sandbox-reset"
+    },
+    {
+      "path": "/iap/webhooks/apple/{appId}",
+      "featureId": "refund-sandbox-reset"
+    },
+    {
+      "path": "/iap/webhooks/play/{appId}",
+      "featureId": "refund-sandbox-reset"
+    },
+    {
+      "path": "/admin/health",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/metrics",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/orders/recent",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/users/{reference}",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/users/{puid}/entitlements",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/operator-grants",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/iap/catalog",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/iap/refund-reviews",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/iap/refund-reviews/{reviewId}/decision",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/entitlements/grant",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/entitlements/revoke",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/iap/sandbox-reset",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/iap/sandbox-resets/{requestId}",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/iap/sandbox-resets/{requestId}/resume",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/iap/sandbox-resets/{requestId}/close-not-started",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/config/maintenance",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/config/update-policy",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/config/update-policy",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/ads/policy",
+      "featureId": "ads-rewards"
+    },
+    {
+      "path": "/ads/reward-claims",
+      "featureId": "ads-rewards"
+    },
+    {
+      "path": "/ads/reward-claims/{claimId}",
+      "featureId": "ads-rewards"
+    },
+    {
+      "path": "/ads/reward-claims/{claimId}/confirm",
+      "featureId": "ads-rewards"
+    },
+    {
+      "path": "/ads/reward-claims/{claimId}/ack",
+      "featureId": "ads-rewards"
+    },
+    {
+      "path": "/ads/admob/ssv/{appId}",
+      "featureId": "ads-rewards"
+    },
+    {
+      "path": "/admin/ads/health",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/blocks",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/blocks/{uid}",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/ads/config",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/apps/{appId}/ads/health",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/users/{puid}/ads",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/ads/reward-claims",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/ads/suppressions/grant",
+      "featureId": "operator-administration"
+    },
+    {
+      "path": "/admin/ads/suppressions/revoke",
+      "featureId": "operator-administration"
+    }
+  ],
+  "nonHttp": [
+    "operational-outbox",
+    "role-registry-routing"
+  ]
+}

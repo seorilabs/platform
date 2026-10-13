@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "design": {
+    "id": "TC-SDK100-SERVICE-EVIDENCE-v1",
+    "approvedCommit": "1d130acfafe5826953644cf283e093be4db814b5",
+    "approverKind": "human",
+    "approver": "project-owner",
+    "approvalEvidence": "https://github.com/seorilabs/platform/pull/228#issuecomment-6146552828 (direct conversation: 설계·수정·검증 후 병합·운영 배포 승인)",
+    "document": "docs/design/2026-10-13-platform-service-evidence/design.md"
+  },
+  "scenarios": [
+    {
+      "id": "identity-session",
+      "featureIds": [
+        "identity-session"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeAccountRecoveryAndInbox"
+      ]
+    },
+    {
+      "id": "firebase-bridge",
+      "featureIds": [
+        "firebase-bridge"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeAccountRecoveryAndInbox"
+      ]
+    },
+    {
+      "id": "account-link-recovery",
+      "featureIds": [
+        "account-link-recovery"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeAccountRecoveryAndInbox",
+        "TestAccountRecoveryTransaction"
+      ]
+    },
+    {
+      "id": "account-deletion",
+      "featureIds": [
+        "account-deletion"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeDeletionRequestWorkerRetryAndReceipt",
+        "TestServiceRuntimeStorageFailureStaysInternal",
+        "TestDeletionTransactionRecoveryAndCleanup"
+      ]
+    },
+    {
+      "id": "configuration",
+      "featureIds": [
+        "configuration"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeAdminPermissionsConfigBlocksAndInbox"
+      ]
+    },
+    {
+      "id": "content",
+      "featureIds": [
+        "content"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeContentReleaseReadingPairingAndRestart",
+        "TestContentUnitsAreAtomicIdempotentAndReflectRevocation"
+      ]
+    },
+    {
+      "id": "inbox",
+      "featureIds": [
+        "inbox"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeAccountRecoveryAndInbox",
+        "TestServiceRuntimeAdminPermissionsConfigBlocksAndInbox",
+        "TestInboxTransactions"
+      ]
+    },
+    {
+      "id": "ads-rewards",
+      "featureIds": [
+        "ads-rewards"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeAdsSignedSSVAndDelivery",
+        "TestAdsClaimReplayLimitAndTransactionAreAtomic"
+      ]
+    },
+    {
+      "id": "purchase-entitlements",
+      "featureIds": [
+        "purchase-entitlements"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimePurchaseCompletionWorkerAndRefund",
+        "TestGrantIdempotency",
+        "TestReinstallTransfersOwnership"
+      ]
+    },
+    {
+      "id": "economy-boxes",
+      "featureIds": [
+        "economy-boxes"
+      ],
+      "requiredTests": [
+        "TestEconomyConcurrentCreditSpendReplayAndRefund",
+        "TestBoxOpenIsAtomicIdempotentAndTracksRefundDebt"
+      ]
+    },
+    {
+      "id": "refund-sandbox-reset",
+      "featureIds": [
+        "refund-sandbox-reset"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimePurchaseCompletionWorkerAndRefund",
+        "TestRefundReviewLifecycle",
+        "TestSandboxResetPreparedIntentResumesAfterInterruption"
+      ]
+    },
+    {
+      "id": "operator-administration",
+      "featureIds": [
+        "operator-administration"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeAdminPermissionsConfigBlocksAndInbox",
+        "TestOperatorGrantIsAtomicAndPayloadBound",
+        "TestAdminMutationRateGateIsDurable"
+      ]
+    },
+    {
+      "id": "events-analytics",
+      "featureIds": [
+        "events-analytics"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeEventIngestRelayDebugAndRecovery"
+      ]
+    },
+    {
+      "id": "presence",
+      "featureIds": [
+        "presence"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimePresenceSignedTokenAndEdgeRetry"
+      ]
+    },
+    {
+      "id": "operational-outbox",
+      "featureIds": [
+        "operational-outbox"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeOperationalDeliveryRestart"
+      ]
+    },
+    {
+      "id": "role-registry-routing",
+      "featureIds": [
+        "role-registry-routing"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimeRoleRoutingAndRegistry"
+      ]
+    }
+  ],
+  "boundaries": [
+    "actual TCP HTTP product handlers and production cryptographic verifiers",
+    "actual isolated Firestore transactions and persisted restart",
+    "external IAM/App Check, market responses, GCS, BigQuery, GA4, Backoffice and MySQL projection ports are local synthetic fixtures",
+    "provider/device/real purchase/native ad and MySQL deployment proof are not included",
+    "retry and deletion retention use explicitly advanced test clocks"
+  ],
+  "acceptance": [
+    "AC-DELETE-CODE",
+    "AC-SERVICE-RUNTIME",
+    "AC-EVIDENCE",
+    "AC-RELEASE-GATE"
+  ],
+  "redEvidence": {
+    "sourceSha": "f58999adf562c67f40a2e2d7d8e9faffc197a4f5",
+    "execution": "runtime-ninth, 2026-10-13T13:05:10Z",
+    "test": "TestServiceRuntimeDeletionRequestWorkerRetryAndReceipt",
+    "expected": 403,
+    "actual": 500,
+    "logSha256": "55efd8a2df26bd711cf2e1c14bff3736c593c00cdedfafb2b041d3977a3b46c7"
+  }
+}
