@@ -129,9 +129,9 @@ iOS 앱은 StoreKit에서 확인한 실제 환경을 제공해야 한다. 명시
 환경이 비었거나 잘못됐으면 네트워크 요청을 보내지 않는다. 클라이언트 설정은
 지급 증거가 아니며 서버의 앱별 환경 허용과 Apple 거래 검증이 필요하다.
 
-### 중단된 계정 채택 복구 (미발행 0.10.0 후보)
+### 중단된 계정 채택 복구 (미발행 1.0.0 후보)
 
-이 API는 [개발 PR #225](https://github.com/seorilabs/platform/pull/225)의 후보이며 운영 반영·정식 SDK 공개가 완료되지 않았다. 앱은 검사한 exact Git source snapshot을 SOURCE/CHECKSUM과 함께 고정해야 한다. `0.10.0` VERSION이나 예정 asset URL만으로 공개 상태를 판단하지 않는다.
+이 API는 [PR #225](https://github.com/seorilabs/platform/pull/225)로 main에 병합됐다. 사용자 요청에 따라 GDScript SDK 후보 버전을 0.10.0에서 1.0.0으로 올렸으며 공개 함수·복구 계약·게임 저장 형식은 유지한다. 운영 반영·정식 SDK 공개는 별도 단계다. 앱은 검사한 exact Git source snapshot을 SOURCE/CHECKSUM과 함께 고정해야 한다. `1.0.0` VERSION이나 예정 asset URL만으로 공개 상태를 판단하지 않는다. TypeScript SDK 버전은 0.6.0으로 유지한다.
 
 서버 연결 응답 뒤 앱이 `adopting` 대상 UID를 내구성 있게 기록했지만 보호 신원을 채택하지 못한 경우:
 
