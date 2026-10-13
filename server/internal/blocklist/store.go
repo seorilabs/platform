@@ -40,6 +40,17 @@ func docPath(appID, uid string) (fspath.Path, error) {
 	return fspath.Parse(blocksCollection + "/" + appID + "/" + uidsCollection + "/" + uid)
 }
 
+// BlockedTx는 계정 복구의 판정 시점에 차단 목록을 같은 transaction으로 읽는다.
+// 서비스의 TTL 캐시는 현재 차단과 recovery commit 사이의 경합 판정에 쓰지 않는다.
+func BlockedTx(tx *store.Tx, appID, uid string) (bool, error) {
+	p, err := docPath(appID, uid)
+	if err != nil {
+		return false, err
+	}
+	exists, _, err := tx.Exists(p)
+	return exists, err
+}
+
 func (s *StoreSource) LoadUIDs(ctx context.Context, appID string) (map[string]struct{}, error) {
 	p, err := collectionPath(appID)
 	if err != nil {

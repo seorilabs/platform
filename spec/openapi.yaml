@@ -459,6 +459,86 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /auth/account-link-recovery-challenges:
+    post:
+      tags: [auth]
+      summary: 중단된 계정 채택의 복구 challenge 발급
+      description: |
+        검증된 현재 Platform 세션, provider와 expectedAppUserId에 새 nonce를
+        5분 동안 묶는다. 대상 UID는 일치 조건이며 소유권 증명이 아니다.
+        대상 계정 존재 여부를 조회하거나 공개하지 않는다. 일반 연결 challenge와
+        복구 challenge는 서로 교환할 수 없다. anonymous credential 세션은 거부한다.
+      operationId: createAccountLinkRecoveryChallenge
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountLinkRecoveryChallengeRequest' }
+      responses:
+        '201':
+          description: 복구 challenge 발급 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountLinkChallenge' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/account-link-recoveries:
+    post:
+      tags: [auth]
+      summary: 기존 계정 소유권을 다시 확인해 중단된 채택 복구
+      description: |
+        새 공급자 OIDC proof와 복구 nonce를 검증한다. 기존 provider 매핑의
+        대상 UID가 expectedAppUserId와 일치해야 하며 source는 연결되지 않은
+        게스트 또는 대상 사용자여야 한다. 매핑·사용자는 생성하거나 이동하지 않는다.
+        session.isLinkedAccount=true, session.isAnonymous=false이고
+        session.appUserId=expectedAppUserId인 기존 AccountLink 응답을 반환한다.
+
+        판정 시점은 challenge 소비 트랜잭션 commit이다. source/target 사용자,
+        현재 provider 매핑과 삭제 표식을 함께 읽는다. 해제·삭제가 먼저 commit하면
+        발급을 거부한다. 복구가 먼저 commit하면 당시 유효한 복구로 판정한다.
+        외부 Firebase 발급은 트랜잭션 밖에서 하며 후속 해제와 원자화하지 않는다.
+        발급 직전 기존 차단·삭제 검사도 적용하고 이후 변경은 기존 세션 정책을 따른다.
+        소비된 challenge도 5분 만료 이내에 같은 source/provider/subject/target일
+        때만 재전송할 수 있고 매번 현재 매핑·연결·삭제 상태를 다시 확인한다.
+      operationId: createAccountLinkRecovery
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountLinkRecoveryRequest' }
+      responses:
+        '200':
+          description: 기존 계정의 채택 복구 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/AccountLink' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /auth/webhooks/kakao/unlink:
     post:
       tags: [webhook]
@@ -3850,6 +3930,37 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+
+    AccountRecoveryAppUserId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^(?!\.{1,2}$)[^/]+$'
+      description: |
+        이미 알고 있는 대상 Firebase UID. 서버는 UTF-8 128바이트 상한도 적용한다.
+        문자 수 상한만으로 바이트 상한을 보장하지 않는다. 공백을 자동 제거하지 않는다.
+
+    CreateAccountLinkRecoveryChallengeRequest:
+      type: object
+      required: [provider, expectedAppUserId]
+      additionalProperties: false
+      properties:
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+        expectedAppUserId: { $ref: '#/components/schemas/AccountRecoveryAppUserId' }
+
+    CreateAccountLinkRecoveryRequest:
+      type: object
+      required: [provider, idToken, nonce, expectedAppUserId]
+      additionalProperties: false
+      properties:
+        provider: { $ref: '#/components/schemas/AccountProvider' }
+        idToken:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          description: 서버는 UTF-8 8192바이트 상한도 적용한다.
+        nonce: { type: string, minLength: 1, maxLength: 128 }
+        expectedAppUserId: { $ref: '#/components/schemas/AccountRecoveryAppUserId' }
 
     AccountLink:
       type: object

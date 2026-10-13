@@ -31,11 +31,14 @@ func (f *fakeAccountProvider) Verify(
 }
 
 type memoryChallenge struct {
-	appID     string
-	puid      string
-	provider  string
-	expiresAt time.Time
-	consumed  *ConnectedAccount
+	purpose     string
+	expectedUID string
+	subject     string
+	appID       string
+	puid        string
+	provider    string
+	expiresAt   time.Time
+	consumed    *ConnectedAccount
 }
 
 type memoryAccountRepo struct {
@@ -107,7 +110,7 @@ func (m *memoryAccountRepo) ConnectAccount(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	challenge, ok := m.challenges[nonce]
-	if !ok || challenge.appID != appID || challenge.puid != currentPUID ||
+	if !ok || challenge.purpose == "recovery" || challenge.appID != appID || challenge.puid != currentPUID ||
 		challenge.provider != provider || now.After(challenge.expiresAt) {
 		return ConnectedAccount{}, platformerr.New(platformerr.CodeAuthInvalid, "잘못된 challenge")
 	}

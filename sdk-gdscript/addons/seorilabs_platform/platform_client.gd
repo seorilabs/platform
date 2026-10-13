@@ -23,7 +23,7 @@ const AtomicJsonStore := preload("core/atomic_json_store.gd")
 const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "0.9.0"
+const SDK_VERSION := "0.10.0"
 
 ## OpenAPI BoxOpenRequest.requestId 와 같다.
 static var _BOX_REQUEST_ID := RegEx.create_from_string("^[A-Za-z0-9_-]{8,64}$")
@@ -376,35 +376,66 @@ func complete_account_link(provider: String, id_token: String, nonce: String,
 		return
 	_account_link_request("/v1/auth/account-links", {"provider": provider, "idToken": id_token, "nonce": nonce},
 		app_check_token, func(response: Dictionary) -> void:
-			if not response.get("ok", false):
-				callback.call(response)
-				return
-			var result: Variant = response.get("result")
-			if not result is Dictionary or not result.get("session") is Dictionary \
-				or not result.get("firebaseCustomToken") is String or String(result.get("firebaseCustomToken")).is_empty() \
-				or result.get("provider") != provider or not result.get("restored") is bool:
-				callback.call(_client_error("auth_invalid", "계정 연결 응답을 확인하지 못했어요"))
-				return
-			var next_session: Dictionary = result["session"]
-			if not _valid_linked_session(next_session):
-				callback.call(_client_error("auth_invalid", "연결 계정을 확인하지 못했어요"))
-				return
-			_auth_generation += 1
-			var linked_generation := _auth_generation
-			# 복원 후 이전 게스트 credential로 자동 재로그인하면 다른 계정으로 돌아간다.
-			# Firebase adapter의 adopt_account_link 성공 뒤 새 ID token으로 sign_in한다.
-			_credential = {}
-			# 취소 콜백이 즉시 재요청해도 새 인증 세대로 게스트 refresh를
-			# 시작하지 못하게 한다. linked 세션 설치 시에만 변경 신호를 보낸다.
-			_session = {}
-			_cancel_refresh_flight(_auth_state_changed_error())
-			if linked_generation != _auth_generation:
-				callback.call(_auth_state_changed_error())
-				return
-			_store_session(next_session)
-			callback.call(response if linked_generation == _auth_generation else _auth_state_changed_error())
+			_accept_account_link_response(provider, response, callback)
 	)
 
+
+
+## 대상 UID는 소유권 증명이 아니다. 서버가 기존 매핑과 fresh proof를 검증한다.
+func begin_account_link_recovery(provider: String, expected_app_user_id: String,
+	app_check_token: String, callback: Callable) -> void:
+	if not _valid_recovery_uid(expected_app_user_id):
+		callback.call(_client_error("request_invalid", "대상 계정 정보가 올바르지 않아요"))
+		return
+	_account_link_request("/v1/auth/account-link-recovery-challenges",
+		{"provider":provider,"expectedAppUserId":expected_app_user_id}, app_check_token, callback)
+
+
+func recover_account_link(provider: String, id_token: String, nonce: String,
+	expected_app_user_id: String, app_check_token: String, callback: Callable) -> void:
+	if not _valid_recovery_uid(expected_app_user_id) or id_token.is_empty() or id_token.to_utf8_buffer().size()>8192 or nonce.is_empty() or nonce.length()>128:
+		callback.call(_client_error("request_invalid", "복구 정보가 올바르지 않아요"))
+		return
+	_account_link_request("/v1/auth/account-link-recoveries",
+		{"provider":provider,"idToken":id_token,"nonce":nonce,"expectedAppUserId":expected_app_user_id},
+		app_check_token, func(response: Dictionary) -> void:
+			_accept_account_link_response(provider, response, callback, expected_app_user_id)
+	)
+
+
+static func _valid_recovery_uid(uid: String) -> bool:
+	return not uid.is_empty() and uid.to_utf8_buffer().size()<=128 and uid not in [".",".."] and not uid.contains("/")
+
+
+func _accept_account_link_response(provider: String, response: Dictionary,
+	callback: Callable, expected_uid: String = "") -> void:
+	if not response.get("ok", false):
+		callback.call(response)
+		return
+	var result: Variant = response.get("result")
+	if not result is Dictionary or not result.get("session") is Dictionary \
+		or not result.get("firebaseCustomToken") is String or String(result.get("firebaseCustomToken")).is_empty() \
+		or result.get("provider") != provider or not result.get("restored") is bool:
+		callback.call(_client_error("auth_invalid", "계정 연결 응답을 확인하지 못했어요"))
+		return
+	var next_session: Dictionary = result["session"]
+	if not _valid_linked_session(next_session) or (not expected_uid.is_empty() and next_session.get("appUserId") != expected_uid):
+		callback.call(_client_error("auth_invalid", "연결 계정을 확인하지 못했어요"))
+		return
+	_auth_generation += 1
+	var linked_generation := _auth_generation
+	# 복원 후 이전 게스트 credential로 자동 재로그인하면 다른 계정으로 돌아간다.
+	# Firebase adapter의 adopt_account_link 성공 뒤 새 ID token으로 sign_in한다.
+	_credential = {}
+	# 취소 콜백이 즉시 재요청해도 새 인증 세대로 게스트 refresh를
+	# 시작하지 못하게 한다. linked 세션 설치 시에만 변경 신호를 보낸다.
+	_session = {}
+	_cancel_refresh_flight(_auth_state_changed_error())
+	if linked_generation != _auth_generation:
+		callback.call(_auth_state_changed_error())
+		return
+	_store_session(next_session)
+	callback.call(response if linked_generation == _auth_generation else _auth_state_changed_error())
 
 static func _valid_linked_session(session: Dictionary) -> bool:
 	if not session.get("isLinkedAccount") is bool or not session["isLinkedAccount"] \
