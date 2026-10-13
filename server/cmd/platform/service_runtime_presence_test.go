@@ -58,7 +58,7 @@ func TestServiceRuntimePresenceSignedTokenAndEdgeRetry(t *testing.T) {
 	edgeMux := http.NewServeMux()
 	presenceedge.NewHandler(verifier, projection).WithClock(func() time.Time { return time.Unix(0, clock.Load()).UTC() }).Register(edgeMux)
 	edge := httptest.NewServer(edgeMux)
-	defer func() { _ = edge.Close() }()
+	defer edge.Close()
 	f.register = func(mux *http.ServeMux) { presence.NewHandler(f.registry, issuer, edge.URL).Register(mux) }
 	f.saveApp()
 	issue := func(debug bool) map[string]any {

@@ -78,7 +78,7 @@ func TestServiceRuntimeDeletionRequestWorkerRetryAndReceipt(t *testing.T) {
 
 func TestServiceRuntimeStorageFailureStaysInternal(t *testing.T) {
 	f := newRuntimeFixture(t)
-	f.store.Close()
+	_ = f.store.Close()
 	_, err := f.users.EnsureUser(t.Context(), f.app.AppID, identity.NewIdentity{UID: "storage-error-fixture"})
 	if platformerr.CodeOf(err) != platformerr.CodeInternal || platformerr.StatusOf(err) != 500 {
 		t.Fatal("storage error must stay internal")
