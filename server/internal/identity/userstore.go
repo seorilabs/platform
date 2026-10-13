@@ -298,6 +298,9 @@ func (r *StoreRepository) EnsureUser(
 		})
 	})
 	if err != nil {
+		if platformerr.CodeOf(err) == platformerr.CodeAuthForbidden {
+			return "", err
+		}
 		return "", platformerr.Wrap(err, platformerr.CodeInternal, "사용자를 확인하지 못했어요")
 	}
 	return result, nil
