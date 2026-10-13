@@ -26,7 +26,10 @@ TAG = "development-evidence"
 
 
 def request(path, token, body=None, binary=False):
-    url = path if path.startswith("https://") else "https://api.github.com" + path
+    url = "https://api.github.com" + path if path.startswith("/") and not path.startswith("//") else path
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.netloc.lower() not in {"api.github.com", "api.github.com:443", "uploads.github.com", "uploads.github.com:443"} or parsed.fragment:
+        raise ValueError("unapproved archive origin")
     headers = {"Authorization": "Bearer " + token, "Accept": "application/octet-stream" if binary else "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10"}
     data = None
     if body is not None:
@@ -47,24 +50,46 @@ def list_all(path, token):
     raise ValueError("archive pagination limit")
 
 
+def validate_bundle(document, runtime, events):
+    sha = document["sourceSha"]
+    e2e = document["e2e"]
+    if document["repository"] != REPOSITORY or not re.fullmatch(r"[a-f0-9]{40}", sha) or e2e["sourceSha"] != sha or runtime["sourceSha"] != sha:
+        raise ValueError("runtime candidate mismatch")
+    fp = e2e["environment"]["configurationFingerprint"]
+    if not re.fullmatch(r"[a-f0-9]{64}", fp) or runtime["configurationFingerprint"] != fp or any(runtime[key] != e2e[key] for key in ("plannedAt", "startedAt", "completedAt")):
+        raise ValueError("runtime configuration or time mismatch")
+    digest = runtime["rawLogSha256"]
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise ValueError("invalid raw log fingerprint")
+    reference = f"runtime-result.{sha}.{digest}.json"
+    for item in document["acceptance"] + e2e["scenarios"]:
+        if not item["evidence"] or any(reference not in ref for ref in item["evidence"]):
+            raise ValueError("canonical runtime reference mismatch")
+    root = Path(__file__).resolve().parents[2]
+    plan = json.loads((root / "docs/qa/service-e2e-plan.json").read_text())
+    required = {t for s in plan["scenarios"] for t in s["requiredTests"]}
+    safe, counts = passed_tests([json.dumps(event) for event in events], required)
+    if safe != events or counts != runtime["counts"]:
+        raise ValueError("runtime events or counts mismatch")
+    return sha, digest
+
+
 def store(directory):
-    token = os.environ.get("GH_TOKEN") or subprocess.check_output(["gh", "auth", "token"], text=True).strip()
     files = sorted(directory.glob("development-evidence.*.service.before-build.json"))
     if len(files) != 1:
         raise ValueError("one canonical evidence file required")
     document = json.loads(files[0].read_text())
-    sha = document["sourceSha"]
-    if not re.fullmatch(r"[a-f0-9]{40}", sha) or document["repository"] != REPOSITORY:
-        raise ValueError("evidence candidate mismatch")
     runtime = json.loads((directory / "runtime-result.json").read_text())
-    digest = runtime["rawLogSha256"]
-    if not re.fullmatch(r"[a-f0-9]{64}", digest):
-        raise ValueError("invalid raw log fingerprint")
+    events = json.loads((directory / "test-events.json").read_text())
+    sha, digest = validate_bundle(document, runtime, events)
+    if files[0].name != f"development-evidence.{sha}.service.before-build.json":
+        raise ValueError("canonical filename mismatch")
     # The canonical asset is uploaded last. Interrupted writes cannot unlock builds.
     assets = {f"runtime-result.{sha}.{digest}.json": (directory / "runtime-result.json").read_bytes(), f"test-events.{sha}.{digest}.json": (directory / "test-events.json").read_bytes(), files[0].name: files[0].read_bytes()}
     for raw in assets.values():
         if re.search(rb"-----BEGIN .*PRIVATE KEY|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", raw):
             raise ValueError("secret-shaped data in archive")
+    token = os.environ.get("GH_TOKEN") or subprocess.check_output(["gh", "auth", "token"], text=True).strip()
     releases = list_all(f"/repos/{REPOSITORY}/releases", token)
     matching = [r for r in releases if r["tag_name"] == TAG]
     if any(not r["draft"] for r in matching) or len(matching) > 1:
@@ -99,12 +124,7 @@ def store(directory):
                 raise ValueError("incomplete canonical evidence archive")
             restored[name] = json.loads(request(found[0]["url"], token, binary=True))
         prior_runtime = restored[f"runtime-result.{sha}.{prior_hash}.json"]
-        if prior_runtime["sourceSha"] != sha or prior_runtime["configurationFingerprint"] != previous["e2e"]["environment"]["configurationFingerprint"] or prior_runtime["completedAt"] != previous["e2e"]["completedAt"]:
-            raise ValueError("archived runtime candidate mismatch")
-        root = Path(__file__).resolve().parents[2]
-        plan = json.loads((root / "docs/qa/service-e2e-plan.json").read_text())
-        required = {t for s in plan["scenarios"] for t in s["requiredTests"]}
-        passed_tests([json.dumps(event) for event in restored[f"test-events.{sha}.{prior_hash}.json"]], required)
+        validate_bundle(previous, prior_runtime, restored[f"test-events.{sha}.{prior_hash}.json"])
         print("최초 후보 근거와 두 실행 자산 readback 확인; 중앙 검증이 유효기간을 다시 판정한다.")
         return
     for name, raw in assets.items():
