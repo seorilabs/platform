@@ -38,6 +38,8 @@ func TestSpiritgateRegistryAdMobConfirmation(t *testing.T) {
 				{"ios 현재", "ios", "8374493589", "in_game_bonus", 1, ""},
 				{"ios 기존 설치본", "ios", "9364182214", "in_game_bonus", 1, ""},
 				{"android에서 ios 현재 거절", "android", "8374493589", "in_game_bonus", 1, platformerr.CodeAdUnitMismatch},
+				{"android에서 ios 기존 거절", "android", "9364182214", "in_game_bonus", 1, platformerr.CodeAdUnitMismatch},
+				{"ios에서 android 현재 거절", "ios", "2352755575", "in_game_bonus", 1, platformerr.CodeAdUnitMismatch},
 				{"ios에서 android 기존 거절", "ios", "6693003024", "in_game_bonus", 1, platformerr.CodeAdUnitMismatch},
 				{"미등록 unit 거절", "android", "9999999999", "in_game_bonus", 1, platformerr.CodeAdUnitMismatch},
 				{"AdMob 기본 항목 거절", "android", "2352755575", "reward", 1, platformerr.CodeAdRewardInvalid},
