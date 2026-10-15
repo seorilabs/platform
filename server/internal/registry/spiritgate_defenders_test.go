@@ -70,9 +70,13 @@ func TestSpiritgateDefendersAdsRegistryContract(t *testing.T) {
 		if !reflect.DeepEqual(placement.Reward, want.Reward) {
 			t.Fatalf("%s: 보상 범위가 다르다: %#v", placement.ID, placement.Reward)
 		}
-		if provider.AndroidAdUnitID != "ca-app-pub-2444587584524186/6693003024" ||
-			provider.IOSAdUnitID != "ca-app-pub-2444587584524186/9364182214" {
+		if provider.AndroidAdUnitID != "ca-app-pub-9932778305312246/2352755575" ||
+			provider.IOSAdUnitID != "ca-app-pub-9932778305312246/8374493589" {
 			t.Fatalf("%s: 모바일 AdMob unit이 다르다: %#v", placement.ID, provider)
+		}
+		if !reflect.DeepEqual(provider.RetiredAndroidAdUnitIDs, []string{"ca-app-pub-2444587584524186/6693003024"}) ||
+			!reflect.DeepEqual(provider.RetiredIOSAdUnitIDs, []string{"ca-app-pub-2444587584524186/9364182214"}) {
+			t.Fatalf("%s: 기존 설치본 unit 허용 목록이 다르다: %#v", placement.ID, provider)
 		}
 		if provider.RewardItem != "in_game_bonus" || provider.RewardAmount != 1 {
 			t.Fatalf("%s: SSV 보상 계약이 다르다: %#v", placement.ID, provider)
