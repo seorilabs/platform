@@ -8,7 +8,7 @@
     "config": true,
     "events": true,
     "iap": true,
-    "ads": false,
+    "ads": true,
     "presence": true,
     "firebase_custom_token_bridge": true
   },
@@ -50,6 +50,89 @@
       "crystal_3200",
       "crystal_5500",
       "crystal_starter"
+    ]
+  },
+  "ads": {
+    "providers": [
+      "admob"
+    ],
+    "placements": [
+      {
+        "id": "rewarded_care_rescue",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/8265668010",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/6617455132",
+            "reward_item": "care_rescue",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "care_rescue",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 2,
+        "cooldown_seconds": 60
+      },
+      {
+        "id": "rewarded_attendance_double",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/2132249368",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/4432390901",
+            "reward_item": "attendance_double",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "attendance_double",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 1,
+        "cooldown_seconds": 60
+      },
+      {
+        "id": "rewarded_play_extend",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/9684717580",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/7690952940",
+            "reward_item": "play_extend",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "play_extend",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 1,
+        "cooldown_seconds": 60
+      },
+      {
+        "id": "rewarded_mission_reroll",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/2982296606",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/3751707939",
+            "reward_item": "mission_reroll",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "mission_reroll",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 1,
+        "cooldown_seconds": 60
+      }
     ]
   },
   "platform_event_allowlist": [
