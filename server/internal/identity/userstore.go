@@ -291,10 +291,13 @@ func (r *StoreRepository) EnsureUser(
 		if r.operational == nil || identity.Client.DebugBuild {
 			return nil
 		}
+		// 승인된 운영 조회용 ID만 보낸다. identity.UID는 앱 로그인 식별자라 제외한다.
+		attributes := identityEventAttributes(identity)
+		attributes["platformUserId"] = puid
 		return r.operational.EnqueueTx(tx, operational.Event{
 			EventID:    operational.StableEventID("identity", appID, puid),
 			OccurredAt: now.UTC(), Type: "identity.created", AppID: appID, Outcome: "created",
-			Attributes: identityEventAttributes(identity),
+			Attributes: attributes,
 		})
 	})
 	if err != nil {
