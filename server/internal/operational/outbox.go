@@ -1,4 +1,4 @@
-// Package operational은 확정 도메인 이벤트를 PII 없이 내구성 outbox에 기록하고
+// Package operational은 확정 이벤트를 앱 로그인 식별자와 토큰 없이 outbox에 기록하고
 // Backoffice로 전달한다. 앱 요청 트랜잭션과 같은 Firestore transaction에 쓰므로
 // 계정·지급은 커밋됐는데 이벤트만 유실되는 틈을 만들지 않는다.
 package operational
@@ -45,14 +45,15 @@ type eventContract struct {
 }
 
 var (
-	eventIDPattern = regexp.MustCompile(`^[a-z_]+_[0-9a-f]{32}$`)
-	appIDPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	eventContracts = map[string]eventContract{
+	eventIDPattern        = regexp.MustCompile(`^[a-z_]+_[0-9a-f]{32}$`)
+	appIDPattern          = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	platformUserIDPattern = regexp.MustCompile(`^pu_[0-9A-HJKMNP-TV-Z]{26}$`)
+	eventContracts        = map[string]eventContract{
 		"identity.created": {
 			prefix: "identity_", outcome: "created",
 			// 가입 코드와 Backoffice가 이미 사용하는 빌드 정보다. 여기서
 			// 거부하면 이벤트와 같은 트랜잭션에 있는 신규 가입도 취소된다.
-			attributes: setOf("authType", "signInProvider", "anonymous", "referrer", "appVersion", "runtime"),
+			attributes: setOf("authType", "signInProvider", "anonymous", "referrer", "appVersion", "runtime", "platformUserId"),
 		},
 		"app.version.first_seen": {
 			prefix: "app_version_", outcome: "observed",
@@ -144,6 +145,12 @@ func validateEvent(event Event) error {
 	for key, value := range event.Attributes {
 		if _, allowed := contract.attributes[key]; !allowed || !safeScalar(value) {
 			return fmt.Errorf("operational: 허용되지 않은 attribute: %s", key)
+		}
+		if key == "platformUserId" {
+			uid, ok := value.(string)
+			if !ok || !platformUserIDPattern.MatchString(uid) {
+				return errors.New("operational: 잘못된 운영 사용자 ID")
+			}
 		}
 	}
 	return nil

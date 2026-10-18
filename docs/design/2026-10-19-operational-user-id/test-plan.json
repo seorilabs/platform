@@ -1,0 +1,1 @@
+{"schemaVersion":1,"level":"L1","baseline":"8c10eeeb7a7f14a363b581d1ca56050bdaeea131","changedFeatures":["identity-session","firebase-bridge","account-link-recovery","account-deletion","operational-outbox"],"environments":["dev"],"redesign":false,"foundationRerun":false,"floorOverrides":[],"release":{"markets":["service"],"until":"public"}}

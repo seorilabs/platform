@@ -1,5 +1,14 @@
 openapi: 3.0.3
 
+# 내부 서명 callback이며 앱 SDK의 공개 요청 필드가 아니다.
+x-backoffice-operational-events:
+  identity.created:
+    attributes:
+      platformUserId:
+        type: string
+        pattern: '^pu_[0-9A-HJKMNP-TV-Z]{26}$'
+        description: 신규 계정 transaction에서 서버가 생성한 운영 조회용 ID. 선택 항목이며 앱 로그인 UID는 전송하지 않는다.
+
 info:
   title: Seorilabs Platform API
   version: 1.0.0-draft
