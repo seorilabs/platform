@@ -14,7 +14,14 @@ for (const [file, environment] of [['deploy.yml', 'production'], ['deploy-stagin
     if (file === "presence-edge.yml") assert.ok(job.includes("if: ${{ inputs.deploy }}"));
     assert.doesNotMatch(job, /^    environment:/m);
     assert.doesNotMatch(job, /secrets\./);
-    assert.match(source, /needs: (\[build, approval-target\]|approval-target)/);
+    const deploy = source.match(/^  deploy:\n([\s\S]*?)(?=^  [a-z][\w-]*:|(?![\s\S]))/m)[1];
+    const needs = deploy.match(/^    needs: (.+)$/m)[1];
+    const dependencies = needs.startsWith('[') ? needs.slice(1, -1).split(',').map(value => value.trim()) : [needs];
+    assert.ok(dependencies.includes('approval-target'));
+    if (file === 'deploy.yml') {
+      assert.ok(dependencies.includes('build'));
+      assert.ok(dependencies.includes('service-e2e'));
+    }
     assert.match(job, /retention-days: 3/);
     const script = job.match(/        run: \|\n([\s\S]*?)\n      - uses:/)[1].replace(/^          /gm, '');
     const directory = mkdtempSync(join(tmpdir(), 'platform-approval-'));
