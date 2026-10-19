@@ -1,9 +1,28 @@
 // Package content는 private GCS 콘텐츠 릴리스를 인증된 사용자에게 선택 전달한다.
 package content
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 const SupportedSchemaVersion = 1
+
+// 생략한 필드는 구클라이언트의 한국어 요청이다. 명시한 빈 값과 null은 계약 오류다.
+type RequestLocale string
+
+func (l *RequestLocale) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value != "ko" && value != "en" {
+		return fmt.Errorf("invalid content locale")
+	}
+	*l = RequestLocale(value)
+	return nil
+}
 
 type Access string
 
@@ -43,6 +62,7 @@ func (i Item) HasContext(want Context) bool {
 }
 
 type Release struct {
+	Locale         string
 	SchemaVersion  int
 	ContentVersion string
 	Items          map[string]Item
@@ -50,6 +70,7 @@ type Release struct {
 }
 
 type ContentVersion struct {
+	Locale         string `json:"locale"`
 	SchemaVersion  int    `json:"schemaVersion"`
 	ContentVersion string `json:"contentVersion"`
 }
@@ -114,6 +135,7 @@ type UnlockRequest struct {
 }
 
 type ResolveRequest struct {
+	Locale        RequestLocale       `json:"locale,omitempty"`
 	SchemaVersion int                 `json:"schemaVersion"`
 	Reading       DerivedReadingFacts `json:"reading"`
 	Scope         []string            `json:"scope"`
@@ -127,6 +149,7 @@ type LockedDeep struct {
 }
 
 type ResolveResult struct {
+	Locale         string       `json:"locale"`
 	SchemaVersion  int          `json:"schemaVersion"`
 	ContentVersion string       `json:"contentVersion"`
 	ReadingKey     string       `json:"readingKey"`
@@ -175,6 +198,7 @@ type PairFacts struct {
 }
 
 type ResolvePairingRequest struct {
+	Locale        RequestLocale    `json:"locale,omitempty"`
 	SchemaVersion int              `json:"schemaVersion"`
 	A             PairingSideFacts `json:"a"`
 	B             PairingSideFacts `json:"b"`
@@ -189,6 +213,7 @@ type LockedPairing struct {
 }
 
 type ResolvePairingResult struct {
+	Locale         string          `json:"locale"`
 	SchemaVersion  int             `json:"schemaVersion"`
 	ContentVersion string          `json:"contentVersion"`
 	PairKey        string          `json:"pairKey"`
@@ -197,6 +222,7 @@ type ResolvePairingResult struct {
 }
 
 type TermResult struct {
+	Locale         string  `json:"locale"`
 	SchemaVersion  int     `json:"schemaVersion"`
 	ContentVersion string  `json:"contentVersion"`
 	Article        Article `json:"article"`

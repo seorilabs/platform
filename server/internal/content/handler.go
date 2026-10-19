@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/identity"
@@ -64,7 +65,11 @@ func (h *Handler) version(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	result, err := h.service.Version(r.Context(), sess.AppID)
+	locale, err := queryLocale(r)
+	if err != nil {
+		return err
+	}
+	result, err := h.service.Version(r.Context(), sess.AppID, locale)
 	if err != nil {
 		return err
 	}
@@ -135,12 +140,31 @@ func (h *Handler) term(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	locale, err := queryLocale(r)
+	if err != nil {
+		return err
+	}
 	result, err := h.service.Term(
-		r.Context(), sess.AppID, sess.PlatformUserID, r.PathValue("termId"),
+		r.Context(), sess.AppID, sess.PlatformUserID, r.PathValue("termId"), locale,
 	)
 	if err != nil {
 		return err
 	}
 	httpx.WriteOK(w, http.StatusOK, result)
 	return nil
+}
+
+func queryLocale(r *http.Request) (string, error) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return "", platformerr.New(platformerr.CodeRequestInvalid, "조회 값의 인코딩이 올바르지 않아요")
+	}
+	values, present := query["locale"]
+	if !present {
+		return "", nil
+	}
+	if len(values) != 1 || (values[0] != "ko" && values[0] != "en") {
+		return "", platformerr.New(platformerr.CodeRequestInvalid, "콘텐츠 언어는 ko 또는 en 하나여야 해요")
+	}
+	return values[0], nil
 }

@@ -812,6 +812,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
         - $ref: '#/components/parameters/ContentAppCheck'
+        - $ref: '#/components/parameters/ContentLocale'
       responses:
         '200':
           description: 활성 정상본
@@ -824,6 +825,7 @@ paths:
                     required: [result]
                     properties:
                       result: { $ref: '#/components/schemas/ContentVersion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -940,6 +942,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
         - $ref: '#/components/parameters/ContentAppCheck'
+        - $ref: '#/components/parameters/ContentLocale'
         - name: termId
           in: path
           required: true
@@ -961,6 +964,7 @@ paths:
                         properties:
                           schemaVersion: { type: integer, minimum: 1 }
                           contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+                          locale: { $ref: '#/components/schemas/ContentLocale' }
                           article: { $ref: '#/components/schemas/ContentArticle' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -2899,6 +2903,11 @@ components:
       required: true
       description: 보호 콘텐츠 경로에서 매 요청 검증하는 Firebase App Check token
       schema: { type: string, minLength: 1 }
+    ContentLocale:
+      name: locale
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/ContentLocale' }
     AdminLimit:
       name: limit
       in: query
@@ -3237,6 +3246,12 @@ components:
       type: string
       enum: [android, ios, web, ait]
 
+    ContentLocale:
+      type: string
+      enum: [ko, en]
+      default: ko
+      description: 생략하면 한국어다. 언어는 원고 버전과 캐시를 구분하며 명식과 해금 키에 포함하지 않는다.
+
     ContentVersionId:
       type: string
       pattern: '^sha256-[a-f0-9]{64}$'
@@ -3248,6 +3263,7 @@ components:
       properties:
         schemaVersion: { type: integer, minimum: 1 }
         contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+        locale: { $ref: '#/components/schemas/ContentLocale' }
 
     ContentAccess:
       type: string
@@ -3349,6 +3365,7 @@ components:
       required: [schemaVersion, reading, scope]
       properties:
         schemaVersion: { type: integer, enum: [1] }
+        locale: { $ref: '#/components/schemas/ContentLocale' }
         reading: { $ref: '#/components/schemas/DerivedReadingFacts' }
         scope:
           type: array
@@ -3457,6 +3474,7 @@ components:
       properties:
         schemaVersion: { type: integer, minimum: 1 }
         contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+        locale: { $ref: '#/components/schemas/ContentLocale' }
         readingKey: { type: string, pattern: '^rk_[a-f0-9]{64}$' }
         articles:
           type: array
@@ -3561,6 +3579,7 @@ components:
       required: [schemaVersion, a, b, pair]
       properties:
         schemaVersion: { type: integer, enum: [1] }
+        locale: { $ref: '#/components/schemas/ContentLocale' }
         a: { $ref: '#/components/schemas/PairingSideFacts' }
         b: { $ref: '#/components/schemas/PairingSideFacts' }
         pair: { $ref: '#/components/schemas/PairFacts' }
@@ -3593,6 +3612,7 @@ components:
       properties:
         schemaVersion: { type: integer, minimum: 1 }
         contentVersion: { $ref: '#/components/schemas/ContentVersionId' }
+        locale: { $ref: '#/components/schemas/ContentLocale' }
         pairKey:
           type: string
           pattern: '^pk_[a-f0-9]{64}$'

@@ -29,11 +29,13 @@ type ObjectSource interface {
 }
 
 type activePointer struct {
+	Locale         string `json:"locale,omitempty"`
 	SchemaVersion  int    `json:"schemaVersion"`
 	ContentVersion string `json:"contentVersion"`
 }
 
 type releaseManifest struct {
+	Locale         string `json:"locale,omitempty"`
 	SchemaVersion  int    `json:"schemaVersion"`
 	ContentVersion string `json:"contentVersion"`
 	ContentSHA256  string `json:"contentSha256"`
@@ -41,6 +43,7 @@ type releaseManifest struct {
 }
 
 type contentFile struct {
+	Locale        string `json:"locale,omitempty"`
 	SchemaVersion int    `json:"schemaVersion"`
 	Items         []Item `json:"items"`
 }
@@ -84,40 +87,46 @@ func (l *ReleaseLoader) WithTTL(ttl time.Duration) *ReleaseLoader {
 	return l
 }
 
-func (l *ReleaseLoader) Load(ctx context.Context, app registry.App) (Release, error) {
+func (l *ReleaseLoader) Load(ctx context.Context, app registry.App, requestedLocale string) (Release, error) {
 	if !app.FeatureEnabled("content") {
 		return Release{}, platformerr.New(platformerr.CodeContentNotEnabled,
 			"이 앱은 콘텐츠 API를 사용하지 않아요")
 	}
+	locale, err := normalizeLocale(requestedLocale)
+	if err != nil {
+		return Release{}, err
+	}
+	// 언어별 마지막 정상본까지 격리한다. 영어 로드 실패에 한국어 캐시를 반환하면 안 된다.
+	cacheKey := app.AppID + ":" + locale
 
 	// 같은 앱의 만료 캐시는 한 번만 다시 읽되, 한 앱의 GCS 지연이 다른 앱의
 	// 콘텐츠 요청까지 막지 않도록 네트워크 I/O는 전역 mutex 밖에서 수행한다.
-	appLock := l.lockForApp(app.AppID)
+	appLock := l.lockForApp(cacheKey)
 	appLock.Lock()
 	defer appLock.Unlock()
 
 	now := l.now().UTC()
 	l.mu.Lock()
-	previous, hasPrevious := l.cache[app.AppID]
+	previous, hasPrevious := l.cache[cacheKey]
 	if hasPrevious && now.Sub(previous.checkedAt) < l.ttl {
 		l.mu.Unlock()
 		return previous.release, nil
 	}
 	l.mu.Unlock()
 
-	next, err := l.read(ctx, app, now)
+	next, err := l.read(ctx, app, locale, now)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err == nil {
-		l.cache[app.AppID] = cachedRelease{release: next, checkedAt: now}
+		l.cache[cacheKey] = cachedRelease{release: next, checkedAt: now}
 		return next, nil
 	}
 	if hasPrevious {
 		// 손상된 active 전환이 요청마다 GCS를 두드리지 않도록 확인 시각만 갱신한다.
 		previous.checkedAt = now
-		l.cache[app.AppID] = previous
+		l.cache[cacheKey] = previous
 		slog.ErrorContext(ctx, "콘텐츠 활성 릴리스를 거부하고 직전 정상본을 유지한다",
-			"app_id", app.AppID, "content_version", previous.release.ContentVersion, "err", err)
+			"app_id", app.AppID, "locale", locale, "content_version", previous.release.ContentVersion, "err", err)
 		return previous.release, nil
 	}
 	return Release{}, platformerr.Wrap(err, platformerr.CodeContentUnavailable,
@@ -135,8 +144,26 @@ func (l *ReleaseLoader) lockForApp(appID string) *sync.Mutex {
 	return lock
 }
 
-func (l *ReleaseLoader) read(ctx context.Context, app registry.App, now time.Time) (Release, error) {
+func normalizeLocale(locale string) (string, error) {
+	if locale == "" || locale == "ko" {
+		return "ko", nil
+	}
+	if locale == "en" {
+		return "en", nil
+	}
+	return "", platformerr.New(platformerr.CodeRequestInvalid, "지원하지 않는 콘텐츠 언어예요")
+}
+
+func localeMatches(marker, locale string) bool {
+	// 예전 한국어 릴리스의 바이트와 해시를 보존하되 새 영어 파일에는 언어를 요구한다.
+	return marker == locale || (locale == "ko" && marker == "")
+}
+
+func (l *ReleaseLoader) read(ctx context.Context, app registry.App, locale string, now time.Time) (Release, error) {
 	base := l.environment + "/" + app.Content.Prefix
+	if locale != "ko" {
+		base += "/locales/" + locale
+	}
 	activeBytes, err := l.source.Read(ctx, app.Content.Bucket, base+"/active.json")
 	if err != nil {
 		return Release{}, fmt.Errorf("active.json 읽기 실패: %w", err)
@@ -145,7 +172,7 @@ func (l *ReleaseLoader) read(ctx context.Context, app registry.App, now time.Tim
 	if err := decodeStrict(activeBytes, &active); err != nil {
 		return Release{}, fmt.Errorf("active.json 검증 실패: %w", err)
 	}
-	if active.SchemaVersion != SupportedSchemaVersion || !versionPattern.MatchString(active.ContentVersion) {
+	if !localeMatches(active.Locale, locale) || active.SchemaVersion != SupportedSchemaVersion || !versionPattern.MatchString(active.ContentVersion) {
 		return Release{}, fmt.Errorf("active.json 버전이 올바르지 않다")
 	}
 
@@ -158,7 +185,7 @@ func (l *ReleaseLoader) read(ctx context.Context, app registry.App, now time.Tim
 	if err := decodeStrict(manifestBytes, &manifest); err != nil {
 		return Release{}, fmt.Errorf("manifest.json 검증 실패: %w", err)
 	}
-	if manifest.SchemaVersion != active.SchemaVersion || manifest.ContentVersion != active.ContentVersion ||
+	if !localeMatches(manifest.Locale, locale) || manifest.SchemaVersion != active.SchemaVersion || manifest.ContentVersion != active.ContentVersion ||
 		manifest.ItemCount <= 0 || len(manifest.ContentSHA256) != 64 ||
 		"sha256-"+manifest.ContentSHA256 != active.ContentVersion {
 		return Release{}, fmt.Errorf("manifest와 active가 일치하지 않는다")
@@ -177,7 +204,7 @@ func (l *ReleaseLoader) read(ctx context.Context, app registry.App, now time.Tim
 	if err := decodeStrict(contentBytes, &file); err != nil {
 		return Release{}, fmt.Errorf("content.json 검증 실패: %w", err)
 	}
-	if file.SchemaVersion != manifest.SchemaVersion || len(file.Items) != manifest.ItemCount {
+	if !localeMatches(file.Locale, locale) || file.SchemaVersion != manifest.SchemaVersion || len(file.Items) != manifest.ItemCount {
 		return Release{}, fmt.Errorf("content.json 스키마 또는 항목 수가 manifest와 다르다")
 	}
 
@@ -192,6 +219,7 @@ func (l *ReleaseLoader) read(ctx context.Context, app registry.App, now time.Tim
 		items[item.ID] = item
 	}
 	return Release{
+		Locale:        locale,
 		SchemaVersion: file.SchemaVersion, ContentVersion: active.ContentVersion,
 		Items: items, LoadedAt: now,
 	}, nil
