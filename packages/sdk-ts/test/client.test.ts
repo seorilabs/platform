@@ -1102,6 +1102,22 @@ describe("서버 계약", () => {
 });
 
 describe("Content와 Identity", () => {
+  it("영어 버전과 사전의 언어를 명시한다", async () => {
+    const f = fakeFetch([
+      ok({ platformToken: "pt-content", refreshToken: "rt-content", platformUserId: "pu-content",
+        appUserId: "uid-content", isAnonymous: false, expiresIn: 3600 }),
+      ok({ schemaVersion: 1, locale: "en", contentVersion: `sha256-${"a".repeat(64)}` }),
+      ok({ schemaVersion: 1, locale: "en", contentVersion: `sha256-${"a".repeat(64)}`,
+        article: { id: "ilju.gapja", text: "English", access: "free" } }),
+    ]);
+    const platform = new Platform({ baseUrl: "https://platform.test", appId: "ungeul", fetchImpl: f.impl,
+      appCheckToken: async () => "attested-content" });
+    await platform.signIn({ kind: "firebase-id-token", value: "firebase-id-token" });
+    assert.equal((await platform.content.version("en")).locale, "en");
+    assert.equal((await platform.content.term("ilju.gapja", "en")).article.text, "English");
+    assert.equal(f.calls[1]!.url, "https://platform.test/v1/content/version?locale=en");
+    assert.equal(f.calls[2]!.url, "https://platform.test/v1/content/terms/ilju.gapja?locale=en");
+  });
   it("세션과 App Check로 콘텐츠 버전을 조회한다", async () => {
     const f = fakeFetch([
       ok({

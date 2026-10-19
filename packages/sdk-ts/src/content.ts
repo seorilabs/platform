@@ -1,6 +1,7 @@
 import { Transport } from "./transport.ts";
 
 export const CONTENT_SCHEMA_VERSION = 1 as const;
+export type ContentLocale = "ko" | "en";
 
 export type ContentAccess = "free" | "deep";
 export type ContentScope = "base" | "seun" | "wolun";
@@ -31,6 +32,8 @@ export interface ContentArticle {
 }
 
 export interface ContentVersion {
+  /** 구서버에는 없으며 생략값은 한국어다. 영어 클라이언트는 en 일치를 확인해야 한다. */
+  locale?: ContentLocale;
   schemaVersion: number;
   contentVersion: string;
 }
@@ -61,6 +64,7 @@ export interface DerivedReadingFacts {
 }
 
 export interface ResolveContentRequest {
+  locale?: ContentLocale;
   schemaVersion: typeof CONTENT_SCHEMA_VERSION;
   reading: DerivedReadingFacts;
   scope: ContentScope[];
@@ -117,6 +121,7 @@ export type PairingUnlockRequest =
   | { section: "gunghap"; kind: "ticket"; claimId?: never };
 
 export interface ResolveContentPairingRequest {
+  locale?: ContentLocale;
   schemaVersion: typeof CONTENT_SCHEMA_VERSION;
   a: PairingSideFacts;
   b: PairingSideFacts;
@@ -144,9 +149,9 @@ export class Content {
     private readonly getToken: () => Promise<string>,
   ) {}
 
-  async version(): Promise<ContentVersion> {
+  async version(locale?: ContentLocale): Promise<ContentVersion> {
     return this.transport.request({
-      method: "GET", path: "/v1/content/version", token: await this.getToken(),
+      method: "GET", path: `/v1/content/version${locale === undefined ? "" : `?locale=${locale}`}`, token: await this.getToken(),
     });
   }
 
@@ -168,12 +173,12 @@ export class Content {
     });
   }
 
-  async term(termId: string): Promise<ContentTerm> {
+  async term(termId: string, locale?: ContentLocale): Promise<ContentTerm> {
     if (!/^[a-z0-9가-힣][a-z0-9가-힣._-]{0,127}$/u.test(termId)) {
       throw new Error("termId 형식이 올바르지 않아요");
     }
     return this.transport.request({
-      method: "GET", path: `/v1/content/terms/${encodeURIComponent(termId)}`,
+      method: "GET", path: `/v1/content/terms/${encodeURIComponent(termId)}${locale === undefined ? "" : `?locale=${locale}`}`,
       token: await this.getToken(),
     });
   }

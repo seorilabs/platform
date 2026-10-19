@@ -64,7 +64,7 @@ func (h *Handler) version(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	result, err := h.service.Version(r.Context(), sess.AppID)
+	result, err := h.service.Version(r.Context(), sess.AppID, r.URL.Query().Get("locale"))
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func (h *Handler) term(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	result, err := h.service.Term(
-		r.Context(), sess.AppID, sess.PlatformUserID, r.PathValue("termId"),
+		r.Context(), sess.AppID, sess.PlatformUserID, r.PathValue("termId"), r.URL.Query().Get("locale"),
 	)
 	if err != nil {
 		return err

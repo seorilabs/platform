@@ -278,7 +278,7 @@ func TestResolveAndTermPassThroughMore(t *testing.T) {
 	if !found {
 		t.Fatalf("기본 항목 %s 가 응답에 없다", id)
 	}
-	term, err := service.Term(t.Context(), "ungeul", "puid", id)
+	term, err := service.Term(t.Context(), "ungeul", "puid", id, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func (a *pairingServiceAccess) DeepAccess(
 // failingReleases는 릴리스 로드가 항상 실패하는 접합면이다(GCS 장애 흉내).
 type failingReleases struct{}
 
-func (failingReleases) Load(context.Context, registry.App) (Release, error) {
+func (failingReleases) Load(context.Context, registry.App, string) (Release, error) {
 	return Release{}, platformerr.New(platformerr.CodeContentUnavailable, "릴리스를 읽지 못했어요")
 }
 

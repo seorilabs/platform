@@ -17,7 +17,7 @@ type Apps interface {
 }
 
 type Releases interface {
-	Load(context.Context, registry.App) (Release, error)
+	Load(context.Context, registry.App, string) (Release, error)
 }
 
 type Usage interface {
@@ -46,12 +46,12 @@ func NewService(apps Apps, releases Releases, usage Usage, access AccessControll
 	return &Service{apps: apps, releases: releases, usage: usage, access: access}, nil
 }
 
-func (s *Service) Version(ctx context.Context, appID string) (ContentVersion, error) {
-	_, release, err := s.release(ctx, appID)
+func (s *Service) Version(ctx context.Context, appID, locale string) (ContentVersion, error) {
+	_, release, err := s.release(ctx, appID, locale)
 	if err != nil {
 		return ContentVersion{}, err
 	}
-	return ContentVersion{SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion}, nil
+	return ContentVersion{Locale: release.Locale, SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion}, nil
 }
 
 func (s *Service) Resolve(
@@ -63,7 +63,7 @@ func (s *Service) Resolve(
 	if err != nil {
 		return ResolveResult{}, err
 	}
-	app, release, err := s.release(ctx, appID)
+	app, release, err := s.release(ctx, appID, req.Locale)
 	if err != nil {
 		return ResolveResult{}, err
 	}
@@ -141,6 +141,7 @@ func (s *Service) Resolve(
 	}
 	sort.Slice(articleList, func(i, j int) bool { return articleList[i].ID < articleList[j].ID })
 	return ResolveResult{
+		Locale:        release.Locale,
 		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
 		ReadingKey: selection.ReadingKey, Articles: articleList, Locked: locked,
 	}, nil
@@ -169,7 +170,7 @@ func (s *Service) ResolvePairing(
 	if err != nil {
 		return ResolvePairingResult{}, err
 	}
-	release, err := s.releases.Load(ctx, app)
+	release, err := s.loadRelease(ctx, app, req.Locale)
 	if err != nil {
 		return ResolvePairingResult{}, err
 	}
@@ -230,6 +231,7 @@ func (s *Service) ResolvePairing(
 	}
 	sort.Slice(articleList, func(i, j int) bool { return articleList[i].ID < articleList[j].ID })
 	return ResolvePairingResult{
+		Locale:        release.Locale,
 		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
 		PairKey: selection.PairKey, Articles: articleList, Locked: locked,
 	}, nil
@@ -328,12 +330,12 @@ func validateItems(release Release, ids []string, want Access) error {
 	return nil
 }
 
-func (s *Service) Term(ctx context.Context, appID, puid, termID string) (TermResult, error) {
+func (s *Service) Term(ctx context.Context, appID, puid, termID, locale string) (TermResult, error) {
 	if !contentIDPattern.MatchString(termID) {
 		return TermResult{}, platformerr.New(platformerr.CodeRequestInvalid,
 			"사전 항목 ID가 올바르지 않아요")
 	}
-	app, release, err := s.release(ctx, appID)
+	app, release, err := s.release(ctx, appID, locale)
 	if err != nil {
 		return TermResult{}, err
 	}
@@ -346,21 +348,37 @@ func (s *Service) Term(ctx context.Context, appID, puid, termID string) (TermRes
 			"사전 항목을 찾을 수 없어요")
 	}
 	return TermResult{
+		Locale:        release.Locale,
 		SchemaVersion: release.SchemaVersion, ContentVersion: release.ContentVersion,
 		Article: Article{ID: item.ID, Text: item.Text, More: item.More, Access: item.Access},
 	}, nil
 }
 
-func (s *Service) release(ctx context.Context, appID string) (registry.App, Release, error) {
+func (s *Service) release(ctx context.Context, appID, locale string) (registry.App, Release, error) {
 	app, err := s.contentApp(ctx, appID)
 	if err != nil {
 		return registry.App{}, Release{}, err
 	}
-	release, err := s.releases.Load(ctx, app)
+	release, err := s.loadRelease(ctx, app, locale)
 	if err != nil {
 		return registry.App{}, Release{}, err
 	}
 	return app, release, nil
+}
+
+func (s *Service) loadRelease(ctx context.Context, app registry.App, requestedLocale string) (Release, error) {
+	locale, err := normalizeLocale(requestedLocale)
+	if err != nil {
+		return Release{}, err
+	}
+	release, err := s.releases.Load(ctx, app, locale)
+	if err != nil {
+		return Release{}, err
+	}
+	if release.Locale != locale {
+		return Release{}, platformerr.New(platformerr.CodeContentUnavailable, "요청한 언어의 콘텐츠를 확인하지 못했어요")
+	}
+	return release, nil
 }
 
 // contentApp은 콘텐츠 기능이 켜진 사용 가능한 앱만 돌려준다. 릴리스를 읽기 전에 앱 단위

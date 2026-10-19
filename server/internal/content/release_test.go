@@ -89,14 +89,14 @@ func TestReleaseLoaderLoadsAndRetainsPreviousGoodRelease(t *testing.T) {
 	}
 	loader.WithClock(func() time.Time { return now }).WithTTL(time.Minute)
 
-	got, err := loader.Load(t.Context(), testContentApp())
+	got, err := loader.Load(t.Context(), testContentApp(), "")
 	if err != nil || got.ContentVersion != firstVersion {
 		t.Fatalf("first load = %#v, %v", got, err)
 	}
 	objects["private-content/production/ungeul/active.json"] = []byte(`{"schemaVersion":1,"contentVersion":"broken"}`)
 	now = now.Add(2 * time.Minute)
 
-	got, err = loader.Load(t.Context(), testContentApp())
+	got, err = loader.Load(t.Context(), testContentApp(), "")
 	if err != nil || got.ContentVersion != firstVersion {
 		t.Fatalf("fallback load = %#v, %v", got, err)
 	}
@@ -110,7 +110,7 @@ func TestReleaseLoaderRejectsCorruptColdRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = loader.Load(t.Context(), testContentApp())
+	_, err = loader.Load(t.Context(), testContentApp(), "")
 	if platformerr.CodeOf(err) != platformerr.CodeContentUnavailable {
 		t.Fatalf("code = %q, err = %v", platformerr.CodeOf(err), err)
 	}
@@ -125,20 +125,20 @@ func TestReleaseLoaderAcceptsVersionTransitionAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	loader.WithClock(func() time.Time { return now }).WithTTL(time.Minute)
-	if got, err := loader.Load(t.Context(), testContentApp()); err != nil || got.ContentVersion != firstVersion {
+	if got, err := loader.Load(t.Context(), testContentApp(), ""); err != nil || got.ContentVersion != firstVersion {
 		t.Fatalf("first=%q err=%v", got.ContentVersion, err)
 	}
 
 	secondVersion := putRelease(t, objects, "둘째 릴리스")
 	now = now.Add(2 * time.Minute)
-	if got, err := loader.Load(t.Context(), testContentApp()); err != nil || got.ContentVersion != secondVersion {
+	if got, err := loader.Load(t.Context(), testContentApp(), ""); err != nil || got.ContentVersion != secondVersion {
 		t.Fatalf("transition=%q err=%v", got.ContentVersion, err)
 	}
 
 	activeBytes, _ := json.Marshal(activePointer{SchemaVersion: 1, ContentVersion: firstVersion})
 	objects["private-content/production/ungeul/active.json"] = activeBytes
 	now = now.Add(2 * time.Minute)
-	if got, err := loader.Load(t.Context(), testContentApp()); err != nil || got.ContentVersion != firstVersion {
+	if got, err := loader.Load(t.Context(), testContentApp(), ""); err != nil || got.ContentVersion != firstVersion {
 		t.Fatalf("rollback=%q err=%v", got.ContentVersion, err)
 	}
 }
@@ -167,7 +167,7 @@ func TestReleaseLoaderDoesNotBlockOtherAppsDuringGCSRead(t *testing.T) {
 
 	firstDone := make(chan error, 1)
 	go func() {
-		_, loadErr := loader.Load(t.Context(), testContentApp())
+		_, loadErr := loader.Load(t.Context(), testContentApp(), "")
 		firstDone <- loadErr
 	}()
 	select {
@@ -181,7 +181,7 @@ func TestReleaseLoaderDoesNotBlockOtherAppsDuringGCSRead(t *testing.T) {
 	other.Content.Prefix = "other"
 	otherDone := make(chan error, 1)
 	go func() {
-		got, loadErr := loader.Load(t.Context(), other)
+		got, loadErr := loader.Load(t.Context(), other, "")
 		if loadErr == nil && got.ContentVersion != otherVersion {
 			loadErr = errors.New("다른 앱 릴리스 버전이 일치하지 않는다")
 		}

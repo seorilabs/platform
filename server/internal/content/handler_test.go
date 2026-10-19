@@ -19,7 +19,11 @@ func (f fakeApps) GetUsable(context.Context, string) (registry.App, error) { ret
 
 type fakeReleases struct{ release Release }
 
-func (f fakeReleases) Load(context.Context, registry.App) (Release, error) { return f.release, nil }
+func (f fakeReleases) Load(_ context.Context, _ registry.App, locale string) (Release, error) {
+	release := f.release
+	release.Locale = locale
+	return release, nil
+}
 
 type fakeUsage struct{}
 

@@ -43,6 +43,7 @@ func (i Item) HasContext(want Context) bool {
 }
 
 type Release struct {
+	Locale         string
 	SchemaVersion  int
 	ContentVersion string
 	Items          map[string]Item
@@ -50,6 +51,7 @@ type Release struct {
 }
 
 type ContentVersion struct {
+	Locale         string `json:"locale"`
 	SchemaVersion  int    `json:"schemaVersion"`
 	ContentVersion string `json:"contentVersion"`
 }
@@ -114,6 +116,7 @@ type UnlockRequest struct {
 }
 
 type ResolveRequest struct {
+	Locale        string              `json:"locale,omitempty"`
 	SchemaVersion int                 `json:"schemaVersion"`
 	Reading       DerivedReadingFacts `json:"reading"`
 	Scope         []string            `json:"scope"`
@@ -127,6 +130,7 @@ type LockedDeep struct {
 }
 
 type ResolveResult struct {
+	Locale         string       `json:"locale"`
 	SchemaVersion  int          `json:"schemaVersion"`
 	ContentVersion string       `json:"contentVersion"`
 	ReadingKey     string       `json:"readingKey"`
@@ -175,6 +179,7 @@ type PairFacts struct {
 }
 
 type ResolvePairingRequest struct {
+	Locale        string           `json:"locale,omitempty"`
 	SchemaVersion int              `json:"schemaVersion"`
 	A             PairingSideFacts `json:"a"`
 	B             PairingSideFacts `json:"b"`
@@ -189,6 +194,7 @@ type LockedPairing struct {
 }
 
 type ResolvePairingResult struct {
+	Locale         string          `json:"locale"`
 	SchemaVersion  int             `json:"schemaVersion"`
 	ContentVersion string          `json:"contentVersion"`
 	PairKey        string          `json:"pairKey"`
@@ -197,6 +203,7 @@ type ResolvePairingResult struct {
 }
 
 type TermResult struct {
+	Locale         string  `json:"locale"`
 	SchemaVersion  int     `json:"schemaVersion"`
 	ContentVersion string  `json:"contentVersion"`
 	Article        Article `json:"article"`

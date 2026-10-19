@@ -86,6 +86,7 @@ export type { TransportOptions, RequestOptions, ClientContext } from "./transpor
 export type { ParamValue } from "./normalize.ts";
 export type {
   ContentAccess,
+  ContentLocale,
   ContentArticle,
   ContentScope,
   ContentTerm,

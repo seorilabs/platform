@@ -73,6 +73,11 @@ func TestServiceRuntimeContentReleaseReadingPairingAndRestart(t *testing.T) {
 	manifest, _ := json.Marshal(releaseManifest{SchemaVersion: 1, ContentVersion: version, ContentSHA256: digest, ItemCount: len(list)})
 	active, _ := json.Marshal(activePointer{SchemaVersion: 1, ContentVersion: version})
 	objects := memoryObjects{"private-content/production/ungeul/active.json": active, "private-content/production/ungeul/releases/" + version + "/manifest.json": manifest, "private-content/production/ungeul/releases/" + version + "/content.json": contentBytes}
+	english := append([]Item(nil), list...)
+	for i := range english {
+		english[i].Text = "English runtime " + english[i].ID
+	}
+	englishVersion := putLocaleItems(t, objects, "en", "en", english)
 	var server *httptest.Server
 	start := func() {
 		loader, e := NewReleaseLoader(objects, "production")
@@ -129,18 +134,32 @@ func TestServiceRuntimeContentReleaseReadingPairingAndRestart(t *testing.T) {
 	if request("GET", "/v1/content/version", nil, 200)["contentVersion"] != version {
 		t.Fatal("version/hash mismatch")
 	}
+	if got := request("GET", "/v1/content/version?locale=en", nil, 200); got["locale"] != "en" || got["contentVersion"] != englishVersion {
+		t.Fatal("English version/hash mismatch")
+	}
 	first := request("POST", "/v1/content/readings:resolve", reading, 200)
 	if len(first["articles"].([]any)) == 0 {
 		t.Fatal("reading must resolve articles")
 	}
-	request("POST", "/v1/content/pairings:resolve", pairing, 200)
+	reading.Locale = "en"
+	if second := request("POST", "/v1/content/readings:resolve", reading, 200); second["locale"] != "en" || first["readingKey"] != second["readingKey"] {
+		t.Fatal("locale changed reading identity")
+	}
+	koPair := request("POST", "/v1/content/pairings:resolve", pairing, 200)
+	pairing.Locale = "en"
+	if enPair := request("POST", "/v1/content/pairings:resolve", pairing, 200); enPair["locale"] != "en" || koPair["pairKey"] != enPair["pairKey"] {
+		t.Fatal("locale changed pairing identity")
+	}
 	request("GET", "/v1/content/deep-access", nil, 200)
-	request("GET", "/v1/content/terms/ilju.mujin", nil, 200)
+	if request("GET", "/v1/content/terms/ilju.mujin?locale=en", nil, 200)["locale"] != "en" {
+		t.Fatal("English term")
+	}
 	server.Close()
 	start()
 	request("POST", "/v1/content/readings:resolve", reading, 200)
 	request("GET", "/v1/content/terms/ilju.mujin", nil, 429)
 	request("POST", "/v1/content/readings:resolve", map[string]any{"schemaVersion": 1, "articleIds": []string{"arbitrary"}}, 400)
+	request("GET", "/v1/content/version?locale=fr", nil, 400)
 	objects["private-content/production/ungeul/releases/"+version+"/content.json"] = []byte(`{"schemaVersion":1,"items":[]}`)
 	server.Close()
 	start()
