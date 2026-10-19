@@ -320,7 +320,8 @@ func mapErr(err error, p fspath.Path) error {
 	case codes.NotFound:
 		return fmt.Errorf("%w: %s", ErrNotFound, p)
 	case codes.Aborted:
-		return fmt.Errorf("%w: %s", ErrAborted, p)
+		// sentinel과 gRPC 원인을 함께 보존해야 Firestore SDK가 충돌을 재시도한다.
+		return fmt.Errorf("%w: %s: %w", ErrAborted, p, err)
 	default:
 		return fmt.Errorf("store: %s 접근 실패: %w", p, err)
 	}
