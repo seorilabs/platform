@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/identity"
@@ -154,7 +155,11 @@ func (h *Handler) term(w http.ResponseWriter, r *http.Request) error {
 }
 
 func queryLocale(r *http.Request) (string, error) {
-	values, present := r.URL.Query()["locale"]
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return "", platformerr.New(platformerr.CodeRequestInvalid, "조회 값의 인코딩이 올바르지 않아요")
+	}
+	values, present := query["locale"]
 	if !present {
 		return "", nil
 	}

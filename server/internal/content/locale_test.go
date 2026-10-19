@@ -14,7 +14,7 @@ import (
 
 func TestLocaleHTTPRejectsExplicitInvalidValues(t *testing.T) {
 	mux := testHandler(t, &fakeAppChecks{})
-	for _, query := range []string{"locale=", "locale=en&locale=ko", "locale=fr"} {
+	for _, query := range []string{"locale=", "locale=en&locale=ko", "locale=fr", "locale=%zz", "locale=en;x", "locale=en&locale=%zz"} {
 		r := httptest.NewRequest("GET", "/v1/content/version?"+query, nil)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, r)
