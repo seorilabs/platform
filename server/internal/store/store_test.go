@@ -3,10 +3,13 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/seorilabs/platform/server/internal/fspath"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // resolve는 Firestore 연결 없이 테스트할 수 있다.
@@ -154,4 +157,33 @@ func TestMapErr(t *testing.T) {
 			t.Errorf("경로가 메시지에 없다: %v", got)
 		}
 	})
+}
+
+func TestMapErrPreservesAbortedForFirestoreRetry(t *testing.T) {
+	p, err := fspath.Parse("users/pu_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := status.Error(codes.Aborted, "transaction conflict")
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"direct", cause},
+		{"wrapped", fmt.Errorf("read: %w", cause)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapErr(tc.err, p)
+			if !errors.Is(got, ErrAborted) {
+				t.Fatal("store sentinel was lost")
+			}
+			// Firestore SDK의 isAborted도 status.FromError로 재시도를 판단한다.
+			if code := status.Code(got); code != codes.Aborted {
+				t.Errorf("retry status = %s, want Aborted", code)
+			}
+			if !errors.Is(got, cause) {
+				t.Error("original transaction error was lost")
+			}
+		})
+	}
 }
