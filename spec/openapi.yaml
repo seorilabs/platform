@@ -825,6 +825,7 @@ paths:
                     required: [result]
                     properties:
                       result: { $ref: '#/components/schemas/ContentVersion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }

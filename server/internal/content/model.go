@@ -1,9 +1,28 @@
 // Package content는 private GCS 콘텐츠 릴리스를 인증된 사용자에게 선택 전달한다.
 package content
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 const SupportedSchemaVersion = 1
+
+// 생략한 필드는 구클라이언트의 한국어 요청이다. 명시한 빈 값과 null은 계약 오류다.
+type RequestLocale string
+
+func (l *RequestLocale) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value != "ko" && value != "en" {
+		return fmt.Errorf("invalid content locale")
+	}
+	*l = RequestLocale(value)
+	return nil
+}
 
 type Access string
 
@@ -116,7 +135,7 @@ type UnlockRequest struct {
 }
 
 type ResolveRequest struct {
-	Locale        string              `json:"locale,omitempty"`
+	Locale        RequestLocale       `json:"locale,omitempty"`
 	SchemaVersion int                 `json:"schemaVersion"`
 	Reading       DerivedReadingFacts `json:"reading"`
 	Scope         []string            `json:"scope"`
@@ -179,7 +198,7 @@ type PairFacts struct {
 }
 
 type ResolvePairingRequest struct {
-	Locale        string           `json:"locale,omitempty"`
+	Locale        RequestLocale    `json:"locale,omitempty"`
 	SchemaVersion int              `json:"schemaVersion"`
 	A             PairingSideFacts `json:"a"`
 	B             PairingSideFacts `json:"b"`

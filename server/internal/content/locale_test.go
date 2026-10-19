@@ -4,11 +4,47 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/seorilabs/platform/server/internal/platformerr"
 )
+
+func TestLocaleHTTPRejectsExplicitInvalidValues(t *testing.T) {
+	mux := testHandler(t, &fakeAppChecks{})
+	for _, query := range []string{"locale=", "locale=en&locale=ko", "locale=fr"} {
+		r := httptest.NewRequest("GET", "/v1/content/version?"+query, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code != 400 {
+			t.Fatalf("query %q status=%d", query, w.Code)
+		}
+	}
+	for _, value := range []string{`""`, `null`, `"fr"`} {
+		base, err := json.Marshal(validResolveRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(base, &body); err != nil {
+			t.Fatal(err)
+		}
+		body["locale"] = json.RawMessage(value)
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest("POST", "/v1/content/readings:resolve", strings.NewReader(string(payload)))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code != 400 {
+			t.Fatalf("locale %s status=%d", value, w.Code)
+		}
+	}
+}
 
 func TestLocaleServiceReadingPairingAndTerm(t *testing.T) {
 	reading, pairing := validResolveRequest(), validPairingRequest()
@@ -39,7 +75,7 @@ func TestLocaleServiceReadingPairingAndTerm(t *testing.T) {
 	}
 	var readingKey, pairKey string
 	for _, locale := range []string{"ko", "en", "ko"} {
-		reading.Locale, pairing.Locale = locale, locale
+		reading.Locale, pairing.Locale = RequestLocale(locale), RequestLocale(locale)
 		got, err := service.Resolve(t.Context(), "ungeul", "puid", reading)
 		if err != nil || got.Locale != locale || len(got.Articles) == 0 {
 			t.Fatalf("reading: %#v %v", got, err)

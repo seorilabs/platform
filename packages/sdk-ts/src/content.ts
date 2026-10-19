@@ -1,4 +1,4 @@
-import { Transport } from "./transport.ts";
+import { Transport, PlatformError } from "./transport.ts";
 
 export const CONTENT_SCHEMA_VERSION = 1 as const;
 export type ContentLocale = "ko" | "en";
@@ -32,7 +32,7 @@ export interface ContentArticle {
 }
 
 export interface ContentVersion {
-  /** 구서버에는 없으며 생략값은 한국어다. 영어 클라이언트는 en 일치를 확인해야 한다. */
+  /** 구서버에는 없으며 생략값은 한국어다. 아래 API가 요청 언어와 대조한다. */
   locale?: ContentLocale;
   schemaVersion: number;
   contentVersion: string;
@@ -142,6 +142,14 @@ export interface ResolvedContentPairing extends ContentVersion {
   locked: LockedPairingContent[];
 }
 
+function checkedLocale<T extends ContentVersion>(result: T, requested: ContentLocale = "ko"): T {
+  // 구서버의 locale 없는 응답은 한국어다. 롤백 중에도 영어 자리에 섞지 않는다.
+  if ((result.locale ?? "ko") !== requested) {
+    throw new PlatformError("content_locale_mismatch", "Content locale does not match the request", 0, true);
+  }
+  return result;
+}
+
 /** 인증·App Check가 필요한 private 콘텐츠 API. */
 export class Content {
   constructor(
@@ -150,16 +158,16 @@ export class Content {
   ) {}
 
   async version(locale?: ContentLocale): Promise<ContentVersion> {
-    return this.transport.request({
+    return checkedLocale(await this.transport.request<ContentVersion>({
       method: "GET", path: `/v1/content/version${locale === undefined ? "" : `?locale=${locale}`}`, token: await this.getToken(),
-    });
+    }), locale);
   }
 
   async resolve(request: ResolveContentRequest): Promise<ResolvedContentReading> {
-    return this.transport.request({
+    return checkedLocale(await this.transport.request<ResolvedContentReading>({
       method: "POST", path: "/v1/content/readings:resolve",
       token: await this.getToken(), body: request,
-    });
+    }), request.locale);
   }
 
   /**
@@ -167,19 +175,19 @@ export class Content {
    * 404다 — 둘 다 "궁합 미제공"으로 다룬다.
    */
   async resolvePairing(request: ResolveContentPairingRequest): Promise<ResolvedContentPairing> {
-    return this.transport.request({
+    return checkedLocale(await this.transport.request<ResolvedContentPairing>({
       method: "POST", path: "/v1/content/pairings:resolve",
       token: await this.getToken(), body: request,
-    });
+    }), request.locale);
   }
 
   async term(termId: string, locale?: ContentLocale): Promise<ContentTerm> {
     if (!/^[a-z0-9가-힣][a-z0-9가-힣._-]{0,127}$/u.test(termId)) {
       throw new Error("termId 형식이 올바르지 않아요");
     }
-    return this.transport.request({
+    return checkedLocale(await this.transport.request<ContentTerm>({
       method: "GET", path: `/v1/content/terms/${encodeURIComponent(termId)}${locale === undefined ? "" : `?locale=${locale}`}`,
       token: await this.getToken(),
-    });
+    }), locale);
   }
 }

@@ -63,7 +63,7 @@ func (s *Service) Resolve(
 	if err != nil {
 		return ResolveResult{}, err
 	}
-	app, release, err := s.release(ctx, appID, req.Locale)
+	app, release, err := s.release(ctx, appID, string(req.Locale))
 	if err != nil {
 		return ResolveResult{}, err
 	}
@@ -170,7 +170,7 @@ func (s *Service) ResolvePairing(
 	if err != nil {
 		return ResolvePairingResult{}, err
 	}
-	release, err := s.loadRelease(ctx, app, req.Locale)
+	release, err := s.loadRelease(ctx, app, string(req.Locale))
 	if err != nil {
 		return ResolvePairingResult{}, err
 	}

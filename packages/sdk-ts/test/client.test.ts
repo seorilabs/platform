@@ -1102,6 +1102,21 @@ describe("서버 계약", () => {
 });
 
 describe("Content와 Identity", () => {
+  it("영어 요청에 옛 서버의 한국어 응답을 전달하지 않는다", async () => {
+    const f = fakeFetch([
+      ok({ platformToken: "pt-content", refreshToken: "rt-content", platformUserId: "pu-content",
+        appUserId: "uid-content", isAnonymous: false, expiresIn: 3600 }),
+      ok({ schemaVersion: 1, contentVersion: `sha256-${"a".repeat(64)}` }),
+      ok({ schemaVersion: 1, contentVersion: `sha256-${"a".repeat(64)}`,
+        article: { id: "ilju.gapja", text: "한국어", access: "free" } }),
+    ]);
+    const platform = new Platform({ baseUrl: "https://platform.test", appId: "ungeul", fetchImpl: f.impl,
+      appCheckToken: async () => "attested-content" });
+    await platform.signIn({ kind: "firebase-id-token", value: "firebase-id-token" });
+    const mismatch = (e: unknown) => e instanceof PlatformError && e.code === "content_locale_mismatch" && e.local;
+    await assert.rejects(platform.content.version("en"), mismatch);
+    await assert.rejects(platform.content.term("ilju.gapja", "en"), mismatch);
+  });
   it("영어 버전과 사전의 언어를 명시한다", async () => {
     const f = fakeFetch([
       ok({ platformToken: "pt-content", refreshToken: "rt-content", platformUserId: "pu-content",
