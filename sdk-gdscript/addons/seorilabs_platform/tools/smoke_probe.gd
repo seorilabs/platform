@@ -75,6 +75,7 @@ func _initialize() -> void:
 	_check_observation_headers()
 	_check_guards()
 	_check_box_requests()
+	_check_pass_requests()
 	_check_update_gate()
 
 	if _failures.is_empty():
@@ -500,11 +501,14 @@ func _check_iap_environment() -> void:
 		client.list_entitlements(callback)
 		client.account_references(callback)
 		client.verify_purchase({"platform": "app_store", "product_id": "test.sku", "token": "test-proof"}, callback)
+		# 기간 이용권 조회와 수령도 구매 검증과 같은 환경 원장을 쓴다(ADR 0036).
+		client.get_passes(callback)
+		client.claim_pass("amber_pass_30d", "pass-claim-0001", callback)
 		if value != null and not ["production", "sandbox"].has(value):
 			_expect(transport.requests.is_empty(), "잘못된 환경으로 요청을 보냈다")
-			_expect(results.size() == 3, "잘못된 환경의 callback이 누락됐다")
+			_expect(results.size() == 5, "잘못된 환경의 callback이 누락됐다")
 		else:
-			_expect(transport.requests.size() == 3, "IAP 환경 요청이 누락됐다")
+			_expect(transport.requests.size() == 5, "IAP 환경 요청이 누락됐다")
 			for request in transport.requests:
 				_expect(request.get("iap_environment") == value, "IAP 요청 환경이 다르다")
 				var headers := transport._build_headers(request)
@@ -1281,6 +1285,89 @@ func _check_box_requests() -> void:
 	)
 	transport.respond(1, _failure_response(503, "service_unavailable"))
 	_expect(transport.requests.size() == 2, "상자 개봉 5xx를 일반 재시도했다")
+	client.free()
+
+
+## 기간 이용권(ADR 0036) 요청 계약: 경로·메서드·본문, 일반 재시도 없음,
+## 잘못된 id와 익명 세션은 네트워크 없이 거부, 재시도 응답은 그대로 전달.
+func _check_pass_requests() -> void:
+	var transport := ScriptedTransport.new()
+	var client := PlatformClient.new()
+	client.add_child(transport)
+	client._transport = transport
+	client.configure({
+		"base_url": "https://platform.invalid",
+		"iap_base_url": "https://iap.platform.invalid",
+		"app_id": "probe",
+	})
+	root.add_child(client)
+	client._store_session(_session_result("token-pass", "refresh-pass", 3600))
+	var results: Array[Dictionary] = []
+	var collect := func(response: Dictionary) -> void: results.append(response)
+	for invalid in [["amber_pass_30d", "short"], ["amber_pass_30d", "bad id 0001"], ["", "pass-claim-0001"], ["bad/pass", "pass-claim-0001"]]:
+		client.claim_pass(String(invalid[0]), String(invalid[1]), collect)
+	_expect(
+		transport.requests.is_empty() and results.size() == 4
+			and results.all(func(r: Dictionary) -> bool: return String(r.get("code", "")) == "request_invalid" and bool(r.get("local", false))),
+		"잘못된 이용권 수령 요청이 즉시 거부되지 않았다: %s" % [results],
+	)
+
+	results.clear()
+	client.get_passes(collect)
+	client.claim_pass("amber_pass_30d", "pass-claim-0001", collect)
+	if transport.requests.size() != 2:
+		_fail("이용권 요청이 두 개 만들어지지 않았다: %d" % transport.requests.size())
+		client.free()
+		return
+	_expect_iap_request(transport.requests[0], "GET", "/v1/iap/passes", "token-pass")
+	_expect(not transport.requests[0].has("body"), "이용권 조회에 본문이 붙었다")
+	_expect_iap_request(transport.requests[1], "POST", "/v1/iap/passes/claim", "token-pass")
+	var body: Variant = transport.requests[1].get("body", {})
+	_expect(
+		body is Dictionary and (body as Dictionary).size() == 2
+			and String((body as Dictionary).get("entitlementId", "")) == "amber_pass_30d"
+			and String((body as Dictionary).get("requestId", "")) == "pass-claim-0001",
+		"이용권 수령 본문이 다르다: %s" % [body],
+	)
+	transport.respond(1, _failure_response(503, "service_unavailable"))
+	_expect(transport.requests.size() == 2, "이용권 수령 5xx를 일반 재시도했다")
+	_expect(
+		results.size() == 1 and String(results[0].get("code", "")) == "service_unavailable",
+		"이용권 수령 실패가 한 번 전달되지 않았다: %s" % [results],
+	)
+
+	# 같은 requestId 재시도의 applied=false 영수증과 409 코드는 SDK가 바꾸지 않는다.
+	results.clear()
+	client.claim_pass("amber_pass_30d", "pass-claim-0001", collect)
+	transport.respond(2, _success_response({
+		"requestId": "pass-claim-0001", "applied": false, "entitlementId": "amber_pass_30d",
+		"days": 1, "amount": 50, "claimedAt": 1_760_000_000, "pass": {},
+	}))
+	client.claim_pass("amber_pass_30d", "pass-claim-0002", collect)
+	transport.respond(3, _failure_response(409, "pass_already_claimed"))
+	_expect(
+		results.size() == 2
+			and bool(results[0].get("ok", false))
+			and not bool((results[0].get("result", {}) as Dictionary).get("applied", true))
+			and int((results[0].get("result", {}) as Dictionary).get("amount", 0)) == 50
+			and String(results[1].get("code", "")) == "pass_already_claimed"
+			and int(results[1].get("http_status", 0)) == 409,
+		"이용권 재시도 영수증이나 409 코드가 바뀌었다: %s" % [results],
+	)
+
+	# 익명 세션은 서버에 묻지 않는다.
+	var anonymous := _session_result("token-anon", "refresh-anon", 3600)
+	anonymous["isAnonymous"] = true
+	client._store_session(anonymous)
+	results.clear()
+	var before := transport.requests.size()
+	client.get_passes(collect)
+	client.claim_pass("amber_pass_30d", "pass-claim-0003", collect)
+	_expect(
+		transport.requests.size() == before and results.size() == 2
+			and results.all(func(r: Dictionary) -> bool: return String(r.get("code", "")) == "anonymous_not_allowed"),
+		"익명 이용권 요청이 서버로 갔다: %s" % [results],
+	)
 	client.free()
 
 
