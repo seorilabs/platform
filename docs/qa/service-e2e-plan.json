@@ -110,6 +110,16 @@
       ]
     },
     {
+      "id": "iap-passes",
+      "featureIds": [
+        "iap-passes"
+      ],
+      "requiredTests": [
+        "TestServiceRuntimePassVerifyClaimRestartAndRefund",
+        "TestPassClaimIsAtomicIdempotentAndStopsOnRefund"
+      ]
+    },
+    {
       "id": "refund-sandbox-reset",
       "featureIds": [
         "refund-sandbox-reset"

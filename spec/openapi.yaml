@@ -1427,6 +1427,77 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /iap/passes:
+    get:
+      tags: [iap]
+      summary: 기간 이용권 상태 조회
+      operationId: getIapPasses
+      description: |
+        ADR 0036. 소모성 구매 한 건이 즉시분과 N일 동안 하루 한 번 받는 몫이 된다.
+        즉시분(`immediateAmount`)은 기존 `/iap/verify`의 `granted=true`로 앱이 지급하고,
+        하루 몫은 `/iap/passes/claim`으로 받는다. 일정과 남은 날은 서버 카탈로그와 구매
+        원장이 정본이다. 하루는 서버가 구매를 처음 활성으로 확정한 시각부터 24시간
+        단위이며 기기 시계와 시간대를 쓰지 않는다. 앱에 이용권 일정이 있는 모든 상품을
+        돌려주고, 산 적이 없으면 `active=false`, `totalDays=0`이다.
+        이용 중 재구매는 끝나는 날을 `days`만큼 미루고 하루 지급량은 그대로다.
+        환불되거나 취소된 구매의 남은 날은 받지 못한다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      responses:
+        '200':
+          description: 앱의 이용권별 상태
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/PassSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /iap/passes/claim:
+    post:
+      tags: [iap]
+      summary: 기간 이용권의 오늘 몫 수령
+      operationId: claimIapPass
+      description: |
+        ADR 0036. 지금 받을 수 있는 몫을 원장에 기록하고 지급량을 돌려준다. 앱은
+        `requestId`마다 한 번만 `amount`를 지갑에 더한다. 요청 전에 `requestId`를 저장하고,
+        응답을 못 받았으면 같은 `requestId`로 다시 보낸다. 재시도 응답은 `applied=false`와
+        처음 지급량이다. 같은 날 다른 `requestId`는 `pass_already_claimed`(409)다.
+        놓친 날 정책(`missedDays`)이 `forfeit`이면 그날 안에 받지 않은 몫은 사라지고,
+        `catch_up`이면 지난 몫을 한 번에 받는다(`days`가 1보다 클 수 있다).
+        지급량, 날짜, 사용자는 요청으로 받지 않는다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PassClaimRequest' }
+      responses:
+        '200':
+          description: 수령 결과. 재시도면 applied=false와 처음 결과
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/PassClaimReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/PassClaimConflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /iap/verify:
     post:
       tags: [iap]
@@ -3200,6 +3271,50 @@ components:
         pity: { type: boolean, description: '보장으로 나온 희귀' }
         state: { $ref: '#/components/schemas/BoxState' }
 
+    PassStatus:
+      type: object
+      required: [entitlementId, immediateAmount, dailyAmount, days, missedDays, active, claimable, claimableAmount, claimedDays, totalDays, remainingDays, nextClaimAt, endsAt]
+      properties:
+        entitlementId: { type: string }
+        immediateAmount: { type: integer, minimum: 0, description: '구매 검증 때 앱이 바로 지급하는 양. 서버는 안내만 한다' }
+        dailyAmount: { type: integer, minimum: 1 }
+        days: { type: integer, minimum: 1, description: '구매 한 건이 주는 날 수' }
+        missedDays: { type: string, enum: [forfeit, catch_up] }
+        active: { type: boolean, description: '지금 시각을 활성 구매의 기간이 덮는다' }
+        claimable: { type: boolean }
+        claimableAmount: { type: integer, minimum: 0 }
+        claimedDays: { type: integer, minimum: 0, description: '활성 구매에서 받은 날 수' }
+        totalDays: { type: integer, minimum: 0, description: '활성 구매가 주는 날 수 합' }
+        remainingDays: { type: integer, minimum: 0, description: '앞으로 받을 수 있는 날 수. 오늘 아직 받지 않았으면 오늘 포함' }
+        nextClaimAt: { type: integer, format: int64, description: '받을 수 있는 가장 이른 UTC Unix 초. 지금 받을 수 있으면 지금, 없으면 0' }
+        endsAt: { type: integer, format: int64, description: '활성 구매 기간이 끝나는 UTC Unix 초. 없으면 0' }
+    PassSnapshot:
+      type: object
+      required: [serverTime, passes]
+      properties:
+        serverTime: { type: integer, format: int64, description: UTC Unix seconds }
+        passes:
+          type: array
+          items: { $ref: '#/components/schemas/PassStatus' }
+    PassClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [entitlementId, requestId]
+      properties:
+        entitlementId: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$', description: '받을 이용권. 소유와 지급량은 서버가 정한다' }
+        requestId: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$', description: '앱이 만든 멱등 키. 수령 한 번에 하나' }
+    PassClaimReceipt:
+      type: object
+      required: [requestId, applied, entitlementId, days, amount, claimedAt, pass]
+      properties:
+        requestId: { type: string }
+        applied: { type: boolean, description: 'false면 같은 requestId 재시도이며 처음 결과다' }
+        entitlementId: { type: string }
+        days: { type: integer, minimum: 1 }
+        amount: { type: integer, minimum: 1, description: '앱이 이 requestId로 한 번만 지급할 양' }
+        claimedAt: { type: integer, format: int64, description: '처음 수령한 UTC Unix 초' }
+        pass: { $ref: '#/components/schemas/PassStatus' }
+
     AccountDeletionStatus:
       type: object
       additionalProperties: false
@@ -4796,6 +4911,26 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/EnvelopeError' }
+    PassClaimConflict:
+      description: |
+        오늘 몫을 이미 받았거나(`pass_already_claimed`), 지금 받을 이용권이 없거나
+        (`pass_inactive`: 산 적 없음, 기간 끝, 환불이나 취소), 같은 requestId가 다른 이용권으로
+        다시 왔다(`pass_replay_mismatch`). 앞의 둘은 상태 조회의 `nextClaimAt`으로 다음 시각을 안다.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EnvelopeError'
+              - type: object
+                properties:
+                  error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                      code:
+                        type: string
+                        enum: [pass_already_claimed, pass_inactive, pass_replay_mismatch]
+                      message: { type: string }
     SandboxResetConflict:
       description: |
         같은 requestId의 payload가 다르거나(`operator_replay_mismatch`), 같은 사용자의
