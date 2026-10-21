@@ -158,7 +158,11 @@
     "consent_change",
     "save_error",
     "recovery",
-    "rc_exposure"
+    "rc_exposure",
+    "ad_requested",
+    "ad_impression",
+    "ad_failed",
+    "rewarded_earned"
   ],
   "cors_origins": []
 }

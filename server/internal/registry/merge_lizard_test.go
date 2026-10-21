@@ -131,7 +131,7 @@ func TestMergeLizardRegistryContract(t *testing.T) {
 	}
 
 	// 클라이언트 EventContract(godot/packages/product-core/src/analytics/event_contract.gd)
-	// 25종과 SDK 예약 이벤트 2종이다. 클라이언트에는 다른 분석 경로가 없어서 빠진 이름은
+	// 29종과 SDK 예약 이벤트 2종이다. 클라이언트에는 다른 분석 경로가 없어서 빠진 이름은
 	// 조용히 버려진다.
 	wantEvents := []string{
 		"seori_session_start", "seori_sdk_error",
@@ -139,6 +139,7 @@ func TestMergeLizardRegistryContract(t *testing.T) {
 		"merge", "purify", "level_up", "earn_virtual_currency", "spend_virtual_currency", "offline_claim",
 		"unlock_achievement", "build", "codex_open", "shop_open", "shop_unlocked", "purchase",
 		"purchase_pending", "refund", "settings_open", "consent_change", "save_error", "recovery", "rc_exposure",
+		"ad_requested", "ad_impression", "ad_failed", "rewarded_earned",
 	}
 	if !reflect.DeepEqual(app.PlatformEventAllowlist, wantEvents) {
 		t.Fatalf("이벤트 allowlist가 다르다: %v", app.PlatformEventAllowlist)
