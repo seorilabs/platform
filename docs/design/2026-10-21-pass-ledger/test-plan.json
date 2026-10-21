@@ -1,0 +1,1 @@
+{"schemaVersion":1,"level":"L1","baseline":"3b35488b76b3122c42c50073cdcfe0de07751689","changedFeatures":["purchase-entitlements"],"environments":["dev"],"redesign":false,"foundationRerun":false,"floorOverrides":[],"release":{"markets":["service"],"until":"public"}}

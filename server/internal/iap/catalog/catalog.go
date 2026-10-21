@@ -7,6 +7,7 @@ package catalog
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -39,6 +40,9 @@ type Entry struct {
 	GooglePlay string             `json:"google_play,omitempty"`
 	AppStore   string             `json:"app_store,omitempty"`
 	AppsInToss string             `json:"apps_in_toss,omitempty"`
+	// Pass는 기간 이용권의 지급 일정이다(ADR 0036). 소모성 항목에만 둔다.
+	// 없으면 기존 소모성, 비소모성과 똑같이 해석한다.
+	Pass *domain.PassSchedule `json:"pass,omitempty"`
 }
 
 // Product는 서버가 허용한 SKU의 지급 대상과 상품 유형이다.
@@ -162,6 +166,13 @@ func (c *Catalog) addEntries(appID string, entries map[string]Entry, requiredPla
 				"%s의 상품 유형이 올바르지 않아요: %s", id, entry.Type)
 		}
 
+		// 이용권은 반복 구매하는 소모성 상품이다. 비소모성에 일정을 붙이면
+		// 재구매 연장이 성립하지 않으므로 설정 실수로 본다.
+		if entry.Pass != nil && (entry.Type.Normalize() != domain.ProductConsumable || !entry.Pass.Valid()) {
+			return platformerr.Newf(platformerr.CodeCatalogInvalid,
+				"%s의 이용권 일정이 올바르지 않아요", id)
+		}
+
 		for _, p := range requiredPlatforms {
 			sku := entry.SKU(p)
 			if placeholders[strings.TrimSpace(sku)] {
@@ -264,6 +275,34 @@ func (c *Catalog) SKUForApp(appID, entitlementID string, p domain.Platform) (str
 		return "", false
 	}
 	return sku, true
+}
+
+// PassForApp은 앱 범위 entitlement의 이용권 일정을 돌려준다. 앱별 항목이 없을
+// 때만 기존 단일 앱 카탈로그를 읽는 규칙은 SKUForApp과 같다.
+func (c *Catalog) PassForApp(appID, entitlementID string) (domain.PassSchedule, bool) {
+	e, ok := c.entriesByApp[appID][entitlementID]
+	if !ok {
+		e, ok = c.entriesByApp[""][entitlementID]
+	}
+	if !ok || e.Pass == nil {
+		return domain.PassSchedule{}, false
+	}
+	return *e.Pass, true
+}
+
+// PassEntitlementsForApp은 이용권 일정이 있는 entitlement를 정렬해 돌려준다.
+// 레지스트리 허용 목록과의 교집합은 호출하는 쪽이 확인한다.
+func (c *Catalog) PassEntitlementsForApp(appID string) []string {
+	var out []string
+	for _, scope := range []string{appID, ""} {
+		for id := range c.entriesByApp[scope] {
+			if _, ok := c.PassForApp(appID, id); ok && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Has는 entitlement가 카탈로그에 있는지 본다.
