@@ -1,0 +1,81 @@
+{
+  "app_id": "merge-lizard",
+  "display_name": "Amber Lizards",
+  "firebase_project_id": "merge-lizard",
+  "firebase_custom_token_service_account": "platform-auth@merge-lizard.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": true,
+    "events": true,
+    "iap": true,
+    "ads": false,
+    "inbox": true,
+    "firebase_custom_token_bridge": true
+  },
+  "store": {
+    "google_play_url": "https://play.google.com/store/apps/details?id=com.seorilabs.mergelizard",
+    "app_store_url": "https://apps.apple.com/app/id6824314713"
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "iap": {
+    "ledger_environment": "production",
+    "apple_sandbox_enabled": true,
+    "markets": [
+      "google_play",
+      "app_store"
+    ],
+    "google_play_package_name": "com.seorilabs.mergelizard",
+    "app_store_bundle_id": "com.seorilabs.mergelizard",
+    "entitlement_ids": [
+      "amber_pack_s",
+      "amber_pack_m",
+      "amber_pack_l",
+      "amber_pack_xl",
+      "amber_pack_xxl",
+      "starter_pack",
+      "growth_boost_25",
+      "nest_slots_plus_2",
+      "amber_v2_s",
+      "amber_v2_m",
+      "amber_v2_l",
+      "amber_v2_xl",
+      "amber_v2_xxl",
+      "amber_pass_30d",
+      "premium_land"
+    ],
+    "require_linked_account": false
+  },
+  "platform_event_allowlist": [
+    "seori_session_start",
+    "seori_sdk_error",
+    "app_open",
+    "title_ready",
+    "tutorial_begin",
+    "tutorial_step",
+    "tutorial_complete",
+    "tutorial_skip",
+    "merge",
+    "purify",
+    "level_up",
+    "earn_virtual_currency",
+    "spend_virtual_currency",
+    "offline_claim",
+    "unlock_achievement",
+    "build",
+    "codex_open",
+    "shop_open",
+    "shop_unlocked",
+    "purchase",
+    "purchase_pending",
+    "refund",
+    "settings_open",
+    "consent_change",
+    "save_error",
+    "recovery",
+    "rc_exposure"
+  ],
+  "cors_origins": []
+}
