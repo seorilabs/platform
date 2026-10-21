@@ -18,7 +18,7 @@ type passClock struct {
 	now time.Time
 }
 
-func (c *passClock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *passClock) Now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
 func (c *passClock) Set(t time.Time) { c.mu.Lock(); defer c.mu.Unlock(); c.now = t }
 
 // 하루 한 번 수령, 동시 요청, 같은 요청 재시도, 재검증과 기기 이전, 재구매 연장,

@@ -58,13 +58,18 @@ type PassReceipt struct {
 }
 
 func passStatus(entID string, s domain.PassSchedule, p domain.PassPlan) PassStatus {
-	return PassStatus{
+	status := PassStatus{
 		EntitlementID: entID, ImmediateAmount: s.ImmediateAmount, DailyAmount: s.DailyAmount,
 		Days: s.Days, MissedDays: string(s.MissedDays),
 		Active: p.Active, Claimable: p.ClaimableDays > 0, ClaimableAmount: p.ClaimableDays * s.DailyAmount,
 		ClaimedDays: p.ClaimedDays, TotalDays: p.TotalDays, RemainingDays: p.RemainingDays,
 		NextClaimAt: unixCeil(p.NextClaimAt), EndsAt: unixCeil(p.EndsAt),
 	}
+	if p.ClaimableDays > 0 {
+		// 지금 받을 수 있으면 지금이다. 올림하면 serverTime보다 1초 뒤가 될 수 있다.
+		status.NextClaimAt = p.NextClaimAt.Unix()
+	}
+	return status
 }
 
 // unixCeil은 초 단위로 올림한다. 내림하면 경계 직전 초에 받기를 눌러 409가 난다.
