@@ -112,6 +112,23 @@ func TestMergeLizardRegistryContract(t *testing.T) {
 	if len(registryIDs) != 15 || !reflect.DeepEqual(registryIDs, catalogIDs) {
 		t.Fatalf("entitlement allowlist와 카탈로그 후보가 다르다\nregistry: %v\ncatalog:  %v", registryIDs, catalogIDs)
 	}
+	// 이용권 API(ADR 0036)는 카탈로그 일정과 레지스트리 허용이 모두 있을 때만 열린다.
+	// 30일 호박만 일정을 가진다.
+	var passIDs []string
+	for id, raw := range candidate.Apps["merge-lizard"].Entitlements {
+		var entry struct {
+			Pass json.RawMessage `json:"pass"`
+		}
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry.Pass != nil {
+			passIDs = append(passIDs, id)
+		}
+	}
+	if !reflect.DeepEqual(passIDs, []string{"amber_pass_30d"}) || !app.EntitlementAllowed("amber_pass_30d") {
+		t.Fatalf("이용권 상품이 다르다: %v", passIDs)
+	}
 
 	// 클라이언트 EventContract(godot/packages/product-core/src/analytics/event_contract.gd)
 	// 25종과 SDK 예약 이벤트 2종이다. 클라이언트에는 다른 분석 경로가 없어서 빠진 이름은

@@ -71,7 +71,13 @@
         "amber_pass_30d": {
           "type": "consumable",
           "google_play": "merge_lizard_amber_pass_30d",
-          "app_store": "merge_lizard_amber_pass_30d"
+          "app_store": "merge_lizard_amber_pass_30d",
+          "pass": {
+            "immediate_amount": 300,
+            "daily_amount": 50,
+            "days": 30,
+            "missed_days": "forfeit"
+          }
         },
         "premium_land": {
           "type": "non_consumable",

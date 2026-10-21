@@ -36,8 +36,7 @@ func TestMergeLizardCatalogCandidate(t *testing.T) {
 		"amber_v2_l":        {"merge_lizard_amber_v2_l", domain.ProductConsumable},
 		"amber_v2_xl":       {"merge_lizard_amber_v2_xl", domain.ProductConsumable},
 		"amber_v2_xxl":      {"merge_lizard_amber_v2_xxl", domain.ProductConsumable},
-		// 30일 호박은 1회 구매로 지급되는 소모품으로만 등록한다. 남은 날의 일일 지급
-		// 원장은 Platform에 없다.
+		// 30일 호박은 소모품이고, 남은 날의 하루 몫은 이용권 일정(ADR 0036)으로 서버가 판정한다.
 		"amber_pass_30d": {"merge_lizard_amber_pass_30d", domain.ProductConsumable},
 		"premium_land":   {"merge_lizard_premium_land", domain.ProductNonConsumable},
 	}
@@ -58,6 +57,16 @@ func TestMergeLizardCatalogCandidate(t *testing.T) {
 			t.Fatalf("AppsInToss는 출시 범위가 아니다: %s", id)
 		}
 	}
+	// economy-v5 9절: 즉시 300 + 30일 동안 매일 50(총 1,800). 하루 1회 직접 받고 놓친 날 몫은 사라진다.
+	pass, ok := c.PassForApp("merge-lizard", "amber_pass_30d")
+	if want := (domain.PassSchedule{ImmediateAmount: 300, DailyAmount: 50, Days: 30, MissedDays: domain.MissedDaysForfeit}); !ok || pass != want ||
+		pass.ImmediateAmount+pass.DailyAmount*pass.Days != 1800 {
+		t.Fatalf("30일 호박 일정=%+v %v", pass, ok)
+	}
+	if ids := c.PassEntitlementsForApp("merge-lizard"); len(ids) != 1 || ids[0] != "amber_pass_30d" {
+		t.Fatalf("이용권은 30일 호박 하나다: %v", ids)
+	}
+
 	// 다른 앱 범위로 새지 않는다.
 	if _, err := c.ProductForApp("lizard-tycoon", domain.PlatformGooglePlay, "merge_lizard_amber_v2_s"); err == nil {
 		t.Fatal("merge-lizard SKU가 다른 앱에서 허용됐다")
