@@ -23,10 +23,13 @@ const AtomicJsonStore := preload("core/atomic_json_store.gd")
 const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "1.0.0"
+const SDK_VERSION := "1.1.0"
 
 ## OpenAPI BoxOpenRequest.requestId 와 같다.
 static var _BOX_REQUEST_ID := RegEx.create_from_string("^[A-Za-z0-9_-]{8,64}$")
+
+## OpenAPI PassClaimRequest.entitlementId 와 같다. requestId는 _BOX_REQUEST_ID와 같은 형식이다.
+static var _PASS_ENTITLEMENT_ID := RegEx.create_from_string("^[A-Za-z0-9._-]{1,128}$")
 
 ## 세션이 갱신되면 발생한다.
 signal session_changed(session: Dictionary)
@@ -1158,6 +1161,42 @@ func open_box(request_id: String, callback: Callable) -> void:
 		return
 	_iap_request(
 		{"method": "POST", "path": "/v1/iap/boxes/open", "body": {"requestId": request_id}},
+		callback,
+	)
+
+
+## 기간 이용권 상태(ADR 0036).
+##
+## 하루는 서버가 구매를 처음 활성으로 확정한 시각부터 24시간이다. 앱은 기기 시계로
+## 수령 가능 여부를 판정하지 않고 result의 claimable, nextClaimAt, serverTime을 쓴다.
+## 구매 검증에 iap_environment를 설정했다면 같은 환경 원장을 읽는다.
+## result: {serverTime, passes: [PassStatus]}
+func get_passes(callback: Callable) -> void:
+	if is_anonymous():
+		callback.call(_client_error("anonymous_not_allowed", "로그인 후에 볼 수 있어요"))
+		return
+	_iap_request({"method": "GET", "path": "/v1/iap/passes"}, callback)
+
+
+## 기간 이용권의 오늘 몫을 받는다(ADR 0036).
+##
+## request_id는 앱이 만들어 요청 전에 저장한다. 응답이 모호하면(timeout, 5xx) 같은
+## request_id로 다시 부르면 서버가 처음 결과를 돌려준다(applied=false). 앱은
+## applied와 관계없이 request_id마다 result.amount를 한 번만 지급한다.
+## 다른 IAP 요청처럼 일반 재시도는 하지 않는다.
+func claim_pass(entitlement_id: String, request_id: String, callback: Callable) -> void:
+	if not _PASS_ENTITLEMENT_ID.search(entitlement_id) or not _BOX_REQUEST_ID.search(request_id):
+		callback.call(_client_error("request_invalid", "이용권 수령 요청이 올바르지 않아요"))
+		return
+	if is_anonymous():
+		callback.call(_client_error("anonymous_not_allowed", "로그인 후에 받을 수 있어요"))
+		return
+	_iap_request(
+		{
+			"method": "POST",
+			"path": "/v1/iap/passes/claim",
+			"body": {"entitlementId": entitlement_id, "requestId": request_id},
+		},
 		callback,
 	)
 

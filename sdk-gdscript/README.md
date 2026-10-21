@@ -121,7 +121,7 @@ UID 전환을 허용하지 않는다.
 ### Apple 테스트 환경
 
 `iap_environment`에 `"production"`, `"sandbox"` 또는 그 문자열을 반환하는
-Callable을 설정할 수 있다. 구매 검증·권한 조회·계정 참조 요청에만
+Callable을 설정할 수 있다. 구매 검증, 권한 조회, 계정 참조, 확률 상자, 기간 이용권 요청에만
 `X-Seori-IAP-Environment` 헤더를 보내며 요청 시작 시 선택한 환경을 인증
 재전송까지 유지한다. 생략하면 기존 서버 기본 환경을 사용한다.
 
@@ -129,9 +129,9 @@ iOS 앱은 StoreKit에서 확인한 실제 환경을 제공해야 한다. 명시
 환경이 비었거나 잘못됐으면 네트워크 요청을 보내지 않는다. 클라이언트 설정은
 지급 증거가 아니며 서버의 앱별 환경 허용과 Apple 거래 검증이 필요하다.
 
-### 중단된 계정 채택 복구 (미발행 1.0.0 후보)
+### 중단된 계정 채택 복구 (1.0.0)
 
-이 API는 [PR #225](https://github.com/seorilabs/platform/pull/225)로 main에 병합됐다. 사용자 요청에 따라 GDScript SDK 후보 버전을 0.10.0에서 1.0.0으로 올렸으며 공개 함수·복구 계약·게임 저장 형식은 유지한다. 운영 반영·정식 SDK 공개는 별도 단계다. 앱은 검사한 exact Git source snapshot을 SOURCE/CHECKSUM과 함께 고정해야 한다. `1.0.0` VERSION이나 예정 asset URL만으로 공개 상태를 판단하지 않는다. TypeScript SDK 버전은 0.6.0으로 유지한다.
+이 API는 [PR #225](https://github.com/seorilabs/platform/pull/225)로 main에 병합됐고 GitHub Release `v1.0.0`으로 공개됐다. TypeScript SDK 버전은 0.6.0으로 유지한다.
 
 서버 연결 응답 뒤 앱이 `adopting` 대상 UID를 내구성 있게 기록했지만 보호 신원을 채택하지 못한 경우:
 
@@ -336,6 +336,33 @@ platform.open_box(request_id, func(res):
 
 - `get_boxes`는 익명만 거부한다. 연결 전 게스트도 확률을 볼 수 있다.
 - `open_box`는 결제 세션 규칙을 따른다(`require_linked_account` 앱은 연결 계정만). 모호한 실패 뒤에는 같은 `request_id`로 다시 부른다.
+
+## 기간 이용권(1.1.0, ADR 0036)
+
+소모성 구매 한 건이 즉시분과 N일 동안 하루 한 번 받는 몫이 된다. 즉시분은 기존
+`verify_purchase`가 `granted=true`일 때 앱이 지급한다. 하루는 서버가 구매를 처음 활성으로
+확정한 시각부터 24시간이며 기기 시계로 판정하지 않는다.
+
+```gdscript
+platform.get_passes(func(res):
+    if res.ok:
+        var now: int = res.result.serverTime      # UTC Unix 초
+        for p in res.result.passes:                # 산 적 없는 이용권도 active=false로 온다
+            print(p.entitlementId, p.claimable, p.remainingDays, p.nextClaimAt - now)
+)
+var request_id := "pass-%d" % Time.get_ticks_usec()  # 요청 전에 저장한다
+platform.claim_pass("amber_pass_30d", request_id, func(res):
+    if res.ok:
+        _grant_once(request_id, res.result.amount)  # applied와 관계없이 request_id마다 한 번
+    elif res.code in ["pass_already_claimed", "pass_inactive"]:
+        pass  # 저장한 request_id를 지우고 get_passes로 다시 읽는다
+)
+```
+
+- 조회는 익명만 로컬에서 거부한다. 수령은 결제 세션 규칙을 따른다(`require_linked_account` 앱은 연결 계정만).
+- 둘 다 `iap_environment`를 쓰면 구매 검증과 같은 환경 헤더를 보낸다. TestFlight 구매는 sandbox 원장에 쌓인다.
+- 모호한 실패(timeout, 5xx) 뒤에는 같은 `request_id`로 다시 부른다. 서버가 `applied=false`와 처음 지급량을 돌려준다. 일반 재시도는 하지 않는다.
+- 판매 노출은 조회가 해당 `entitlementId`를 돌려줄 때만 한다. 앱에 이용권이 없으면 422 `product_not_allowed`다.
 
 ## 계정 삭제와 Apple 승인 철회(0.8.1)
 
