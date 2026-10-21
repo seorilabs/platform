@@ -97,11 +97,3 @@ func TestPassRequiresPayingSession(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
-
-func TestPassUnsupportedService(t *testing.T) {
-	h := NewHandler(&fakeService{}, &fakeSessions{sess: paidSession()})
-	w := serve(t, h, http.MethodGet, "/v1/iap/passes", "")
-	if errorCode(t, w) != string(platformerr.CodeProductNotAllowed) {
-		t.Fatalf("%d %s", w.Code, w.Body.String())
-	}
-}

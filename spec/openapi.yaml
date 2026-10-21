@@ -1433,14 +1433,10 @@ paths:
       summary: 기간 이용권 상태 조회
       operationId: getIapPasses
       description: |
-        ADR 0036. 소모성 구매 한 건이 즉시분과 N일 동안 하루 한 번 받는 몫이 된다.
-        즉시분(`immediateAmount`)은 기존 `/iap/verify`의 `granted=true`로 앱이 지급하고,
-        하루 몫은 `/iap/passes/claim`으로 받는다. 일정과 남은 날은 서버 카탈로그와 구매
-        원장이 정본이다. 하루는 서버가 구매를 처음 활성으로 확정한 시각부터 24시간
-        단위이며 기기 시계와 시간대를 쓰지 않는다. 앱에 이용권 일정이 있는 모든 상품을
-        돌려주고, 산 적이 없으면 `active=false`, `totalDays=0`이다.
-        이용 중 재구매는 끝나는 날을 `days`만큼 미루고 하루 지급량은 그대로다.
-        환불되거나 취소된 구매의 남은 날은 받지 못한다.
+        ADR 0036. 소모성 구매 한 건이 즉시분(`/iap/verify`의 `granted=true`로 앱이 지급)과
+        N일 동안 하루 한 번 받는 몫이 된다. 하루는 서버가 구매를 처음 활성으로 확정한 시각부터
+        24시간이며 기기 시계를 쓰지 않는다. 이용 중 재구매는 끝나는 날만 `days`만큼 미루고,
+        환불되거나 취소된 구매의 남은 날은 멈춘다. 산 적이 없는 이용권도 `active=false`로 돌려준다.
       security: [{ PlatformToken: [] }]
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
@@ -1465,13 +1461,10 @@ paths:
       summary: 기간 이용권의 오늘 몫 수령
       operationId: claimIapPass
       description: |
-        ADR 0036. 지금 받을 수 있는 몫을 원장에 기록하고 지급량을 돌려준다. 앱은
-        `requestId`마다 한 번만 `amount`를 지갑에 더한다. 요청 전에 `requestId`를 저장하고,
-        응답을 못 받았으면 같은 `requestId`로 다시 보낸다. 재시도 응답은 `applied=false`와
-        처음 지급량이다. 같은 날 다른 `requestId`는 `pass_already_claimed`(409)다.
-        놓친 날 정책(`missedDays`)이 `forfeit`이면 그날 안에 받지 않은 몫은 사라지고,
-        `catch_up`이면 지난 몫을 한 번에 받는다(`days`가 1보다 클 수 있다).
-        지급량, 날짜, 사용자는 요청으로 받지 않는다.
+        ADR 0036. 앱은 요청 전에 `requestId`를 저장하고 `requestId`마다 한 번만 `amount`를
+        지갑에 더한다. 응답을 못 받았으면 같은 `requestId`로 다시 보내며 응답은 `applied=false`와
+        처음 지급량이다. `missedDays`가 `forfeit`이면 그날 안에 받지 않은 몫은 사라지고
+        `catch_up`이면 지난 몫을 한 번에 받는다. 지급량, 날짜, 사용자는 요청으로 받지 않는다.
       security: [{ PlatformToken: [] }]
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
