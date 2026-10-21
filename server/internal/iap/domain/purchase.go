@@ -257,7 +257,16 @@ type Source struct {
 
 	// ContentUnitsConsumed는 이 구매 source에서 이미 사용한 콘텐츠 열람권 수다.
 	// source와 함께 소유권 이전되므로 재설치·계정 이전으로 사용량이 되살아나지 않는다.
+	// 확률 상자는 연 상자 수, 기간 이용권(ADR 0036)은 받은 날 수를 같은 필드에 센다.
 	ContentUnitsConsumed int `firestore:"contentUnitsConsumed,omitempty"`
+
+	// ActivatedAt은 서버가 이 source를 처음 활성으로 확정한 시각이다. 기간 이용권의
+	// 하루 경계 기준이다(ADR 0036). 마켓 구매 시각이 아니라 서버 시각이라 보류 결제나
+	// 늦은 검증으로 기간이 줄지 않는다. 재검증과 소유권 이전에도 처음 값을 유지한다.
+	ActivatedAt time.Time `firestore:"activatedAt,omitempty"`
+	// LastClaimedAt은 이 source로 기간 이용권 하루 몫을 마지막으로 받은 서버 시각이다.
+	// source와 함께 이전되므로 다른 기기로 옮겨도 같은 날 두 번 받지 못한다.
+	LastClaimedAt time.Time `firestore:"lastClaimedAt,omitempty"`
 
 	// 운영자 지급 전용 필드. 마켓 구매면 비어 있다.
 	ActorLogin string `firestore:"actorLogin,omitempty"`

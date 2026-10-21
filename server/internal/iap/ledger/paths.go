@@ -42,6 +42,7 @@ const (
 	contentConsumptions     = "content_consumptions"
 	boxStates               = "box_states"
 	boxOpens                = "box_opens"
+	passClaims              = "pass_claims"
 )
 
 // pathBuilder는 환경 prefix를 붙여 경로를 만든다.
@@ -95,6 +96,13 @@ func (b pathBuilder) boxState(puid string) (fspath.Path, error) {
 // boxOpen은 개봉 한 번의 immutable 증거다. 불변식 5에 따라 영구 보존한다.
 func (b pathBuilder) boxOpen(requestDigest string) (fspath.Path, error) {
 	return b.parse(boxOpens + "/" + requestDigest)
+}
+
+// passClaim은 기간 이용권 하루 몫 수령 한 번의 immutable 증거다. ADR 0036.
+// 요청 번호 digest가 ID라 같은 요청의 재시도는 이 문서를 읽고 멱등 성공한다.
+// 불변식 5에 따라 영구 보존한다.
+func (b pathBuilder) passClaim(requestDigest string) (fspath.Path, error) {
+	return b.parse(passClaims + "/" + requestDigest)
 }
 
 // order는 주문 원장 경로다. 불변식 5에 따라 절대 삭제하지 않는다.

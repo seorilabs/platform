@@ -82,6 +82,14 @@
       ]
     },
     {
+      "id": "iap-passes",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/iap/**"
+      ]
+    },
+    {
       "id": "refund-sandbox-reset",
       "core": true,
       "foundation": true,
@@ -258,6 +266,14 @@
     {
       "path": "/iap/boxes/open",
       "featureId": "economy-boxes"
+    },
+    {
+      "path": "/iap/passes",
+      "featureId": "iap-passes"
+    },
+    {
+      "path": "/iap/passes/claim",
+      "featureId": "iap-passes"
     },
     {
       "path": "/iap/verify",
