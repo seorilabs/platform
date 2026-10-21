@@ -516,6 +516,20 @@ func (l *Ledger) grant(
 		if transferredSource.ContentUnitsConsumed > contentUnitsConsumed {
 			contentUnitsConsumed = transferredSource.ContentUnitsConsumed
 		}
+		// 기간 이용권의 하루 경계와 마지막 수령 시각은 사용량과 같이 source를 따라간다.
+		// 처음 활성 시각은 활성이 아니던 source가 활성이 될 때 한 번만 정한다. 이미
+		// 활성이던 source에 값이 없으면 이 필드 이전 기록이므로 비워 두고 구매 시각을
+		// 쓰게 한다(domain.PlanPass). 재검증으로 시작이 늦춰져 날이 늘지 않게 하기 위해서다.
+		activatedAt := earliestNonZero(prevSource.ActivatedAt, transferredSource.ActivatedAt)
+		wasActive := (hadSource && prevSource.State == domain.StateActive) ||
+			transferredSource.State == domain.StateActive
+		if activatedAt.IsZero() && storedState == domain.StateActive && !wasActive {
+			activatedAt = now
+		}
+		lastClaimedAt := prevSource.LastClaimedAt
+		if transferredSource.LastClaimedAt.After(lastClaimedAt) {
+			lastClaimedAt = transferredSource.LastClaimedAt
+		}
 		ent.Sources[orderKey] = domain.Source{
 			Platform:             in.Purchase.Platform,
 			ProductID:            in.Purchase.ProductID,
@@ -524,6 +538,8 @@ func (l *Ledger) grant(
 			ObservedAt:           storedObservedAt,
 			UpdatedAt:            now,
 			ContentUnitsConsumed: contentUnitsConsumed,
+			ActivatedAt:          activatedAt,
+			LastClaimedAt:        lastClaimedAt,
 		}
 
 		if err := l.writeEntitlement(tx, in.PlatformUserID, ent, now); err != nil {
@@ -2177,6 +2193,14 @@ func firstNonZero(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// earliestNonZero는 둘 중 값이 있는 더 이른 시각이다.
+func earliestNonZero(a, b time.Time) time.Time {
+	if a.IsZero() || (!b.IsZero() && b.Before(a)) {
+		return b
+	}
+	return a
 }
 
 // 환불 선행 tombstone도 검증된 거래 근거를 보존한다. 불명 값으로 기존 근거를 지우지 않는다.
