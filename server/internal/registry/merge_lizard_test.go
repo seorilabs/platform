@@ -11,7 +11,7 @@ import (
 
 // Amber Lizards(merge-lizard)는 Godot 클라이언트가 세션, 원격 설정, 우편함, 이벤트,
 // 구매 검증을 모두 Platform으로 보낸다. 클라이언트 초기화가 우편함 조회까지 성공해야
-// 온라인으로 시작하므로 inbox도 함께 켠다. 광고는 AdMob unit이 정해진 뒤 별도 변경으로 켠다.
+// 온라인으로 시작하므로 inbox도 함께 켠다. 보상형 광고는 AdMob SSV로 검증한다.
 func TestMergeLizardRegistryContract(t *testing.T) {
 	apps, err := NewFSSource(os.DirFS("../../../registry"), "apps").LoadApps(context.Background())
 	if err != nil {
@@ -40,9 +40,34 @@ func TestMergeLizardRegistryContract(t *testing.T) {
 			t.Fatalf("%s 기능이 꺼져 있다: %#v", feature, app.Features)
 		}
 	}
-	// AdMob unit 없이 ads를 켜면 Validate가 막는다. 켜는 것은 unit과 SSV 콜백이 준비된 뒤다.
-	if app.FeatureEnabled("ads") || len(app.Ads.Placements) != 0 {
-		t.Fatalf("광고가 unit 없이 활성화됐다: %#v", app.Ads)
+	// 보상형 지면 4개는 economy-v5 8절의 하루 한도와 간격이다(합계 하루 9회, BM 템플릿 상한 10 안).
+	// AdMob unit의 보상은 콘솔에서 `reward` 1로 만들었다(platform#117). SSV 콜백의 reward_item과 같아야 한다.
+	if !app.FeatureEnabled("ads") || !reflect.DeepEqual(app.Ads.Providers, []string{"admob"}) {
+		t.Fatalf("광고가 꺼져 있다: %#v", app.Ads)
+	}
+	const pub = "ca-app-pub-9932778305312246/"
+	wantAds := []struct {
+		key, android, ios    string
+		dailyLimit, cooldown int
+	}{
+		{"offline_double", "1654568769", "5941123120", 1, 21600},
+		{"timer_skip", "8926554120", "2776078743", 3, 600},
+		{"login_double", "7445776488", "8136216630", 1, 0},
+		{"drift_gift", "7525667539", "4196971629", 4, 300},
+	}
+	if len(app.Ads.Placements) != len(wantAds) {
+		t.Fatalf("광고 지면 수가 다르다: %#v", app.Ads.Placements)
+	}
+	for i, want := range wantAds {
+		p := app.Ads.Placements[i]
+		admob := p.Providers["admob"]
+		if p.ID != "rewarded_"+want.key || p.Format != "rewarded" ||
+			admob.AndroidAdUnitID != pub+want.android || admob.IOSAdUnitID != pub+want.ios ||
+			admob.RewardItem != "reward" || admob.RewardAmount != 1 ||
+			p.Reward == nil || p.Reward.Key != want.key || p.Reward.MinAmount != 1 || p.Reward.MaxAmount != 1 ||
+			p.DailyLimit != want.dailyLimit || p.CooldownSeconds != want.cooldown {
+			t.Fatalf("광고 지면 %s 계약이 다르다: %#v", want.key, p)
+		}
 	}
 	// Godot에는 App Check SDK가 없다.
 	if app.RequireAppCheck || app.FeatureEnabled("presence") {
