@@ -87,6 +87,18 @@ const (
 	CodeBoxReplayMismatch Code = "box_replay_mismatch"
 )
 
+// 기간 이용권. ADR 0036
+const (
+	// CodePassAlreadyClaimed는 오늘 몫을 이미 받았다는 뜻이다. 상태 조회의
+	// nextClaimAt까지 기다린다.
+	CodePassAlreadyClaimed Code = "pass_already_claimed"
+	// CodePassInactive는 지금 받을 이용권이 없다는 뜻이다. 산 적이 없거나,
+	// 기간이 끝났거나, 환불이나 취소로 멈췄다.
+	CodePassInactive Code = "pass_inactive"
+	// CodePassReplayMismatch는 같은 requestId가 다른 이용권으로 다시 왔다는 뜻이다.
+	CodePassReplayMismatch Code = "pass_replay_mismatch"
+)
+
 // 광고 정책과 보상 claim
 const (
 	CodeAdsNotEnabled            Code = "ads_not_enabled"
@@ -264,6 +276,11 @@ var statusByCode = map[Code]int{
 	CodeBoxEmpty:          http.StatusConflict,
 	CodeBoxDebt:           http.StatusConflict,
 	CodeBoxReplayMismatch: http.StatusConflict,
+
+	// 기간 이용권
+	CodePassAlreadyClaimed: http.StatusConflict,
+	CodePassInactive:       http.StatusConflict,
+	CodePassReplayMismatch: http.StatusConflict,
 
 	// 광고
 	CodeAdsNotEnabled:            http.StatusForbidden,
