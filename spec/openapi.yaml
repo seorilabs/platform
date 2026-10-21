@@ -1437,6 +1437,7 @@ paths:
         N일 동안 하루 한 번 받는 몫이 된다. 하루는 서버가 구매를 처음 활성으로 확정한 시각부터
         24시간이며 기기 시계를 쓰지 않는다. 이용 중 재구매는 끝나는 날만 `days`만큼 미루고,
         환불되거나 취소된 구매의 남은 날은 멈춘다. 산 적이 없는 이용권도 `active=false`로 돌려준다.
+        앱에 받을 수 있는 이용권이 없으면 422 `product_not_allowed`다.
       security: [{ PlatformToken: [] }]
       parameters:
         - $ref: '#/components/parameters/SeoriApp'
@@ -1454,6 +1455,7 @@ paths:
                       result: { $ref: '#/components/schemas/PassSnapshot' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /iap/passes/claim:
     post:
@@ -1489,6 +1491,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/PassClaimConflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /iap/verify:

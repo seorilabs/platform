@@ -97,3 +97,25 @@ func TestPassRequiresPayingSession(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
+
+// 형식이 틀린 요청은 상품 판정 전에 400이다. 이용권이 아닌 상품은 계약대로 422다.
+func TestPassClaimRequestShapeAndUnsupportedStatus(t *testing.T) {
+	svc := &fakePassService{}
+	h := NewHandler(svc, &fakeSessions{sess: paidSession()})
+	for _, body := range []string{
+		`{"requestId":"claim-req-1"}`,
+		`{"entitlementId":"a b","requestId":"claim-req-1"}`,
+		`{"entitlementId":"amber_pass_30d"}`,
+		`{"entitlementId":"amber_pass_30d","requestId":"short"}`,
+	} {
+		w := serve(t, h, http.MethodPost, "/v1/iap/passes/claim", body)
+		if w.Code != http.StatusBadRequest || errorCode(t, w) != string(platformerr.CodeRequestInvalid) || svc.gotRequest != "" {
+			t.Fatalf("body=%s status=%d %s", body, w.Code, w.Body.String())
+		}
+	}
+	svc.claimErr = platformerr.New(platformerr.CodeProductNotAllowed, "x")
+	w := serve(t, h, http.MethodPost, "/v1/iap/passes/claim", `{"entitlementId":"amber_v2_s","requestId":"claim-req-1"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d %s", w.Code, w.Body.String())
+	}
+}

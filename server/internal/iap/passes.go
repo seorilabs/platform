@@ -3,6 +3,7 @@ package iap
 import (
 	"context"
 	"net/http"
+	"regexp"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
@@ -38,6 +39,13 @@ func (h *Handler) passSnapshot(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// OpenAPI PassClaimRequest의 패턴이다. 형식이 틀린 요청을 상품 판정(422)보다 먼저
+// 400으로 돌려 클라이언트가 요청 오류와 미지원 상품을 구분하게 한다.
+var (
+	passEntitlementPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+	passRequestIDPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
+)
+
 // passClaimRequest는 수령 요청이다. 지급량, 날짜, 사용자를 받지 않는다(불변식 8).
 // entitlementId는 자기 이용권 중 어느 것을 받을지 고르는 값이다.
 type passClaimRequest struct {
@@ -61,6 +69,9 @@ func (h *Handler) passClaim(w http.ResponseWriter, r *http.Request) error {
 	var req passClaimRequest
 	if err := httpx.DecodeStrict(w, r, &req); err != nil {
 		return err
+	}
+	if !passEntitlementPattern.MatchString(req.EntitlementID) || !passRequestIDPattern.MatchString(req.RequestID) {
+		return platformerr.New(platformerr.CodeRequestInvalid, "이용권 수령 요청 형식이 올바르지 않아요")
 	}
 	out, err := ps.ClaimPass(r.Context(), sess.AppID, sess.PlatformUserID, req.EntitlementID, req.RequestID)
 	if err != nil {
