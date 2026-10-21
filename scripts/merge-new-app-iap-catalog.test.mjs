@@ -13,6 +13,16 @@ test('adds bloomhand boxes without touching other apps and is idempotent', () =>
   assert.deepEqual(mergeNewAppIapCatalog(result, candidate, 'bloomhand'), result);
 });
 
+test('adds merge-lizard products without touching other apps', () => {
+  const mergeLizard = JSON.parse(readFileSync(new URL('../registry/iap-catalog/merge-lizard.json', import.meta.url), 'utf8'));
+  const withBloomhand = mergeNewAppIapCatalog(current, candidate, 'bloomhand');
+  const result = mergeNewAppIapCatalog(withBloomhand, mergeLizard, 'merge-lizard');
+  assert.deepEqual(result.apps['lizard-tycoon'], current.apps['lizard-tycoon']);
+  assert.deepEqual(result.apps.bloomhand, candidate.apps.bloomhand);
+  assert.equal(Object.keys(result.apps['merge-lizard'].entitlements).length, 15);
+  assert.deepEqual(mergeNewAppIapCatalog(result, mergeLizard, 'merge-lizard'), result);
+});
+
 test('refuses unknown format, changed existing app, and mismatched candidate', () => {
   assert.throws(() => mergeNewAppIapCatalog({version: 1, entitlements: {}}, candidate, 'bloomhand'));
   const drift = structuredClone(current);
