@@ -175,6 +175,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `lucid-chess` | 활성 | 미사용 | 핵심 퍼널·전면 광고 | 비활성 | 비활성 | — |
 | `lucid-reversi` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `lord-ledger` | 활성 | 미사용 | 핵심 게임·군량 보상 | 비활성 | 활성 | — |
+| `merge-lizard` | 활성 | production | 활성 | 활성 | 활성 | 호박 묶음 10종·30일 호박·스타터, `growth_boost_25`, `nest_slots_plus_2`, `premium_land` |
 | `match-picture-app` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `salt-compass` | 활성 | 미사용 | 항해·교역 퍼널 | 비활성 | 비활성 | — |
 | `slotmachine-game` | 활성 | 미사용 | 비활성 | 비활성 | 활성 | — |

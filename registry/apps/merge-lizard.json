@@ -1,0 +1,164 @@
+{
+  "app_id": "merge-lizard",
+  "display_name": "Amber Lizards",
+  "firebase_project_id": "merge-lizard",
+  "firebase_custom_token_service_account": "platform-auth@merge-lizard.iam.gserviceaccount.com",
+  "status": "active",
+  "features": {
+    "config": true,
+    "events": true,
+    "iap": true,
+    "ads": true,
+    "inbox": true,
+    "firebase_custom_token_bridge": true
+  },
+  "store": {
+    "google_play_url": "https://play.google.com/store/apps/details?id=com.seorilabs.mergelizard",
+    "app_store_url": "https://apps.apple.com/app/id6824314713"
+  },
+  "require_app_check": false,
+  "ga4": {
+    "event_prefix": ""
+  },
+  "iap": {
+    "ledger_environment": "production",
+    "apple_sandbox_enabled": true,
+    "markets": [
+      "google_play",
+      "app_store"
+    ],
+    "google_play_package_name": "com.seorilabs.mergelizard",
+    "app_store_bundle_id": "com.seorilabs.mergelizard",
+    "entitlement_ids": [
+      "amber_pack_s",
+      "amber_pack_m",
+      "amber_pack_l",
+      "amber_pack_xl",
+      "amber_pack_xxl",
+      "starter_pack",
+      "growth_boost_25",
+      "nest_slots_plus_2",
+      "amber_v2_s",
+      "amber_v2_m",
+      "amber_v2_l",
+      "amber_v2_xl",
+      "amber_v2_xxl",
+      "amber_pass_30d",
+      "premium_land"
+    ],
+    "require_linked_account": false
+  },
+  "ads": {
+    "providers": [
+      "admob"
+    ],
+    "placements": [
+      {
+        "id": "rewarded_offline_double",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/1654568769",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/5941123120",
+            "reward_item": "reward",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "offline_double",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 1,
+        "cooldown_seconds": 21600
+      },
+      {
+        "id": "rewarded_timer_skip",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/8926554120",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/2776078743",
+            "reward_item": "reward",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "timer_skip",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 3,
+        "cooldown_seconds": 600
+      },
+      {
+        "id": "rewarded_login_double",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/7445776488",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/8136216630",
+            "reward_item": "reward",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "login_double",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 1,
+        "cooldown_seconds": 0
+      },
+      {
+        "id": "rewarded_drift_gift",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/7525667539",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/4196971629",
+            "reward_item": "reward",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "drift_gift",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 4,
+        "cooldown_seconds": 300
+      }
+    ]
+  },
+  "platform_event_allowlist": [
+    "seori_session_start",
+    "seori_sdk_error",
+    "app_open",
+    "title_ready",
+    "tutorial_begin",
+    "tutorial_step",
+    "tutorial_complete",
+    "tutorial_skip",
+    "merge",
+    "purify",
+    "level_up",
+    "earn_virtual_currency",
+    "spend_virtual_currency",
+    "offline_claim",
+    "unlock_achievement",
+    "build",
+    "codex_open",
+    "shop_open",
+    "shop_unlocked",
+    "purchase",
+    "purchase_pending",
+    "refund",
+    "settings_open",
+    "consent_change",
+    "save_error",
+    "recovery",
+    "rc_exposure"
+  ],
+  "cors_origins": []
+}

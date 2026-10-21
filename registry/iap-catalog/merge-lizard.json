@@ -1,0 +1,84 @@
+{
+  "version": 2,
+  "apps": {
+    "merge-lizard": {
+      "entitlements": {
+        "amber_pack_s": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_pack_s",
+          "app_store": "merge_lizard_amber_pack_s"
+        },
+        "amber_pack_m": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_pack_m",
+          "app_store": "merge_lizard_amber_pack_m"
+        },
+        "amber_pack_l": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_pack_l",
+          "app_store": "merge_lizard_amber_pack_l"
+        },
+        "amber_pack_xl": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_pack_xl",
+          "app_store": "merge_lizard_amber_pack_xl"
+        },
+        "amber_pack_xxl": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_pack_xxl",
+          "app_store": "merge_lizard_amber_pack_xxl"
+        },
+        "starter_pack": {
+          "type": "consumable",
+          "google_play": "merge_lizard_starter_pack",
+          "app_store": "merge_lizard_starter_pack"
+        },
+        "growth_boost_25": {
+          "type": "non_consumable",
+          "google_play": "merge_lizard_growth_pack",
+          "app_store": "merge_lizard_growth_pack"
+        },
+        "nest_slots_plus_2": {
+          "type": "non_consumable",
+          "google_play": "merge_lizard_nest_expansion",
+          "app_store": "merge_lizard_nest_expansion"
+        },
+        "amber_v2_s": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_v2_s",
+          "app_store": "merge_lizard_amber_v2_s"
+        },
+        "amber_v2_m": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_v2_m",
+          "app_store": "merge_lizard_amber_v2_m"
+        },
+        "amber_v2_l": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_v2_l",
+          "app_store": "merge_lizard_amber_v2_l"
+        },
+        "amber_v2_xl": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_v2_xl",
+          "app_store": "merge_lizard_amber_v2_xl"
+        },
+        "amber_v2_xxl": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_v2_xxl",
+          "app_store": "merge_lizard_amber_v2_xxl"
+        },
+        "amber_pass_30d": {
+          "type": "consumable",
+          "google_play": "merge_lizard_amber_pass_30d",
+          "app_store": "merge_lizard_amber_pass_30d"
+        },
+        "premium_land": {
+          "type": "non_consumable",
+          "google_play": "merge_lizard_premium_land",
+          "app_store": "merge_lizard_premium_land"
+        }
+      }
+    }
+  }
+}

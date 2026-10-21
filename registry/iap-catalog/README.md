@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `lizard-tycoon.json` | 영구 상품 10종·크리스털 5종 | `scripts/merge-lizard-iap-catalog.mjs` |
 | `bloomhand.json` | 친구 상자 1개·5개(소모품, ADR 0029 상자 경제가 개봉 단위로 차감) | `scripts/merge-new-app-iap-catalog.mjs --app bloomhand` |
+| `merge-lizard.json` | Amber Lizards 15종. 기존 호박 묶음 5종(상점에서 숨기고 처리 중 구매만 지급)·새 호박 묶음 5종·스타터·30일 호박은 소모품, 햇살 축복·둥지 확장·호박 오아시스는 비소모품 | `scripts/merge-new-app-iap-catalog.mjs --app merge-lizard` |
 
 ## Lizard Tycoon
 
@@ -28,3 +29,16 @@ node scripts/merge-lizard-iap-catalog.mjs --current /secure/current-iap-catalog.
 ```sh
 node scripts/merge-new-app-iap-catalog.mjs --app bloomhand --current /secure/current-iap-catalog.json --output /secure/merged-iap-catalog.json
 ```
+
+### 순서: 비밀값, regsync, 배포
+
+`platform-iap`과 `platform-worker`는 부팅할 때 Firestore registry의 IAP 활성 앱마다
+`iap.entitlement_ids`가 `IAP_CATALOG_JSON`에 모두 있는지 확인한다(`cmd/platform/iap.go`의
+`validateAppCatalog`). 하나라도 없으면 부팅이 실패하고 모든 앱의 결제가 함께 멈춘다.
+반대로 registry에만 있고 서비스가 재시작하지 않으면 그 앱의 검증기가 조립되지 않는다.
+
+1. 이 디렉터리의 후보를 운영 `iap-catalog` 새 버전으로 병합하고 readback한다
+2. 그 뒤에 해당 앱 registry를 `regsync`한다
+3. main 병합으로 시작된 Deploy를 승인해 새 revision이 두 값을 함께 읽게 한다
+
+1보다 2를 먼저 하면 그 사이 cold start하는 인스턴스가 부팅에 실패한다.
