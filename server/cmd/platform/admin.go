@@ -99,9 +99,7 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		return err
 	}
 	handler.Register(mux)
-	admin.RegisterInbox(mux, auth, d.registry, d.adminUsers, auditAdapter{col: d.events}, func(app registry.App) admin.InboxIssuer {
-		return contentLedger(d.store, app).WithOperationalEvents(d.operationalRepo)
-	})
+	admin.RegisterInbox(mux, auth, d.registry, d.adminUsers, auditAdapter{col: d.events}, d.adminInboxLedger)
 	if d.ads == nil {
 		return errors.New("admin role에 광고 서비스가 필요하다")
 	}
@@ -119,4 +117,8 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		"write_allowed_accounts", len(writeAllowed),
 	)
 	return nil
+}
+
+func (d *deps) adminInboxLedger(app registry.App) admin.InboxIssuer {
+	return contentLedger(d.store, app).WithOperationalEvents(d.operationalRepo)
 }

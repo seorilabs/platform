@@ -76,7 +76,8 @@
       "requiredTests": [
         "TestServiceRuntimeAccountRecoveryAndInbox",
         "TestServiceRuntimeAdminPermissionsConfigBlocksAndInbox",
-        "TestInboxTransactions"
+        "TestInboxTransactions",
+        "TestServiceRuntimeAdminStarterInboxOutboxWithoutSender"
       ]
     },
     {
@@ -144,7 +145,8 @@
       "requiredTests": [
         "TestServiceRuntimeAdminPermissionsConfigBlocksAndInbox",
         "TestOperatorGrantIsAtomicAndPayloadBound",
-        "TestAdminMutationRateGateIsDurable"
+        "TestAdminMutationRateGateIsDurable",
+        "TestServiceRuntimeAdminStarterInboxOutboxWithoutSender"
       ]
     },
     {

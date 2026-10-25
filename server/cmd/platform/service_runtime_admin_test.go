@@ -11,14 +11,41 @@ import (
 	"github.com/seorilabs/platform/server/internal/admin"
 	"github.com/seorilabs/platform/server/internal/ads"
 	"github.com/seorilabs/platform/server/internal/blocklist"
+	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/catalog"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 // Google OIDC의 외부 신원 확인만 대체하고 읽기/쓰기 권한은 제품 인증기로 판정한다.
 type runtimeAdminIdentity struct{}
+
+func TestServiceRuntimeAdminStarterInboxOutboxWithoutSender(t *testing.T) {
+	f := newRuntimeFixture(t)
+	app := f.app
+	app.AppID = "starter-game"
+	app.IAP.LedgerEnvironment = registry.LedgerSandbox
+	// Admin은 서명 전송용 secret을 받지 않는다. 실제 관리자 factory가
+	// 발송과 같은 트랜잭션에 기록하고 기존 worker가 전달해야 한다.
+	d := &deps{store: f.store}
+	issuer := d.adminInboxLedger(app)
+	in := ledger.InboxIssue{RequestID: "runtime-starter-inbox-event", PlatformUserID: "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV", Title: "Runtime", Body: "Owned fixture", Reason: ledger.AdminReasonInternalValidation, Actor: "fixture-operator", Rewards: []ledger.InboxReward{{Kind: "entitlement", EntitlementID: "starter_test_ticket_1", Quantity: 1}}}
+	for range 2 {
+		if _, err := issuer.IssueInbox(t.Context(), in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventID := operational.StableEventID("inbox_issue", app.AppID, string(domain.EnvSandbox), in.PlatformUserID, in.RequestID)
+	path, err := fspath.Parse("operational_event_outbox/" + eventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Get(t.Context(), path); err != nil {
+		t.Fatalf("admin inbox issue committed without its operational event: %v", err)
+	}
+}
 
 func (runtimeAdminIdentity) Validate(_ context.Context, token string) (string, error) {
 	switch token {
