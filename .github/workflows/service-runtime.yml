@@ -1,0 +1,51 @@
+name: Service runtime
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    name: Isolated whole service runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          check-latest: false
+      - name: Execute isolated whole service runtime
+        id: runtime
+        env:
+          SERVICE_E2E_EVIDENCE_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # 고정 Firestore JAR의 class version65는 Java21을 요구한다.
+          export JAVA_HOME="${JAVA_HOME_21_X64:?GitHub-hosted Java21 is required}"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
+          curl --fail --location --silent --show-error \
+            https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar \
+            --output "$RUNNER_TEMP/firestore-emulator.jar"
+          python3 scripts/qa/service_e2e.py --emulator-jar "$RUNNER_TEMP/firestore-emulator.jar" \
+            --output "$RUNNER_TEMP/service-evidence"
+          echo "fingerprint=$(python3 scripts/qa/service_e2e.py --fingerprint)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: service-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/service-evidence/
+          if-no-files-found: error
+          retention-days: 3

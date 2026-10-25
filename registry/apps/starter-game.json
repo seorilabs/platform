@@ -31,7 +31,8 @@
   },
   "ga4": {
     "event_prefix": "",
-    "property_id": "560616945"
+    "property_id": "560616945",
+    "measurement_id": "G-95GQ69V9LL"
   },
   "iap": {
     "ledger_environment": "sandbox",

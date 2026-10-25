@@ -90,7 +90,7 @@ def run_tests(private, output, sha, env, raw):
 
 
 def fingerprint():
-    files = [ROOT / "docs/qa/feature-inventory.json", ROOT / "docs/qa/service-e2e-plan.json", ROOT / ".github/workflows/deploy.yml", ROOT / "server/go.mod", ROOT / "server/go.sum"]
+    files = [ROOT / "docs/qa/feature-inventory.json", ROOT / "docs/qa/service-e2e-plan.json", ROOT / ".github/workflows/deploy.yml", ROOT / ".github/workflows/service-runtime.yml", ROOT / "server/go.mod", ROOT / "server/go.sum"]
     files += sorted((ROOT / "registry/apps").glob("*.json"))
     manifest = {"profile": "service-runtime-tcp-firestore-synthetic-v1", "emulatorSha256": EMULATOR_SHA256,
                 "packages": PACKAGES, "files": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}

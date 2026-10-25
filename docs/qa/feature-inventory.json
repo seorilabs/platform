@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "features": [
     {
       "id": "identity-session",
@@ -443,5 +443,16 @@
   "nonHttp": [
     "operational-outbox",
     "role-registry-routing"
+  ],
+  "e2e": {
+    "workflow": ".github/workflows/service-runtime.yml",
+    "command": "python3 scripts/qa/service_e2e.py --emulator-jar \"$RUNNER_TEMP/firestore-emulator.jar\" --output \"$RUNNER_TEMP/service-evidence\""
+  },
+  "regressionPaths": [
+    "server/**",
+    "spec/**",
+    "registry/**",
+    "scripts/qa/**",
+    ".github/workflows/**"
   ]
 }
