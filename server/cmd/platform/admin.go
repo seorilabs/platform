@@ -11,6 +11,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/admin"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/operational"
 )
 
 // registerAdmin은 백오피스 전용 API를 연다.
@@ -120,5 +121,7 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 }
 
 func (d *deps) adminInboxLedger(app registry.App) admin.InboxIssuer {
-	return contentLedger(d.store, app).WithOperationalEvents(d.operationalRepo)
+	// Admin에는 전송용 secret이 없다. 발송 트랜잭션의 outbox 기록은
+	// 전송 설정과 분리하고 기존 dispatcher가 서명해 전달한다.
+	return contentLedger(d.store, app).WithOperationalEvents(operational.NewRepository(d.store))
 }
