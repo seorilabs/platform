@@ -423,7 +423,9 @@ func buildHandler(cfg config.Config, d *deps) (http.Handler, error) {
 		d.identity.Register(mux)
 		remoteconfig.NewHandler(d.config, d.registry).Register(mux)
 		d.content.handler.Register(mux)
-		inbox.NewHandler(d.identity, d.registry, func(app registry.App) inbox.Mailbox { return contentLedger(d.store, app) }).Register(mux)
+		inbox.NewHandler(d.identity, d.registry, func(app registry.App) inbox.Mailbox {
+			return contentLedger(d.store, app).WithOperationalEvents(d.operationalRepo)
+		}).Register(mux)
 		// entitlement 조회는 여기가 아니라 iap role이 맡는다.
 		// GET /v1/iap/entitlements 하나로 통일했다. 마켓 자격증명이
 		// 붙은 서비스에 원장 읽기를 모아 두는 편이 경로가 줄어든다.

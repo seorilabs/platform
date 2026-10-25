@@ -45,7 +45,8 @@
       "requiredTests": [
         "TestServiceRuntimeDeletionRequestWorkerRetryAndReceipt",
         "TestServiceRuntimeStorageFailureStaysInternal",
-        "TestDeletionTransactionRecoveryAndCleanup"
+        "TestDeletionTransactionRecoveryAndCleanup",
+        "TestStarterDeletionBlocksOldTokensBeforeRemovingProgressAndAuth"
       ]
     },
     {
@@ -96,7 +97,12 @@
       "requiredTests": [
         "TestServiceRuntimePurchaseCompletionWorkerAndRefund",
         "TestGrantIdempotency",
-        "TestReinstallTransfersOwnership"
+        "TestReinstallTransfersOwnership",
+        "TestWalletUsesOnlyAuthenticatedIdentity",
+        "TestWalletRejectsAnonymousAndIdentityInjection",
+        "TestWalletUsesAppLedgerAndServerFixedUnits",
+        "TestStarterRejectsRealAndUnobservedPurchasesBeforeGrant",
+        "TestStarterTicketSourcesStayAtomicAndScoped"
       ]
     },
     {

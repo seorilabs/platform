@@ -96,6 +96,7 @@ func (h *Handler) serviceFor(r *http.Request, sess identity.Session) (Service, e
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/iap/wallet", httpx.Wrap(h.walletSnapshot))
 	mux.HandleFunc("GET /v1/iap/economy", httpx.Wrap(h.economySnapshot))
 	mux.HandleFunc("POST /v1/iap/economy/transactions", httpx.Wrap(h.economyTransaction))
 	mux.HandleFunc("GET /v1/iap/boxes", httpx.Wrap(h.boxSnapshot))

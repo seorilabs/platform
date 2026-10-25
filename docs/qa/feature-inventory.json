@@ -434,6 +434,10 @@
     {
       "path": "/admin/ads/suppressions/revoke",
       "featureId": "operator-administration"
+    },
+    {
+      "path": "/iap/wallet",
+      "featureId": "purchase-entitlements"
     }
   ],
   "nonHttp": [

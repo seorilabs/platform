@@ -59,6 +59,8 @@ func _initialize() -> void:
 	_check_event_context()
 	_check_event_context_request()
 	_check_canonical_event()
+	_check_analytics_opt_out()
+	_check_wallet_request()
 	_check_session_epoch_and_margin()
 	_check_iap_session_expired_retry()
 	_check_iap_environment()
@@ -1612,3 +1614,35 @@ func _check_account_link_recovery() -> void:
 	transport.respond(transport.requests.size()-1,_success_response(valid))
 	_expect(replies.back().get("ok",false) and client.current_session().get("appUserId")=="target" and client.is_account_linked(), "AR-1: 검증된 복구 세션을 설치하지 못했다")
 	client.queue_free()
+
+func _check_analytics_opt_out() -> void:
+	var client := PlatformClient.new()
+	var transport := ScriptedTransport.new()
+	client._transport = transport
+	client.add_child(transport)
+	client.configure({"base_url": "https://example.invalid", "app_id": "starter-game"})
+	client.track("before_choice")
+	client.flush_events()
+	_expect(transport.requests.size() == 1, "opt-out test did not start a request")
+	client.set_analytics_enabled(false)
+	transport.respond(0, {"ok": false, "code": "network_error"})
+	client.track("after_choice")
+	client.track_event({"event_id": "a".repeat(32), "name": "after_choice", "occurred_at_micros": 1, "params": {}})
+	client.flush_events()
+	_expect(client.pending_event_count() == 0 and transport.requests.size() == 1, "opt-out restored or sent queued events")
+	client.set_analytics_enabled(true)
+	client.track("new_choice")
+	_expect(client.pending_event_count() == 1, "explicit opt-in did not resume collection")
+	client.free()
+
+func _check_wallet_request() -> void:
+	var client := PlatformClient.new()
+	var transport := CaptureTransport.new()
+	client._transport = transport
+	client.add_child(transport)
+	client.configure({"base_url": "https://example.invalid", "app_id": "starter-game", "iap_environment": "sandbox"})
+	client._session = {"platformToken": "probe", "expiresAt": int(Time.get_unix_time_from_system() * 1000) + 3600000}
+	client.get_wallet(func(_result: Dictionary) -> void: pass)
+	_expect(transport.last_request.get("path") == "/v1/iap/wallet" and transport.last_request.get("method") == "GET", "wallet endpoint differs")
+	_expect(not transport.last_request.has("body") and not transport.last_request.has("query"), "wallet request allows client amounts or user ids")
+	client.free()
