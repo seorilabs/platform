@@ -141,9 +141,25 @@ func TestEconomyGrantNotificationsAreOncePerOrderUnderConcurrency(t *testing.T) 
 	}
 	wg.Wait()
 	close(errs)
+	aborted := 0
 	for err := range errs {
+		// Firestore가 경합 재시도 한도를 넘기면 호출자에게 중단을 돌려준다.
+		// 그 요청도 같은 주문으로 다시 처리해 지급과 알림이 늘지 않는지 본다.
+		if errors.Is(err, store.ErrAborted) {
+			aborted++
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
+		}
+	}
+	if aborted == 12 {
+		t.Fatal("no concurrent grant committed")
+	}
+	for range aborted {
+		replay, err := l.Grant(ctx, input)
+		if err != nil || replay.Granted || !replay.AlreadyGranted {
+			t.Fatalf("aborted request replay = %+v, error = %v", replay, err)
 		}
 	}
 	if events := economyNotificationEvents(t, l); len(events) != 1 {
