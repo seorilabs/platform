@@ -9,6 +9,7 @@ import (
 
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
 )
@@ -410,6 +411,26 @@ func (l *Ledger) grantEconomyPurchase(ctx context.Context, in GrantInput) (domai
 		}
 		if e := tx.Set(op, order); e != nil {
 			return e
+		}
+		// ADR 0017: 새 재화 지급과 알림을 함께 커밋한다. 불변식 2, 3에 따라
+		// 같은 주문의 재시도와 환불 뒤 재검증은 성공 알림을 다시 만들지 않는다.
+		if applied && l.operational != nil && l.appID != "" {
+			attributes := map[string]any{
+				"platform": string(order.Platform), "entitlementId": order.EntitlementID,
+			}
+			if order.IsTestPurchase != nil {
+				attributes["isTestPurchase"] = *order.IsTestPurchase
+			}
+			if e := l.operational.EnqueueTx(tx, operational.Event{
+				EventID: operational.StableEventID(
+					"iap", l.appID, in.Purchase.Key(), in.PlatformUserID,
+					in.Purchase.ObservedAt.UTC().Format(time.RFC3339Nano),
+				),
+				OccurredAt: now, Type: "iap.granted", AppID: l.appID, Outcome: "granted",
+				Attributes: attributes,
+			}); e != nil {
+				return e
+			}
 		}
 		result = domain.GrantResult{EntitlementID: in.EntitlementID, Granted: applied, AlreadyGranted: !applied}
 		return nil
