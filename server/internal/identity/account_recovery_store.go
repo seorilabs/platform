@@ -6,6 +6,7 @@ import (
 
 	"github.com/seorilabs/platform/server/internal/blocklist"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
 )
@@ -132,6 +133,7 @@ func (r *StoreRepository) RecoverAccount(ctx context.Context, appID, currentPlat
 				return err
 			}
 		}
+		firstRecovery := challenge.ConsumedAt.IsZero() && currentPlatformUserID != mapping.PlatformUserID
 		challenge.ConsumedAt = now
 		challenge.SubjectHash = subjectHash
 		challenge.TargetUserID = mapping.PlatformUserID
@@ -140,6 +142,13 @@ func (r *StoreRepository) RecoverAccount(ctx context.Context, appID, currentPlat
 			return err
 		}
 		result = ConnectedAccount{PlatformUserID: mapping.PlatformUserID, AppUserID: target.AppUserID, Provider: provider, Restored: currentPlatformUserID != mapping.PlatformUserID}
+		if firstRecovery && appID == "starter-game" && r.operational != nil {
+			return r.operational.EnqueueTx(tx, operational.Event{
+				EventID:    operational.StableEventID("identity_recovery", appID, nonce),
+				OccurredAt: now.UTC(), Type: "identity.recovered", AppID: appID, Outcome: "recovered",
+				Attributes: map[string]any{"provider": provider, "platformUserId": mapping.PlatformUserID},
+			})
+		}
 		return nil
 	})
 	if err != nil {

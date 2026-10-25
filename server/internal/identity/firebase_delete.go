@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -15,20 +16,58 @@ import (
 	"github.com/seorilabs/platform/server/internal/registry"
 )
 
-type FirebaseAccountDeleter struct{}
+type FirebaseAccountDeleter struct {
+	// Tests use a private transport; production always impersonates the app account.
+	clientFor func(context.Context, registry.App) (*http.Client, error)
+}
 
-func (FirebaseAccountDeleter) DeleteFirebaseIdentity(ctx context.Context, app registry.App, uid string) error {
+func (d FirebaseAccountDeleter) DeleteFirebaseIdentity(ctx context.Context, app registry.App, uid string) error {
 	if uid == "" || app.FirebaseProjectID == "" {
 		return fmt.Errorf("identity: Firebase deletion target missing")
 	}
 	// 기존 앱별 서명 SA를 재사용한다. 워커 기본 SA에 전체 앱의 Auth 권한을
 	// 부여하지 않고 해당 앱 SA로 짧은 수명의 토큰만 발급한다.
-	ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{TargetPrincipal: app.FirebaseCustomTokenServiceAccount, Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"}, Lifetime: 5 * time.Minute})
+	var client *http.Client
+	var err error
+	if d.clientFor != nil {
+		client, err = d.clientFor(ctx, app)
+	} else {
+		var ts oauth2.TokenSource
+		ts, err = impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{TargetPrincipal: app.FirebaseCustomTokenServiceAccount, Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"}, Lifetime: 5 * time.Minute})
+		if err == nil {
+			client = oauth2.NewClient(ctx, ts)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("identity: deletion credentials unavailable: %w", err)
 	}
-	client := oauth2.NewClient(ctx, ts)
 	client.Timeout = 30 * time.Second
+	if app.AppID == "starter-game" {
+		base := "https://firestore.googleapis.com/v1/projects/" + url.PathEscape(app.FirebaseProjectID) + "/databases/(default)/documents/"
+		// Block unexpired ID tokens before deleting progress. The marker survives retries.
+		for _, step := range []struct{ method, target, body string }{
+			{http.MethodPatch, base + "deleted_accounts/" + url.PathEscape(uid), `{"fields":{}}`},
+			{http.MethodDelete, base + "game_saves/" + url.PathEscape(uid), ""},
+		} {
+			req, reqErr := http.NewRequestWithContext(ctx, step.method, step.target, bytes.NewBufferString(step.body))
+			if reqErr != nil {
+				return reqErr
+			}
+			req.Header.Set("Content-Type", "application/json")
+			response, reqErr := client.Do(req)
+			if reqErr != nil {
+				return fmt.Errorf("identity: saved data deletion transport failed")
+			}
+			status := response.StatusCode
+			_ = response.Body.Close()
+			if status < 200 || status >= 300 {
+				if step.method == http.MethodDelete && status == http.StatusNotFound {
+					continue
+				}
+				return fmt.Errorf("identity: saved data deletion HTTP %d", status)
+			}
+		}
+	}
 	payload, _ := json.Marshal(map[string]string{"localId": uid})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://identitytoolkit.googleapis.com/v1/projects/"+app.FirebaseProjectID+"/accounts:delete", bytes.NewReader(payload))
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/store"
 )
@@ -130,7 +131,10 @@ func (l *Ledger) IssueInbox(ctx context.Context, in InboxIssue) (InboxMessage, e
 		if e = tx.Create(p, result); e != nil {
 			return e
 		}
-		return tx.Create(audit, inboxIssueDoc{AppID: l.appID, Input: in, Message: result})
+		if e = tx.Create(audit, inboxIssueDoc{AppID: l.appID, Input: in, Message: result}); e != nil {
+			return e
+		}
+		return l.enqueueInboxEvent(tx, "inbox.issued", "inbox_issue", "issued", in.PlatformUserID, result)
 	})
 	return result, err
 }
@@ -244,7 +248,23 @@ func (l *Ledger) mutateInbox(ctx context.Context, puid, id string, claim bool) (
 		if e = tx.Create(receipt, message); e != nil {
 			return e
 		}
-		return tx.Set(p, message)
+		if e = tx.Set(p, message); e != nil {
+			return e
+		}
+		return l.enqueueInboxEvent(tx, "inbox.claimed", "inbox_claim", "claimed", puid, message)
 	})
 	return message, e
+}
+
+func (l *Ledger) enqueueInboxEvent(tx *store.Tx, eventType, prefix, outcome, puid string, message InboxMessage) error {
+	// Initial rollout is restricted to the approved operational test app.
+	// Event writes share the issue/claim transaction; retries cannot send another event.
+	if l.operational == nil || l.appID != "starter-game" {
+		return nil
+	}
+	return l.operational.EnqueueTx(tx, operational.Event{
+		EventID:    operational.StableEventID(prefix, l.appID, string(l.env), puid, message.ID),
+		OccurredAt: l.now().UTC(), Type: eventType, AppID: l.appID, Outcome: outcome,
+		Attributes: map[string]any{"messageIdHash": economyDigest(message.ID), "platformUserId": puid, "rewardCount": len(message.Rewards)},
+	})
 }

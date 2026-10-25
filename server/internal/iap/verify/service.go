@@ -235,6 +235,12 @@ func (s *Service) VerifyPurchase(
 		return Outcome{}, err
 	}
 
+	// A sandbox ledger does not prove a Play purchase is a test. Reject real or unknown
+	// provider observations before any grant or completion in this test-only app (ADR 0037).
+	if appID == starterAppID && (purchase.IsTestPurchase == nil || !*purchase.IsTestPurchase) {
+		return Outcome{}, platformerr.New(platformerr.CodeEnvironmentMismatch, "테스트 결제수단으로 구매해 주세요")
+	}
+
 	// 소모품 앱은 별도 정책으로 구매자 결합을 강제한다. ADR 0028.
 	// 키가 없으면 검증을 건너뛰지 않고 원장에 도달하기 전에 거부한다.
 	if proof.Platform == domain.PlatformAppStore && app.IAP.AppStoreRequireAccountToken {

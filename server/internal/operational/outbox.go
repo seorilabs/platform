@@ -49,6 +49,18 @@ var (
 	appIDPattern          = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	platformUserIDPattern = regexp.MustCompile(`^pu_[0-9A-HJKMNP-TV-Z]{26}$`)
 	eventContracts        = map[string]eventContract{
+		"identity.recovered": {
+			prefix: "identity_recovery_", outcome: "recovered",
+			attributes: setOf("provider", "platformUserId"),
+		},
+		"inbox.issued": {
+			prefix: "inbox_issue_", outcome: "issued",
+			attributes: setOf("messageIdHash", "platformUserId", "rewardCount"),
+		},
+		"inbox.claimed": {
+			prefix: "inbox_claim_", outcome: "claimed",
+			attributes: setOf("messageIdHash", "platformUserId", "rewardCount"),
+		},
 		"identity.created": {
 			prefix: "identity_", outcome: "created",
 			// 가입 코드와 Backoffice가 이미 사용하는 빌드 정보다. 여기서

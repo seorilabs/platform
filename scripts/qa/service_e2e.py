@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[2]
 EMULATOR_SHA256 = "9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c"
-PACKAGES = ["./cmd/platform", "./internal/content", "./internal/events", "./internal/operational", "./internal/identity", "./internal/ads", "./internal/iap/ledger"]
+PACKAGES = ["./cmd/platform", "./internal/iap", "./internal/iap/verify", "./internal/content", "./internal/events", "./internal/operational", "./internal/identity", "./internal/ads", "./internal/iap/ledger"]
 
 
 def stamp():

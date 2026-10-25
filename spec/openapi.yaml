@@ -2,6 +2,26 @@ openapi: 3.0.3
 
 # 내부 서명 callback이며 앱 SDK의 공개 요청 필드가 아니다.
 x-backoffice-operational-events:
+  identity.recovered:
+    outcome: recovered
+    description: starter-game의 계정 복구가 처음 확정된 transaction. 같은 challenge 재전송은 다시 알리지 않는다.
+    attributes:
+      provider: { type: string, enum: [google, apple, kakao] }
+      platformUserId: { type: string, pattern: '^pu_[0-9A-HJKMNP-TV-Z]{26}$' }
+  inbox.issued:
+    outcome: issued
+    description: starter-game의 개별 우편이 처음 발행됨. 제목, 본문과 앱 로그인 UID는 전달하지 않는다.
+    attributes:
+      messageIdHash: { type: string, pattern: '^[0-9a-f]{64}$' }
+      platformUserId: { type: string, pattern: '^pu_[0-9A-HJKMNP-TV-Z]{26}$' }
+      rewardCount: { type: integer, minimum: 0, maximum: 10 }
+  inbox.claimed:
+    outcome: claimed
+    description: starter-game 우편의 보상과 수령 기록이 처음 함께 커밋됨. 재수령은 다시 알리지 않는다.
+    attributes:
+      messageIdHash: { type: string, pattern: '^[0-9a-f]{64}$' }
+      platformUserId: { type: string, pattern: '^pu_[0-9A-HJKMNP-TV-Z]{26}$' }
+      rewardCount: { type: integer, minimum: 0, maximum: 10 }
   identity.created:
     attributes:
       platformUserId:
@@ -610,6 +630,8 @@ paths:
         삭제 대상이며 임의 사용자 ID는 받지 않는다. 클라이언트는 256비트 무작위
         receiptToken을 먼저 안전하게 저장하고 동일 값으로 재시도한다.
         접수 이후 해당 신원의 인증, 계측, 보상 광고를 차단하고 서버에서 이어서 처리한다.
+        starter-game의 앱 저장 문서 game_saves/{uid}는 Firebase 신원 삭제 전에 지우며,
+        deleted_accounts/{uid} 표식으로 아직 만료되지 않은 ID token의 저장 복원을 막는다.
         기능 비활성화는 신규 접수만 막으며 이미 접수한 작업은 저장된 앱 대상에서 계속 처리한다.
         Google 삭제 접수와 저장소 사본 정리는 별도 단계다. 지연 내보내기를 고려해
         Firebase 삭제 확인 후 최소 4일 뒤 계정과 연결된 분석 사본을 함께 정리한다.
@@ -1306,6 +1328,47 @@ paths:
                       actor: { type: string }
                       updatedAt: { type: string, format: date-time }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /iap/wallet:
+    get:
+      tags: [iap]
+      summary: 테스트 앱의 서버 검증 티켓 잔액 조회
+      operationId: getIapWallet
+      description: |
+        starter-game의 sandbox 계정만 지원한다. 서버가 starter_test_ticket_1을
+        서버가 확정한 활성 지급 source당 1장으로 계산한다. UID, entitlement와 지급량은
+        클라이언트가 지정하지 않는다. 같은 주문 재검증은 잔액을 늘리지 않는다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      responses:
+        '200':
+          description: 서버에서 확인한 티켓 잔액
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        additionalProperties: false
+                        required: [balances]
+                        properties:
+                          balances:
+                            type: object
+                            additionalProperties: false
+                            required: [starter_test_ticket_1]
+                            properties:
+                              starter_test_ticket_1: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /iap/economy:
     get:
