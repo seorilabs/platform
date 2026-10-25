@@ -1336,7 +1336,7 @@ paths:
       operationId: getIapWallet
       description: |
         starter-game의 sandbox 계정만 지원한다. 서버가 starter_test_ticket_1을
-        활성 구매 source당 1장으로 계산한다. UID, entitlement와 지급량은
+        서버가 확정한 활성 지급 source당 1장으로 계산한다. UID, entitlement와 지급량은
         클라이언트가 지정하지 않는다. 같은 주문 재검증은 잔액을 늘리지 않는다.
       security: [{ PlatformToken: [] }]
       parameters:
@@ -1366,6 +1366,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /iap/economy:

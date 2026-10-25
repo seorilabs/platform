@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "apps": {
+    "starter-game": {
+      "entitlements": {
+        "starter_test_ticket_1": {
+          "type": "consumable",
+          "google_play": "starter_test_ticket_1",
+          "app_store": "starter_test_ticket_1"
+        },
+        "starter_badge": {
+          "type": "non_consumable",
+          "google_play": "starter_badge",
+          "app_store": "starter_badge"
+        }
+      }
+    }
+  }
+}
