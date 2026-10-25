@@ -11,6 +11,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/admin"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/operational"
 )
 
 // registerAdmin은 백오피스 전용 API를 연다.
@@ -46,7 +47,18 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 	if err != nil {
 		return err
 	}
+	if err := registerAdminHandlers(mux, d, auth); err != nil {
+		return err
+	}
+	slog.Info("Admin API 준비 완료",
+		"read_allowed_accounts", len(readAllowed),
+		"write_allowed_accounts", len(writeAllowed),
+	)
+	return nil
+}
 
+// 외부 OIDC 검증과 분리해 실제 운영 라우트 배선을 개발 환경에서 실행한다.
+func registerAdminHandlers(mux *http.ServeMux, d *deps, auth *admin.Authenticator) error {
 	// RemoteConfig도 함께 넘긴다. break-glass의 점검 모드가 여기로 온다.
 	handler, err := admin.NewHandler(
 		d.iap.ledger,
@@ -99,9 +111,7 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		return err
 	}
 	handler.Register(mux)
-	admin.RegisterInbox(mux, auth, d.registry, d.adminUsers, auditAdapter{col: d.events}, func(app registry.App) admin.InboxIssuer {
-		return contentLedger(d.store, app).WithOperationalEvents(d.operationalRepo)
-	})
+	admin.RegisterInbox(mux, auth, d.registry, d.adminUsers, auditAdapter{col: d.events}, d.adminInboxLedger)
 	if d.ads == nil {
 		return errors.New("admin role에 광고 서비스가 필요하다")
 	}
@@ -114,9 +124,11 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		return err
 	}
 
-	slog.Info("Admin API 준비 완료",
-		"read_allowed_accounts", len(readAllowed),
-		"write_allowed_accounts", len(writeAllowed),
-	)
 	return nil
+}
+
+func (d *deps) adminInboxLedger(app registry.App) admin.InboxIssuer {
+	// Admin에는 전송용 secret이 없다. 발송 트랜잭션의 outbox 기록은
+	// 전송 설정과 분리하고 기존 dispatcher가 서명해 전달한다.
+	return contentLedger(d.store, app).WithOperationalEvents(operational.NewRepository(d.store))
 }

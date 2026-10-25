@@ -11,14 +11,63 @@ import (
 	"github.com/seorilabs/platform/server/internal/admin"
 	"github.com/seorilabs/platform/server/internal/ads"
 	"github.com/seorilabs/platform/server/internal/blocklist"
+	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/iap/catalog"
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
+	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 // Google OIDC의 외부 신원 확인만 대체하고 읽기/쓰기 권한은 제품 인증기로 판정한다.
 type runtimeAdminIdentity struct{}
+
+func TestServiceRuntimeAdminStarterInboxOutboxWithoutSender(t *testing.T) {
+	f := newRuntimeFixture(t)
+	f.app.AppID = "starter-game"
+	f.enableRuntimeAds()
+	f.app.Features["iap"] = true
+	f.app.IAP = registry.IAPConfig{LedgerEnvironment: registry.LedgerSandbox, Markets: []string{"google_play"}, GooglePlayPackageName: "com.seorilabs.runtimefixture", EntitlementIDs: []string{"starter_test_ticket_1"}}
+	cat, err := catalog.Parse([]byte(`{"version":1,"entitlements":{"starter_test_ticket_1":{"google_play":"starter_ticket_sku"}}}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := admin.NewAuthenticator(runtimeAdminIdentity{}, []string{"reader@runtime.example"}, []string{"writer@runtime.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.register = func(mux *http.ServeMux) {
+		adsvc, e := ads.NewService(ads.NewStoreRepository(f.store), f.registry, newAdsEntitlements(f.store), f.users)
+		if e != nil {
+			t.Fatal(e)
+		}
+		// 외부 OIDC만 대체하고 실제 운영 라우트 등록부터 실행한다.
+		// Admin은 전송 secret과 dispatcher 없이 outbox를 기록해야 한다.
+		d := &deps{store: f.store, registry: f.registry, adminUsers: f.users, config: f.config,
+			blocklist: blocklist.NewService(blocklist.NewStoreSource(f.store)),
+			iap:       &iapParts{ledger: ledger.New(f.store, domain.EnvSandbox), catalog: cat}, ads: &adsParts{service: adsvc}}
+		if e = registerAdminHandlers(mux, d, auth); e != nil {
+			t.Fatal(e)
+		}
+	}
+	f.saveApp()
+	f.restart()
+	puid := f.session("starter-admin-inbox-user")["platformUserId"].(string)
+	requestID := "runtime-starter-inbox-event"
+	in := map[string]any{"requestId": requestID, "platformUserId": puid, "title": "Runtime", "body": "Owned fixture", "reason": ledger.AdminReasonInternalValidation, "confirmation": "ISSUE INBOX starter-game " + puid,
+		"rewards": []any{map[string]any{"kind": "entitlement", "entitlementId": "starter_test_ticket_1", "quantity": 1}}}
+	for range 2 {
+		f.request("POST", "/v1/admin/apps/starter-game/inbox", "fixture-writer", in, 200)
+	}
+	eventID := operational.StableEventID("inbox_issue", f.app.AppID, string(domain.EnvSandbox), puid, requestID)
+	path, err := fspath.Parse("operational_event_outbox/" + eventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Get(t.Context(), path); err != nil {
+		t.Fatalf("admin inbox issue committed without its operational event: %v", err)
+	}
+}
 
 func (runtimeAdminIdentity) Validate(_ context.Context, token string) (string, error) {
 	switch token {
