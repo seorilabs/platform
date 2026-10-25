@@ -51,9 +51,25 @@ func TestStarterTicketSourcesStayAtomicAndScoped(t *testing.T) {
 	}
 	wg.Wait()
 	close(errorsCh)
+	aborted := 0
 	for err := range errorsCh {
+		// Match the shared ledger contract: exhausted Firestore contention is
+		// retried with the same order, never treated as another purchase.
+		if errors.Is(err, store.ErrAborted) {
+			aborted++
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
+		}
+	}
+	if aborted == 12 {
+		t.Fatal("no concurrent starter ticket grant committed")
+	}
+	for range aborted {
+		replay, err := l.Grant(ctx, GrantInput{PlatformUserID: puid, EntitlementID: first.ProductID, Purchase: first})
+		if err != nil || replay.Granted || !replay.AlreadyGranted {
+			t.Fatalf("aborted starter ticket replay = %+v, error = %v", replay, err)
 		}
 	}
 	check := func(want int) {
