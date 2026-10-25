@@ -90,7 +90,7 @@ def run_tests(private, output, sha, env, raw):
 
 
 def fingerprint():
-    files = [ROOT / "docs/qa/feature-inventory.json", ROOT / "docs/qa/service-e2e-plan.json", ROOT / ".github/workflows/deploy.yml", ROOT / "server/go.mod", ROOT / "server/go.sum"]
+    files = [ROOT / "docs/qa/feature-inventory.json", ROOT / "docs/qa/service-e2e-plan.json", ROOT / ".github/workflows/deploy.yml", ROOT / ".github/workflows/service-runtime.yml", ROOT / "server/go.mod", ROOT / "server/go.sum"]
     files += sorted((ROOT / "registry/apps").glob("*.json"))
     manifest = {"profile": "service-runtime-tcp-firestore-synthetic-v1", "emulatorSha256": EMULATOR_SHA256,
                 "packages": PACKAGES, "files": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
@@ -157,8 +157,20 @@ def execute(jar, output):
     acceptance = [{"id": ac, "status": "passed", "evidence": [result_ref]} for ac in plan["acceptance"]]
     tdd = [{"acceptanceId": "AC-DELETE-CODE", "mode": "test-first", "redEvidence": "source f58999a runtime-ninth 500/403: " + json.dumps(plan["redEvidence"], sort_keys=True), "greenEvidence": result_ref + "#TestServiceRuntimeDeletionRequestWorkerRetryAndReceipt"}]
     tdd += [{"acceptanceId": ac, "mode": "alternative", "reason": "Approved verification tooling and release gate; initial missing archive is preserved. Product API uses test-first separately.", "replacementEvidence": result_ref + "; scripts/qa/test_service_e2e.py and scripts/check_deploy_workflow.sh"} for ac in plan["acceptance"] if ac != "AC-DELETE-CODE"]
-    evidence = {"schemaVersion": 1, "repository": "seorilabs/platform", "sourceSha": sha, "target": "service", "productKind": "service", "implementer": "service-implementation", "design": plan["design"], "features": inventory["features"], "acceptance": acceptance, "tdd": tdd, "iterations": [], "additionalIterationApproval": None,
-                "e2e": {"phase": "before-build", "sourceSha": sha, "plannedAt": planned, "startedAt": started, "completedAt": completed, "environment": {"kind": "service-runtime", "configurationFingerprint": fp, "isolatedData": context["isolation"]}, "scenarios": scenarios}}
+    # Keep the original approved design identity. A format migration is not a new approval.
+    design = dict(plan["design"])
+    design["testPlan"] = str(Path(design["document"]).with_name("test-plan.json"))
+    run = {"id": "service-runtime", "kind": "service-runtime", "sourceSha": sha,
+           "executor": os.environ.get("SERVICE_E2E_EXECUTOR", "service-implementation"),
+           "plannedAt": planned, "startedAt": started, "completedAt": completed,
+           "isolatedData": context["isolation"], "scenarios": scenarios}
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        run["executor"] = "ci"
+        run["ciRun"] = {"url": evidence_base}
+    evidence = {"schemaVersion": 2, "repository": "seorilabs/platform", "sourceSha": sha,
+                "target": "service", "productKind": "service", "implementer": "service-implementation",
+                "designs": [design], "acceptance": acceptance, "tdd": tdd,
+                "reviewRounds": [], "additionalIterationApproval": None, "runs": [run]}
     (output / f"development-evidence.{sha}.service.before-build.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"sourceSha": sha, "output": str(output), "configurationFingerprint": fp, "passed": counts["pass"]}))
 

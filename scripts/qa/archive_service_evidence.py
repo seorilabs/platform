@@ -9,7 +9,7 @@ import re
 import subprocess
 import urllib.request
 from urllib.parse import urlsplit
-from service_e2e import passed_tests
+from service_e2e import passed_tests, fingerprint
 
 class NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -51,12 +51,16 @@ def list_all(path, token):
 
 
 def validate_bundle(document, runtime, events):
+    if document.get("schemaVersion") != 2 or len(document.get("runs", [])) != 1:
+        raise ValueError("one v2 service runtime required")
     sha = document["sourceSha"]
-    e2e = document["e2e"]
+    e2e = document["runs"][0]
+    if e2e.get("kind") != "service-runtime":
+        raise ValueError("service runtime required")
     if document["repository"] != REPOSITORY or not re.fullmatch(r"[a-f0-9]{40}", sha) or e2e["sourceSha"] != sha or runtime["sourceSha"] != sha:
         raise ValueError("runtime candidate mismatch")
-    fp = e2e["environment"]["configurationFingerprint"]
-    if not re.fullmatch(r"[a-f0-9]{64}", fp) or runtime["configurationFingerprint"] != fp or any(runtime[key] != e2e[key] for key in ("plannedAt", "startedAt", "completedAt")):
+    fp = runtime["configurationFingerprint"]
+    if not re.fullmatch(r"[a-f0-9]{64}", fp) or fingerprint()[0] != fp or any(runtime[key] != e2e[key] for key in ("plannedAt", "startedAt", "completedAt")):
         raise ValueError("runtime configuration or time mismatch")
     digest = runtime["rawLogSha256"]
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
@@ -110,7 +114,7 @@ def store(directory):
         if len(canonical) != 1:
             raise ValueError("duplicate canonical evidence")
         previous = json.loads(request(canonical[0]["url"], token, binary=True))
-        if previous["sourceSha"] != sha or previous["e2e"]["environment"]["configurationFingerprint"] != document["e2e"]["environment"]["configurationFingerprint"]:
+        if previous["sourceSha"] != sha or previous.get("schemaVersion") != 2:
             raise ValueError("existing evidence configuration differs; never overwrite")
         ref = previous["acceptance"][0]["evidence"][0]
         match = re.search(r"runtime-result\." + sha + r"\.([a-f0-9]{64})\.json", ref)

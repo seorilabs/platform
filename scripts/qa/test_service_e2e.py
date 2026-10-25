@@ -9,7 +9,7 @@ import subprocess
 import urllib.request
 from urllib.parse import urlsplit, parse_qs
 from archive_service_evidence import store, request, validate_bundle, NoCredentialRedirect
-from service_e2e import passed_tests, validate_plan, preserve_failure, run_tests
+from service_e2e import passed_tests, validate_plan, preserve_failure, run_tests, fingerprint
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,13 +67,13 @@ class EvidenceGuards(unittest.TestCase):
 
 class ArchiveSafety(unittest.TestCase):
     def bundle(self):
-        sha,digest,fp="a"*40,"b"*64,"c"*64
+        sha,digest,fp="a"*40,"b"*64,fingerprint()[0]
         plan=json.loads((ROOT/'docs/qa/service-e2e-plan.json').read_text())
         required={t for s in plan['scenarios'] for t in s['requiredTests']}
         events=[{'Action':'pass','Test':name} for name in sorted(required)]
         times={'plannedAt':'2026-10-13T00:00:00Z','startedAt':'2026-10-13T00:00:01Z','completedAt':'2026-10-13T00:00:02Z'}
         ref=f'runtime-result.{sha}.{digest}.json'
-        document={'sourceSha':sha,'repository':'seorilabs/platform','e2e':{'sourceSha':sha,'environment':{'configurationFingerprint':fp},'scenarios':[{'evidence':[ref]}],**times},'acceptance':[{'evidence':[ref]}]}
+        document={'schemaVersion':2,'sourceSha':sha,'repository':'seorilabs/platform','runs':[{'kind':'service-runtime','sourceSha':sha,'scenarios':[{'evidence':[ref]}],**times}],'acceptance':[{'evidence':[ref]}]}
         runtime={'sourceSha':sha,'configurationFingerprint':fp,'rawLogSha256':digest,'counts':{'pass':len(events),'skip':0,'fail':0},**times}
         return document,runtime,events
 
@@ -87,6 +87,13 @@ class ArchiveSafety(unittest.TestCase):
                 opener.return_value.open.return_value.__enter__.return_value.read.return_value=b'{}'
                 self.assertEqual(request(url,'synthetic'),{})
                 opener.assert_called_once()
+
+    def test_retired_or_non_service_runs_are_rejected(self):
+        document,runtime,events=self.bundle()
+        for invalid in [dict(document,schemaVersion=1),dict(document,runs=[]),dict(document,runs=document['runs']*2)]:
+            with self.assertRaises(ValueError):validate_bundle(invalid,runtime,events)
+        document['runs'][0]['kind']='web-browser'
+        with self.assertRaises(ValueError):validate_bundle(document,runtime,events)
 
     def test_bundle_rejects_mixed_identity_and_execution(self):
         document,runtime,events=self.bundle()
