@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "level": "L1",
+  "baseline": "b0e053423f74f107b5fb7d3c991c924fd9370b49",
+  "changedFeatures": ["purchase-entitlements", "economy-boxes", "operational-outbox"],
+  "environments": ["dev"],
+  "redesign": false,
+  "foundationRerun": false,
+  "floorOverrides": [],
+  "release": null
+}
