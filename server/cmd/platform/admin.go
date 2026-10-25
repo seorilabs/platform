@@ -47,7 +47,18 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 	if err != nil {
 		return err
 	}
+	if err := registerAdminHandlers(mux, d, auth); err != nil {
+		return err
+	}
+	slog.Info("Admin API 준비 완료",
+		"read_allowed_accounts", len(readAllowed),
+		"write_allowed_accounts", len(writeAllowed),
+	)
+	return nil
+}
 
+// 외부 OIDC 검증과 분리해 실제 운영 라우트 배선을 개발 환경에서 실행한다.
+func registerAdminHandlers(mux *http.ServeMux, d *deps, auth *admin.Authenticator) error {
 	// RemoteConfig도 함께 넘긴다. break-glass의 점검 모드가 여기로 온다.
 	handler, err := admin.NewHandler(
 		d.iap.ledger,
@@ -113,10 +124,6 @@ func registerAdmin(mux *http.ServeMux, d *deps) error {
 		return err
 	}
 
-	slog.Info("Admin API 준비 완료",
-		"read_allowed_accounts", len(readAllowed),
-		"write_allowed_accounts", len(writeAllowed),
-	)
 	return nil
 }
 
