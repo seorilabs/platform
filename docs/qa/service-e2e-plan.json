@@ -3,10 +3,10 @@
   "design": {
     "id": "2026-10-25-starter-service-v2",
     "document": "docs/design/2026-10-25-starter-service-v2/design.md",
-    "approvedCommit": "5c73372ef6cbc0245381f56c3e2b3d0fc3800048",
+    "approvedCommit": "416c55be389403a0b7037bff62828ed58a90afc7",
     "approverKind": "human",
     "approver": "project-owner",
-    "approvalEvidence": "2026-10-25 직접 사용자 응답: 실행 계획 연결 승인. 준비한 commit 5c73372의 L3 dev 전체 서비스 회귀, 기존 운영 승인과 6개 역할 확인. 기기 및 앱 마켓 공개 제외."
+    "approvalEvidence": "2026-10-25 직접 사용자 응답: 실행 계획 연결 승인. 준비한 commit 5c73372의 L3 dev 전체 서비스 회귀, 기존 운영 승인과 6개 역할 확인. 기기 및 앱 마켓 공개 제외. 원본 승인 5c73372와 squash 병합 416c55b의 test-plan.json 바이트 및 SHA-256(e934060398b54ac1642df2f821140fd1869ec2b1133be617dd0209f3c740a877)이 동일하여, 후보의 조상인 병합 커밋으로 근거를 연결한다."
   },
   "scenarios": [
     {
