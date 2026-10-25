@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "design": {
-    "id": "TC-SDK100-SERVICE-EVIDENCE-v1",
-    "approvedCommit": "1d130acfafe5826953644cf283e093be4db814b5",
+    "id": "2026-10-25-starter-service-v2",
+    "document": "docs/design/2026-10-25-starter-service-v2/design.md",
+    "approvedCommit": "5c73372ef6cbc0245381f56c3e2b3d0fc3800048",
     "approverKind": "human",
     "approver": "project-owner",
-    "approvalEvidence": "https://github.com/seorilabs/platform/pull/228#issuecomment-6146552828 (direct conversation: 설계·수정·검증 후 병합·운영 배포 승인)",
-    "document": "docs/design/2026-10-13-platform-service-evidence/design.md"
+    "approvalEvidence": "2026-10-25 직접 사용자 응답: 실행 계획 연결 승인. 준비한 commit 5c73372의 L3 dev 전체 서비스 회귀, 기존 운영 승인과 6개 역할 확인. 기기 및 앱 마켓 공개 제외."
   },
   "scenarios": [
     {

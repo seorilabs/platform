@@ -1,6 +1,6 @@
 # Starter 서비스 실행 계획 연결
 
-제품 설계 정본은 [Starter 승인 설계](https://github.com/seorilabs/starter-template-game/blob/f28dfb430a7fac7a807ce6783276f0d837bfd480/docs/design/2026-10-25-live-platform-game/design.md)와 Obsidian `프로젝트/platform/03-architecture/adr/0037-starter-wallet.md`, `0038-starter-account-save-deletion.md`다. 이 문서는 중앙 검사가 읽을 서비스 실행 계획의 연결점이다.
+제품 설계 정본은 [Starter 승인 설계](https://github.com/seorilabs/starter-template-game/blob/f28dfb430a7fac7a807ce6783276f0d837bfd480/docs/design/2026-10-25-live-platform-game/design.md)와 Obsidian `프로젝트/platform/02-decisions/0037-starter-platform-test-wallet.md`, `프로젝트/platform/02-decisions/0038-starter-account-save-deletion.md`다. 이 문서는 중앙 검사가 읽을 서비스 실행 계획의 연결점이다.
 
 Platform PR #257의 Starter 등록, 테스트 구매 제한, 서버 지갑, 계정 삭제와 운영 이벤트 및 SDK 1.1.0에 대해 L3 전체 서비스 회귀를 적용한다. 외부 공급자 경계는 대역으로 구분하고 실제 서비스 코드, TCP HTTP와 격리 Firestore의 모든 구현 기능을 다른 검수자 또는 CI가 실행한다. 실패, skip, 누락 또는 오래된 근거는 통과로 표시하지 않는다.
 
