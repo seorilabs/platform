@@ -38,7 +38,8 @@
     "app_store_client_completion": true,
     "markets": [
       "google_play",
-      "app_store"
+      "app_store",
+      "apps_in_toss"
     ],
     "google_play_package_name": "com.seorilabs.bloomhand",
     "app_store_bundle_id": "com.seorilabs.bloomhand",
@@ -53,6 +54,8 @@
     "seori_session_start"
   ],
   "cors_origins": [
-    "http://localhost:8765"
+    "http://localhost:8765",
+    "https://bloomhand.apps.tossmini.com",
+    "https://bloomhand.private-apps.tossmini.com"
   ]
 }
