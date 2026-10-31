@@ -605,9 +605,17 @@ func (s *Service) resolveIdentity(
 		//
 		// 실제로 이걸 묶어 두면 lizard-tycoon은 결제가 하나도 되지 않는다.
 		// 전 사용자가 Firebase 익명 계정이기 때문이다.
+		authType := "firebase"
+		// uid 접두사만으로 공급자를 정하지 않는다. 이 앱에서 발급했고
+		// 게스트가 아닌 서명된 custom token claim도 함께 일치해야 한다.
+		if claims.SignInProvider == "custom" && claims.PlatformAppID == app.AppID &&
+			claims.PlatformGuest != nil && !*claims.PlatformGuest &&
+			strings.HasPrefix(claims.UID, "ait:") && isSHA256(strings.TrimPrefix(claims.UID, "ait:")) {
+			authType = "apps_in_toss"
+		}
 		return NewIdentity{
 			UID:            claims.UID,
-			AuthType:       "firebase",
+			AuthType:       authType,
 			SignInProvider: claims.SignInProvider,
 		}, nil
 
@@ -700,7 +708,9 @@ func (s *Service) Refresh(
 		if err != nil {
 			return Result{}, err
 		}
-		sess.IsLinkedAccount = linked
+		// AIT의 연결 사실은 mTLS로 확인한 세션에 있고 OIDC 연결 표에는 없다.
+		// 현재 서명 세션의 AIT 연결만 보존하며 일반 계정의 해제는 반영한다.
+		sess.IsLinkedAccount = linked || (sess.IsLinkedAccount && strings.HasPrefix(sess.AppUserID, "ait:") && isSHA256(strings.TrimPrefix(sess.AppUserID, "ait:")))
 	}
 
 	// 회전. 실패해도 새 토큰 발급은 진행한다.

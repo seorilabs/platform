@@ -76,6 +76,7 @@ func (h *Handler) WithKakaoUnlinkWebhook(config KakaoUnlinkWebhookConfig) *Handl
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/session", httpx.Wrap(h.createSession))
 	mux.HandleFunc("POST /v1/auth/firebase-custom-token", httpx.Wrap(h.createFirebaseCustomToken))
+	mux.HandleFunc("POST /v1/auth/session/firebase-custom-token", httpx.Wrap(h.createSessionFirebaseCustomToken))
 	mux.HandleFunc("POST /v1/auth/account-link-challenges", httpx.Wrap(h.createAccountLinkChallenge))
 	mux.HandleFunc("POST /v1/auth/account-links", httpx.Wrap(h.createAccountLink))
 	mux.HandleFunc("POST /v1/auth/account-link-recovery-challenges", httpx.Wrap(h.createAccountLinkRecoveryChallenge))
