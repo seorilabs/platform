@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+// 토스 WebView의 인증 사전 요청은 네이티브 요청과 달리 Origin을 보낸다.
+func TestSpiritgateDefendersAllowsAITOrigins(t *testing.T) {
+	r := New(NewFSSource(os.DirFS("../../../registry"), "apps"))
+	for _, tc := range []struct {
+		origin string
+		want   bool
+	}{
+		{"https://seorilabs.github.io", true},
+		{"https://spiritgate-defenders.apps.tossmini.com", true},
+		{"https://spiritgate-defenders.private-apps.tossmini.com", true},
+		{"https://spiritgate-defenders.apps.tossmini.com.attacker.invalid", false},
+		{"http://spiritgate-defenders.apps.tossmini.com", false},
+	} {
+		allowed, err := r.AllowsCORSOrigin(context.Background(), tc.origin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if allowed != tc.want {
+			t.Errorf("AllowsCORSOrigin(%q) = %v, want %v", tc.origin, allowed, tc.want)
+		}
+	}
+}
+
 func TestSpiritgateDefendersAdsRegistryContract(t *testing.T) {
 	source := NewFSSource(os.DirFS("../../../registry"), "apps")
 	apps, err := source.LoadApps(context.Background())
