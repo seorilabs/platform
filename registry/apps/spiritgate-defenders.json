@@ -36,6 +36,8 @@
     "ad_impression"
   ],
   "cors_origins": [
-    "https://seorilabs.github.io"
+    "https://seorilabs.github.io",
+    "https://spiritgate-defenders.apps.tossmini.com",
+    "https://spiritgate-defenders.private-apps.tossmini.com"
   ]
 }
