@@ -6,12 +6,14 @@
         "friend_box_1": {
           "type": "consumable",
           "google_play": "bloomhand_friend_box_1",
-          "app_store": "bloomhand_friend_box_1"
+          "app_store": "bloomhand_friend_box_1",
+          "apps_in_toss": "ait.0000094928.b524a70c.51f7502f0b.3450048990"
         },
         "friend_box_5": {
           "type": "consumable",
           "google_play": "bloomhand_friend_box_5",
-          "app_store": "bloomhand_friend_box_5"
+          "app_store": "bloomhand_friend_box_5",
+          "apps_in_toss": "ait.0000094928.25787917.8980c84102.3450075238"
         }
       }
     }

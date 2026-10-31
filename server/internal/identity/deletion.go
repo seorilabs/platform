@@ -66,6 +66,11 @@ func (s *Service) RequestAccountDeletion(ctx context.Context, appID, token, rece
 	if err != nil {
 		return DeletionStatus{}, err
 	}
+	// Firebase 소유자와 같은 AIT UID만 지운다. 기존 raw AIT 세션이나
+	// 접두사를 흉내 낸 Firebase 신원을 삭제 경로로 승격하지 않는다.
+	if strings.HasPrefix(claims.UID, "ait:") && !hasAITFirebaseIdentity(app, claims) {
+		return DeletionStatus{}, platformerr.New(platformerr.CodeAuthForbidden, "토스 계정의 Firebase 연결을 확인해 주세요")
+	}
 	// 같은 접수증 재시도는 공급자 재승인 없이 현재 상태를 돌려준다(응답 유실 복구).
 	if status, err := s.deletions.DeletionStatus(ctx, app.AppID, receipt); err == nil {
 		return status, nil

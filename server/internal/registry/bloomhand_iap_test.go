@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// 블룸핸드 친구 상자(ADR 0033)는 게스트도 사고 열 수 있고,
+// 블룸핸드 친구 상자(ADR 0033)는 네이티브 게스트도 사고 열 수 있고,
 // 계정 연결은 App Check 를 요구한다. 상자 카탈로그 상품과 결제 경계가 어긋나면 지급이 막힌다.
 func TestBloomhandIAPAllowsGuestWithOptionalAppCheckedAccountLink(t *testing.T) {
 	apps, err := NewFSSource(os.DirFS("../../../registry"), "apps").LoadApps(context.Background())
@@ -30,8 +30,11 @@ func TestBloomhandIAPAllowsGuestWithOptionalAppCheckedAccountLink(t *testing.T) 
 		if !reflect.DeepEqual(app.IAP.EntitlementIDs, []string{"friend_box_1", "friend_box_5"}) {
 			t.Fatalf("상자 entitlement = %v", app.IAP.EntitlementIDs)
 		}
-		if !reflect.DeepEqual(app.IAP.Markets, []string{"google_play", "app_store"}) || app.IAP.LegacyUnscopedLedger {
+		if !reflect.DeepEqual(app.IAP.Markets, []string{"google_play", "app_store", "apps_in_toss"}) || app.IAP.LegacyUnscopedLedger {
 			t.Fatalf("마켓·원장 경로가 다르다: %#v", app.IAP)
+		}
+		if !app.FeatureEnabled("ait_firebase_identity") {
+			t.Fatal("AIT 계정과 같은 Firebase 소유자 연결이 없다")
 		}
 		return
 	}

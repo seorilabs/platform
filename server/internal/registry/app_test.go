@@ -727,6 +727,13 @@ func TestAccountDeletionFeatureValidation(t *testing.T) {
 			wantErr: "cannot delete AppsInToss login identities",
 		},
 		{
+			name: "Firebase 소유자 연결을 선언한 AppsInToss 허용",
+			mutate: func(app *App) {
+				app.IAP.Markets = append(app.IAP.Markets, "apps_in_toss")
+				app.Features["ait_firebase_identity"] = true
+			},
+		},
+		{
 			name: "AppsInToss 광고 앱 거부",
 			mutate: func(app *App) {
 				app.Features["ads"] = true

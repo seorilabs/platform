@@ -30,6 +30,10 @@ type Claims struct {
 	// AIT 결제는 이 값을 마켓 API의 x-toss-user-key 헤더로 넘긴다.
 	// body로 받지 않는 이유는 클라이언트가 타인 값을 넣을 수 있기 때문이다.
 	AITUserKey string
+	// PlatformAppID와 PlatformGuest는 검증된 Firebase custom claim이다.
+	// AIT 세션에서 발급한 Firebase token을 다음 실행에도 같은 신원으로 읽는다.
+	PlatformAppID string
+	PlatformGuest *bool
 	// IsAnonymous는 익명 로그인 여부다.
 	IsAnonymous bool
 	// AuthTime은 사용자가 실제로 인증한 시각이다.
@@ -48,7 +52,9 @@ type firebaseClaims struct {
 		SignInProvider string `json:"sign_in_provider"`
 	} `json:"firebase"`
 
-	AITUserKey string `json:"aitUserKey"`
+	AITUserKey    string `json:"aitUserKey"`
+	PlatformAppID string `json:"seori_app_id"`
+	PlatformGuest *bool  `json:"seori_guest"`
 }
 
 // KeyProvider는 kid로 공개키를 찾는다.
@@ -178,6 +184,8 @@ func (v *FirebaseVerifier) Verify(ctx context.Context, tokenStr string, app regi
 		UID:            claims.Subject,
 		SignInProvider: provider,
 		AITUserKey:     claims.AITUserKey,
+		PlatformAppID:  claims.PlatformAppID,
+		PlatformGuest:  claims.PlatformGuest,
 		IsAnonymous:    provider == "anonymous",
 		AuthTime:       authTime,
 		ExpiresAt:      expires,

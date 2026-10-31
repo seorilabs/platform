@@ -24,7 +24,10 @@
         "firebase-bridge"
       ],
       "requiredTests": [
-        "TestServiceRuntimeAccountRecoveryAndInbox"
+        "TestServiceRuntimeAccountRecoveryAndInbox",
+        "TestSessionFirebaseBridgeUsesOnlyAuthenticatedOwner",
+        "TestFirebaseAITIdentityRequiresVerifiedPlatformClaims",
+        "TestAITSessionRefreshPreservesVerifiedLinkedIdentity"
       ]
     },
     {
@@ -46,7 +49,8 @@
         "TestServiceRuntimeDeletionRequestWorkerRetryAndReceipt",
         "TestServiceRuntimeStorageFailureStaysInternal",
         "TestDeletionTransactionRecoveryAndCleanup",
-        "TestStarterDeletionBlocksOldTokensBeforeRemovingProgressAndAuth"
+        "TestStarterDeletionBlocksOldTokensBeforeRemovingProgressAndAuth",
+        "TestAITFirebaseDeletionUsesOnlyVerifiedCanonicalOwner"
       ]
     },
     {
