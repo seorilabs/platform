@@ -306,8 +306,9 @@ func (a App) Validate() error {
 		}
 		// 삭제 접수는 Firebase ID token의 uid만 대상으로 삼는다. AppsInToss 로그인은 별도 "ait:" 신원을 만들고
 		// (identity.Service의 KindAITLogin) 그 신원은 이 경로로 지울 수 없다. 광고나 IAP가 AppsInToss를
-		// 쓰는 앱은 그 신원을 발급하므로 막는다.
-		if (a.FeatureEnabled("ads") && slices.Contains(a.Ads.Providers, "apps_in_toss")) || (a.FeatureEnabled("iap") && a.MarketEnabled("apps_in_toss")) {
+		// 쓰는 앱은 그 신원을 발급하므로 막는다. 같은 Firebase UID로 교환하는
+		// ait_firebase_identity 앱만 기존 Firebase 삭제 절차를 사용할 수 있다.
+		if !a.FeatureEnabled("ait_firebase_identity") && ((a.FeatureEnabled("ads") && slices.Contains(a.Ads.Providers, "apps_in_toss")) || (a.FeatureEnabled("iap") && a.MarketEnabled("apps_in_toss"))) {
 			return fmt.Errorf("%s: account deletion cannot delete AppsInToss login identities", a.AppID)
 		}
 		if _, err := strconv.ParseUint(a.GA4.PropertyID, 10, 64); err != nil || a.GA4.PropertyID == "0" {

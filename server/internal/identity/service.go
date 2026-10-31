@@ -608,9 +608,7 @@ func (s *Service) resolveIdentity(
 		authType := "firebase"
 		// uid 접두사만으로 공급자를 정하지 않는다. 이 앱에서 발급했고
 		// 게스트가 아닌 서명된 custom token claim도 함께 일치해야 한다.
-		if claims.SignInProvider == "custom" && claims.PlatformAppID == app.AppID &&
-			claims.PlatformGuest != nil && !*claims.PlatformGuest &&
-			strings.HasPrefix(claims.UID, "ait:") && isSHA256(strings.TrimPrefix(claims.UID, "ait:")) {
+		if hasAITFirebaseIdentity(app, claims) {
 			authType = "apps_in_toss"
 		}
 		return NewIdentity{

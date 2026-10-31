@@ -424,7 +424,7 @@ paths:
         앱과 사용자에 묶인 유효한 Platform 세션만 받는다. AppsInToss 세션은
         mTLS를 가진 결제 서버에서 먼저 발급받고, 이 API에서 같은 appUserId의
         Firebase custom token으로 교환할 수 있다. 인증 API 서버에 mTLS 키를 복제하지 않는다.
-        클라이언트가 UID를 고르는 anonymous 세션은 거부한다. 본문은 없거나 빈 객체이며
+        클라이언트가 UID를 고르는 anonymous 세션은 거부한다. 본문은 빈 객체이며
         UID와 사용자 키를 받지 않는다. 기존 firebase-custom-token API 의미는 유지한다.
       operationId: createSessionFirebaseCustomToken
       security: [{ PlatformToken: [] }]
@@ -432,7 +432,7 @@ paths:
         - $ref: '#/components/parameters/SeoriApp'
         - $ref: '#/components/parameters/AppCheck'
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema: { type: object, additionalProperties: false }

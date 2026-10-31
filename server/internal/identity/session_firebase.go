@@ -3,9 +3,11 @@ package identity
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/seorilabs/platform/server/internal/httpx"
 	"github.com/seorilabs/platform/server/internal/platformerr"
+	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 // CreateSessionFirebaseCustomToken은 이미 검증된 세션 소유자만 Firebase로 잇는다.
@@ -28,6 +30,9 @@ func (s *Service) CreateSessionFirebaseCustomToken(ctx context.Context, sess Ses
 	if err := s.ensureNotBlocked(ctx, app.AppID, sess.AppUserID); err != nil {
 		return FirebaseCustomTokenResult{}, err
 	}
+	if strings.HasPrefix(sess.AppUserID, "ait:") && !app.FeatureEnabled("ait_firebase_identity") {
+		return FirebaseCustomTokenResult{}, platformerr.New(platformerr.CodeAuthForbidden, "이 앱은 토스 신원의 Firebase 연결을 사용하지 않아요")
+	}
 	token, err := s.customTokens.Mint(ctx, app, sess.AppUserID, !sess.IsLinkedAccount)
 	if err != nil {
 		return FirebaseCustomTokenResult{}, platformerr.Wrap(err, platformerr.CodePlatformUnavailable, "Firebase 인증 토큰을 만들지 못했어요")
@@ -40,11 +45,9 @@ func (h *Handler) createSessionFirebaseCustomToken(w http.ResponseWriter, r *htt
 	if err != nil {
 		return err
 	}
-	if r.ContentLength != 0 {
-		var body struct{}
-		if err := httpx.DecodeStrict(w, r, &body); err != nil {
-			return err
-		}
+	var body struct{}
+	if err := httpx.DecodeStrict(w, r, &body); err != nil {
+		return err
 	}
 	if err := h.svc.VerifyAppCheck(r.Context(), sess.AppID, r.Header.Get("X-Firebase-AppCheck")); err != nil {
 		return err
@@ -55,4 +58,10 @@ func (h *Handler) createSessionFirebaseCustomToken(w http.ResponseWriter, r *htt
 	}
 	httpx.WriteOK(w, http.StatusOK, firebaseCustomTokenResponse{FirebaseCustomToken: res.FirebaseCustomToken, AppUserID: res.AppUserID})
 	return nil
+}
+
+// 접두사만으로 토스 신원을 신뢰하지 않는다. Firebase가 검증한 서명과
+// 앱의 명시적 Firebase 연결 계약이 모두 일치해야 한다.
+func hasAITFirebaseIdentity(app registry.App, claims Claims) bool {
+	return app.FeatureEnabled("ait_firebase_identity") && claims.SignInProvider == "custom" && claims.PlatformAppID == app.AppID && claims.PlatformGuest != nil && !*claims.PlatformGuest && strings.HasPrefix(claims.UID, "ait:") && isSHA256(strings.TrimPrefix(claims.UID, "ait:"))
 }

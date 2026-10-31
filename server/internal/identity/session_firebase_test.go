@@ -29,7 +29,8 @@ func TestSessionFirebaseBridgeUsesOnlyAuthenticatedOwner(t *testing.T) {
 		name, token, app, body string
 		status                 int
 	}{
-		{"owner", session.PlatformToken, "lizard-tycoon", "", http.StatusOK},
+		{"owner", session.PlatformToken, "lizard-tycoon", "{}", http.StatusOK},
+		{"missing body", session.PlatformToken, "lizard-tycoon", "", http.StatusBadRequest},
 		{"missing bearer", "", "lizard-tycoon", "", http.StatusUnauthorized},
 		{"other app", session.PlatformToken, "other-app", "", http.StatusUnauthorized},
 		{"chosen uid", session.PlatformToken, "lizard-tycoon", `{"uid":"other-owner"}`, http.StatusBadRequest},
@@ -68,6 +69,7 @@ func TestFirebaseAITIdentityRequiresVerifiedPlatformClaims(t *testing.T) {
 		want   string
 	}{
 		{"signed AIT", func(*Claims) {}, "apps_in_toss"},
+		{"app not opted in", func(*Claims) {}, "firebase"},
 		{"prefix alone", func(c *Claims) { c.PlatformGuest = nil }, "firebase"},
 		{"other app claim", func(c *Claims) { c.PlatformAppID = "other" }, "firebase"},
 		{"password provider", func(c *Claims) { c.SignInProvider = "password" }, "firebase"},
@@ -77,7 +79,11 @@ func TestFirebaseAITIdentityRequiresVerifiedPlatformClaims(t *testing.T) {
 			claims := good
 			tc.change(&claims)
 			svc := newTestService(t, sessionBridgeVerifier{claims}, newMemRepo())
-			who, err := svc.resolveIdentity(t.Context(), testApp(), Credential{Kind: KindFirebaseIDToken, Value: "firebase-signed-token"})
+			app := aitFirebaseTestApp()
+			if tc.name == "app not opted in" {
+				app.Features["ait_firebase_identity"] = false
+			}
+			who, err := svc.resolveIdentity(t.Context(), app, Credential{Kind: KindFirebaseIDToken, Value: "firebase-signed-token"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,6 +108,7 @@ func TestAITSessionRefreshPreservesVerifiedLinkedIdentity(t *testing.T) {
 	claims := Claims{UID: "ait:" + strings.Repeat("b", 64), SignInProvider: "custom", PlatformAppID: "lizard-tycoon", PlatformGuest: &guest}
 	accounts := newMemoryAccountRepo()
 	svc := newTestService(t, sessionBridgeVerifier{claims}, newMemRepo()).WithAccountLinkRepository(accounts)
+	svc.registry = registry.New(fakeSource{apps: []registry.App{aitFirebaseTestApp()}})
 	first, err := svc.CreateSession(t.Context(), "lizard-tycoon", Credential{Kind: KindFirebaseIDToken, Value: "verified-firebase-token"}, ClientInfo{})
 	if err != nil || !first.IsLinkedAccount {
 		t.Fatalf("initial linked=%v err=%v", first.IsLinkedAccount, err)
@@ -109,5 +116,35 @@ func TestAITSessionRefreshPreservesVerifiedLinkedIdentity(t *testing.T) {
 	next, err := svc.Refresh(t.Context(), "lizard-tycoon", first.RefreshToken, ClientInfo{})
 	if err != nil || !next.IsLinkedAccount || next.AppUserID != claims.UID || next.PlatformUserID != first.PlatformUserID {
 		t.Fatalf("refreshed identity changed: err=%v linked=%v", err, next.IsLinkedAccount)
+	}
+}
+
+func aitFirebaseTestApp() registry.App {
+	app := testApp()
+	app.Features = map[string]bool{"firebase_custom_token_bridge": true, "ait_firebase_identity": true}
+	app.FirebaseCustomTokenServiceAccount = "platform-auth@" + app.FirebaseProjectID + ".iam.gserviceaccount.com"
+	return app
+}
+
+func TestAITFirebaseDeletionUsesOnlyVerifiedCanonicalOwner(t *testing.T) {
+	guest := false
+	good := Claims{UID: "ait:" + strings.Repeat("c", 64), SignInProvider: "custom", PlatformAppID: "lizard-tycoon", PlatformGuest: &guest}
+	for _, valid := range []bool{true, false} {
+		claims := good
+		if !valid {
+			claims.PlatformAppID = "other-app"
+		}
+		repo := &deletionMemory{status: DeletionStatus{State: "processing"}}
+		svc := deletionService(t, sessionBridgeVerifier{claims}, repo)
+		app := deletionTestApp()
+		app.Features["ait_firebase_identity"] = true
+		svc.registry = registry.New(fakeSource{apps: []registry.App{app}})
+		_, err := svc.RequestAccountDeletion(t.Context(), app.AppID, "firebase-signed-token", strings.Repeat("d", 64), nil)
+		if valid && (err != nil || repo.uid != good.UID) {
+			t.Fatalf("canonical owner not queued: %v", err)
+		}
+		if !valid && (err == nil || repo.begun) {
+			t.Fatal("unverified AIT owner was queued for deletion")
+		}
 	}
 }
