@@ -172,6 +172,10 @@
       "featureId": "firebase-bridge"
     },
     {
+      "path": "/auth/session/firebase-custom-token",
+      "featureId": "firebase-bridge"
+    },
+    {
       "path": "/auth/account-link-challenges",
       "featureId": "account-link-recovery"
     },
