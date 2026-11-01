@@ -297,6 +297,8 @@ scripts/check_sdk_gdscript.sh
 이 스크립트는 `SCRIPT ERROR`도 함께 잡는다. Godot은 스크립트 런타임
 오류가 나도 실행을 계속해서 exit code만 보면 통과로 보인다.
 
+Web의 압축 응답 처리는 [HTTP 회귀 테스트](addons/seorilabs_platform/tools/http_response_fixture/README.md)로 별도 확인한다. 실제 두 전송 경로를 로컬 gzip 응답에 연결해 Web과 native에서 각각 6건을 검사하며 외부 API는 호출하지 않는다.
+
 ### 미지 필드를 무시한다
 
 응답에 모르는 필드가 있어도 정상으로 본다. 키 개수를 세지 않는다.
