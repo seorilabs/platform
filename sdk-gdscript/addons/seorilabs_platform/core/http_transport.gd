@@ -244,6 +244,8 @@ func _ensure_http() -> void:
 		return
 
 	_http = HTTPRequest.new()
+	# Web은 브라우저가 이미 본문을 압축 해제한다. 노출된 gzip 헤더로 다시 풀지 않는다.
+	_http.accept_gzip = not OS.has_feature("web")
 	_http.timeout = DEFAULT_TIMEOUT_SEC
 	_http.body_size_limit = MAX_RESPONSE_BYTES
 	_http.request_completed.connect(_on_request_completed)

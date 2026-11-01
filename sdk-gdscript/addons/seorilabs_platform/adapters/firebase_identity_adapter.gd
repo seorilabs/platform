@@ -268,6 +268,8 @@ func _request_json(
 	add_json_header: bool = true,
 ) -> Dictionary:
 	var request := HTTPRequest.new()
+	# Web은 브라우저가 이미 본문을 압축 해제한다. 노출된 gzip 헤더로 다시 풀지 않는다.
+	request.accept_gzip = not OS.has_feature("web")
 	request.timeout = float(CALLBACK_TIMEOUT_MS) / 1000.0
 	request.body_size_limit = 256 * 1024
 	add_child(request)
