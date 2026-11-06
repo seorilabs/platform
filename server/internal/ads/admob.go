@@ -65,7 +65,8 @@ func (v *AdMobVerifier) Verify(ctx context.Context, rawQuery string) (SSVResult,
 	if err != nil {
 		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV URI가 올바르지 않아요")
 	}
-	params, err := url.ParseQuery(rawQuery)
+	// URI와 같은 값으로 해석한다. literal +는 서명에서도 값에서도 +다.
+	params, err := url.ParseQuery(strings.ReplaceAll(rawQuery, "+", "%2B"))
 	if err != nil {
 		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV query가 올바르지 않아요")
 	}

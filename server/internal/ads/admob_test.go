@@ -26,14 +26,13 @@ type ssvQueryParam struct{ key, value string }
 
 func signSSVQuery(t *testing.T, privateKey *ecdsa.PrivateKey, params []ssvQueryParam) string {
 	t.Helper()
-	signedData := ""
-	for i, item := range params {
-		if i > 0 {
-			signedData += "&"
-		}
-		signedData += url.QueryEscape(item.key) + "=" + url.QueryEscape(item.value)
+	var uriContent, escaped []string
+	for _, item := range params {
+		uriContent = append(uriContent, item.key+"="+item.value)
+		escaped = append(escaped, url.QueryEscape(item.key)+"="+strings.ReplaceAll(url.QueryEscape(item.value), "+", "%20"))
 	}
-	digest := sha256.Sum256([]byte(signedData))
+	signedData := strings.Join(escaped, "&")
+	digest := sha256.Sum256([]byte(strings.Join(uriContent, "&")))
 	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
 	if err != nil {
 		t.Fatal(err)
@@ -390,6 +389,11 @@ func TestAdMobVerifierUsesDecodedURIBytesForUnicodeRewards(t *testing.T) {
 	}
 	if result.RewardItem != "남은 시간 50% 단축 + 돛" {
 		t.Fatalf("보상 문구가 달라짐: %q", result.RewardItem)
+	}
+	literalPlus := strings.Replace(raw, "%2B", "+", 1)
+	same, err := verifier.Verify(context.Background(), literalPlus)
+	if err != nil || same.RewardItem != result.RewardItem {
+		t.Fatalf("URI 동치인 literal plus가 보상 값을 바꿈: %q %v", same.RewardItem, err)
 	}
 	// percent decode와 form decode는 다르다. 인코딩된 +를 한 번 푼 뒤 공백으로 바꾸거나
 	// %25를 두 번 풀면 원본 서명이 성립하지 않아야 한다.
