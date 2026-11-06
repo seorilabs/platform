@@ -5,6 +5,7 @@
 | 파일 | 내용 | 병합 도구 |
 | --- | --- | --- |
 | `lizard-tycoon.json` | 영구 상품 10종·크리스털 5종 | `scripts/merge-lizard-iap-catalog.mjs` |
+| `salt-compass.json` | 인장 3종·스타터 소모품, 영구 권리 3종. 양수 과거 인장 이관 제외 | `scripts/merge-new-app-iap-catalog.mjs --app salt-compass` |
 | `bloomhand.json` | 친구 상자 1개·5개(소모품, ADR 0029 상자 경제가 개봉 단위로 차감) | `scripts/merge-new-app-iap-catalog.mjs --app bloomhand` |
 | `merge-lizard.json` | Amber Lizards 15종. 기존 호박 묶음 5종(상점에서 숨기고 처리 중 구매만 지급)·새 호박 묶음 5종·스타터·30일 호박은 소모품, 햇살 축복·둥지 확장·호박 오아시스는 비소모품. 30일 호박은 기간 이용권 일정(`pass`)을 가진다 | `scripts/merge-new-app-iap-catalog.mjs --app merge-lizard` (일정만 더할 때 `--update-pass`) |
 

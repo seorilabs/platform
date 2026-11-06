@@ -7,8 +7,8 @@
   "features": {
     "config": false,
     "events": true,
-    "iap": false,
-    "ads": false,
+    "iap": true,
+    "ads": true,
     "firebase_custom_token_bridge": true
   },
   "require_app_check": false,
@@ -83,5 +83,71 @@
     "https://salt-compass.private-apps.tossmini.com",
     "https://salt-compass.web.tossmini.com",
     "https://salt-compass.private-web.tossmini.com"
-  ]
+  ],
+  "iap": {
+    "ledger_environment": "production",
+    "apple_sandbox_enabled": true,
+    "app_store_client_completion": true,
+    "markets": [
+      "google_play",
+      "app_store"
+    ],
+    "google_play_package_name": "com.seorilabs.saltcompass",
+    "app_store_bundle_id": "com.seorilabs.saltcompass",
+    "entitlement_ids": [
+      "saltcompass_seal_s",
+      "saltcompass_seal_m",
+      "saltcompass_seal_l",
+      "saltcompass_starter",
+      "saltcompass_charter",
+      "saltcompass_dock_slots",
+      "saltcompass_patron"
+    ],
+    "require_linked_account": false
+  },
+  "ads": {
+    "providers": [
+      "admob"
+    ],
+    "placements": [
+      {
+        "id": "rewarded_offline_double",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/5776298131",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/6523237741",
+            "reward_item": "항해 인장",
+            "reward_amount": 3
+          }
+        },
+        "reward": {
+          "key": "seal",
+          "min_amount": 3,
+          "max_amount": 3
+        },
+        "daily_limit": 1,
+        "cooldown_seconds": 21600
+      },
+      {
+        "id": "rewarded_timer_skip",
+        "format": "rewarded",
+        "providers": {
+          "admob": {
+            "android_ad_unit_id": "ca-app-pub-9932778305312246/3364833771",
+            "ios_ad_unit_id": "ca-app-pub-9932778305312246/3093285313",
+            "reward_item": "남은 시간 50% 단축",
+            "reward_amount": 1
+          }
+        },
+        "reward": {
+          "key": "timer_half",
+          "min_amount": 1,
+          "max_amount": 1
+        },
+        "daily_limit": 3,
+        "cooldown_seconds": 600
+      }
+    ]
+  }
 }
