@@ -78,14 +78,14 @@ func TestSaltStarterUsesServerClockAndNeverReopens(t *testing.T) {
 
 func TestSaltBootstrapAndRequestValidation(t *testing.T) {
 	s := newSaltState(time.Unix(1000, 0))
-	if err := saltApply(&s, SaltRequest{Action: "bootstrap", LegacySeals: 17, legacyVerified: true}, time.Unix(1000, 0)); err != nil {
+	if err := saltApply(&s, SaltRequest{Action: "bootstrap"}, time.Unix(1000, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if err := saltApply(&s, SaltRequest{Action: "bootstrap", LegacySeals: 17}, time.Unix(1001, 0)); err == nil {
 		t.Fatal("imported legacy balance twice")
 	}
-	if s.SealBalance != 17 {
-		t.Fatal("legacy amount lost")
+	if s.SealBalance != 0 {
+		t.Fatal("zero bootstrap minted money")
 	}
 	for _, r := range []SaltRequest{
 		{RequestID: "a", Action: "spend_expedition", TargetID: "X1", LegacySeals: 3},

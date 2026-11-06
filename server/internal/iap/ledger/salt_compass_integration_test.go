@@ -5,7 +5,6 @@ package ledger
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,10 +26,14 @@ func saltTx(t *testing.T, l *Ledger, puid string, r SaltRequest) SaltReceipt {
 		r.Deadline = l.now().Unix() + 3600
 	}
 	if r.Action == "bootstrap" && r.LegacySeals > 0 {
-		p, _ := l.saltPath("salt_compass_legacy", puid)
-		if err := l.store.Set(context.Background(), p, SaltLegacyBalance{PlatformUserID: puid, SealCap: r.LegacySeals, SourceDigest: strings.Repeat("a", 64), SourceKind: "pre-iap-cloud-snapshot", CapturedAt: l.now().UTC()}); err != nil {
+		// 구매/환불 계산용의 기존 서버 잔액 fixture다. 공개 bootstrap은 양수를 만들지 않는다.
+		p, _ := l.saltStatePath(puid)
+		state := newSaltState(l.now())
+		state.SealBalance = r.LegacySeals
+		if err := l.store.Set(context.Background(), p, state); err != nil {
 			t.Fatal(err)
 		}
+		r.LegacySeals = 0
 	}
 	x, err := l.TransactSalt(context.Background(), puid, r)
 	if err != nil {

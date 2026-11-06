@@ -136,7 +136,6 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 		}
 		storedRequest := r
 		storedRequest.rewardVerified = false
-		storedRequest.legacyVerified = false
 		storedRequest.effectDeadline = 0
 		if exists {
 			var prior saltTransactionDoc
@@ -172,11 +171,10 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 				return platformerr.New(platformerr.CodePurchaseReplayMismatch, "이미 다른 정산에서 사용한 광고예요")
 			}
 		}
-		if r.Action == "bootstrap" && r.LegacySeals > 0 {
+		if r.Action == "bootstrap" {
 			if err := l.verifySaltLegacy(tx, puid, r.LegacySeals); err != nil {
 				return err
 			}
-			r.legacyVerified = true
 		}
 		if r.Action == "prepare_starter" {
 			cancelled, _, err := tx.Exists(cancellationPath)

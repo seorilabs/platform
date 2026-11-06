@@ -3324,7 +3324,7 @@ components:
           type: integer
           minimum: 0
           maximum: 1000000
-          description: 현재 로컬 잔액 주장. 서버에 동결된 운영 기준값을 넘는 금액은 적립하지 않는다.
+          description: 현재 로컬 잔액. 이번 출시는0만 연결한다. 양수는 보존·보류하며 별도 이관 검토 없이 적립하지 않는다.
         durationSeconds: { type: integer, minimum: 10800, maximum: 43200 }
         shipClass: { type: string, pattern: '^S[0-9]{2}$' }
         claimId: { type: string, minLength: 1, maxLength: 128 }

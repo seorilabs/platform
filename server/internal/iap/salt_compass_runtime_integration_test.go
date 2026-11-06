@@ -91,10 +91,8 @@ func TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion(t *testing.T
 	if status != 422 {
 		t.Fatalf("untrusted bootstrap status=%d", status)
 	}
-	if err := l.ImportSaltLegacy(ctx, ledger.SaltLegacyBalance{PlatformUserID: sess.PlatformUserID, SealCap: 5, SourceDigest: strings.Repeat("a", 64), SourceKind: "pre-iap-cloud-snapshot", CapturedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	status, _ = call("POST", "/v1/iap/salt-compass/transactions", `{"requestId":"boot","action":"bootstrap","legacySeals":5}`)
+
+	status, _ = call("POST", "/v1/iap/salt-compass/transactions", `{"requestId":"boot","action":"bootstrap","legacySeals":0}`)
 	if status != 200 {
 		t.Fatalf("bootstrap status=%d", status)
 	}
@@ -110,7 +108,7 @@ func TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion(t *testing.T
 	if err := json.Unmarshal(body["result"], &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if status != 200 || snapshot.Available != 15 || provider.completed != 2 {
+	if status != 200 || snapshot.Available != 10 || provider.completed != 2 {
 		t.Fatalf("HTTP normal/replay available=%d completed=%d status=%d", snapshot.Available, provider.completed, status)
 	}
 	revoked := provider.purchase
@@ -123,7 +121,7 @@ func TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion(t *testing.T
 	if err := json.Unmarshal(body["result"], &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if status != 200 || snapshot.Available != 5 {
+	if status != 200 || snapshot.Available != 0 {
 		t.Fatalf("HTTP refund available=%d status=%d", snapshot.Available, status)
 	}
 	status, _ = call("POST", "/v1/iap/verify", proof)
@@ -140,7 +138,7 @@ func TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion(t *testing.T
 	if err := json.Unmarshal(body["result"], &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if status != 200 || snapshot.Available != 5 || snapshot.Starter.Purchased {
+	if status != 200 || snapshot.Available != 0 || snapshot.Starter.Purchased {
 		t.Fatalf("held purchase changed state available=%d purchased=%v", snapshot.Available, snapshot.Starter.Purchased)
 	}
 }

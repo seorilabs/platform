@@ -121,11 +121,11 @@
         "TestSaltRegressionOwnerHoldPreservesBothLedgers",
         "TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion",
         "TestSaltAccountReferencesRequireFinancialBootstrap",
-        "TestSaltMigrationRejectsUnfrozenOrMismatchedSourceBeforeWrites",
+        "TestSaltLegacyCheckRejectsIncompletePositiveMissingAndCorruptSaves",
         "TestSaltCollectClockSkewRetriesSameRequestAfterReturn",
         "TestSaltLegacyExpeditionSpendAndExpiredTimerReplay",
         "TestSaltPrelaunchCancelFencesDelayedPrepare",
-        "TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending",
+        "TestSaltLegacyPositiveAndKnownPositiveZeroAreHeld",
         "TestSaltSSVClaimCannotCreditTwoWalletEnvironments",
         "TestSaltVerifiedTimerReturnsAbsoluteDeadlineAndReplayDoesNotHalveAgain",
         "TestSaltTimerRequiresMatchingServerVerifiedSSV"
