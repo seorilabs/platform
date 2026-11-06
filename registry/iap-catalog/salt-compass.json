@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "apps": {
+    "salt-compass": {
+      "entitlements": {
+        "saltcompass_seal_s": {
+          "type": "consumable",
+          "google_play": "saltcompass_seal_s",
+          "app_store": "saltcompass_seal_s"
+        },
+        "saltcompass_seal_m": {
+          "type": "consumable",
+          "google_play": "saltcompass_seal_m",
+          "app_store": "saltcompass_seal_m"
+        },
+        "saltcompass_seal_l": {
+          "type": "consumable",
+          "google_play": "saltcompass_seal_l",
+          "app_store": "saltcompass_seal_l"
+        },
+        "saltcompass_starter": {
+          "type": "consumable",
+          "google_play": "saltcompass_starter",
+          "app_store": "saltcompass_starter"
+        },
+        "saltcompass_charter": {
+          "type": "non_consumable",
+          "google_play": "saltcompass_charter",
+          "app_store": "saltcompass_charter"
+        },
+        "saltcompass_dock_slots": {
+          "type": "non_consumable",
+          "google_play": "saltcompass_dock_slots",
+          "app_store": "saltcompass_dock_slots"
+        },
+        "saltcompass_patron": {
+          "type": "non_consumable",
+          "google_play": "saltcompass_patron",
+          "app_store": "saltcompass_patron"
+        }
+      }
+    }
+  }
+}
