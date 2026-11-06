@@ -59,6 +59,7 @@ func TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion(t *testing.T
 	}
 	sess := paidSession()
 	sess.AppID = "salt-compass"
+	sess.PlatformUserID = "pu_01KZ0E9KF04DBX8BRE0SJ2CK8C"
 	h := NewHandler(svc, &fakeSessions{sess: sess}).WithApps(apps)
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -86,7 +87,14 @@ func TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion(t *testing.T
 		}
 		return resp.StatusCode, parsed
 	}
-	status, _ := call("POST", "/v1/iap/salt-compass/transactions", `{"requestId":"boot","action":"bootstrap","legacySeals":5}`)
+	status, _ := call("POST", "/v1/iap/salt-compass/transactions", `{"requestId":"mint","action":"bootstrap","legacySeals":1000000}`)
+	if status != 422 {
+		t.Fatalf("untrusted bootstrap status=%d", status)
+	}
+	if err := l.ImportSaltLegacy(ctx, ledger.SaltLegacyBalance{PlatformUserID: sess.PlatformUserID, SealCap: 5, SourceDigest: strings.Repeat("a", 64), SourceKind: "pre-iap-cloud-snapshot", CapturedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	status, _ = call("POST", "/v1/iap/salt-compass/transactions", `{"requestId":"boot","action":"bootstrap","legacySeals":5}`)
 	if status != 200 {
 		t.Fatalf("bootstrap status=%d", status)
 	}
