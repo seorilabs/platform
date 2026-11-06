@@ -125,8 +125,7 @@
         "TestSaltCollectClockSkewRetriesSameRequestAfterReturn",
         "TestSaltLegacyExpeditionSpendAndExpiredTimerReplay",
         "TestSaltPrelaunchCancelFencesDelayedPrepare",
-        "TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending",
-        "TestSaltLegacyImportUsesFirestoreMicrosecondPrecision"
+        "TestSaltLegacyPositiveAndKnownPositiveZeroAreHeld"
       ]
     },
     {

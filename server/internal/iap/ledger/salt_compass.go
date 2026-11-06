@@ -123,7 +123,6 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 		}
 		storedRequest := r
 		storedRequest.rewardVerified = false
-		storedRequest.legacyVerified = false
 		if exists {
 			var prior saltTransactionDoc
 			if err := snap.DataTo(&prior); err != nil {
@@ -153,7 +152,6 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 			if err := l.verifySaltLegacy(tx, puid, r.LegacySeals); err != nil {
 				return err
 			}
-			r.legacyVerified = true
 		}
 		if r.Action == "prepare_starter" {
 			cancelled, _, err := tx.Exists(cancellationPath)

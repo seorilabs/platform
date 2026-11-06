@@ -23,7 +23,6 @@ type SaltRequest struct {
 	Deadline        int64  `json:"deadline,omitempty" firestore:"deadline"`
 	// 보상 수량은 HTTP 입력이 아니라 서버에서 확인한 claim으로만 주입한다.
 	rewardVerified bool
-	legacyVerified bool
 }
 
 type SaltStarter struct {
@@ -150,7 +149,7 @@ func saltApply(s *saltState, r SaltRequest, now time.Time) error {
 		if s.Initialized {
 			return saltError("기존 인장은 이미 정산했어요")
 		}
-		if r.LegacySeals > 0 && !r.legacyVerified {
+		if r.LegacySeals > 0 {
 			return saltError("기존 인장 기록의 확인이 필요해요")
 		}
 		s.Initialized = true
