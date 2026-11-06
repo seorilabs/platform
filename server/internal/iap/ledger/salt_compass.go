@@ -149,7 +149,7 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 				return platformerr.New(platformerr.CodePurchaseReplayMismatch, "이미 정산한 행동이에요")
 			}
 		}
-		if r.Action == "bootstrap" && r.LegacySeals > 0 {
+		if r.Action == "bootstrap" {
 			if err := l.verifySaltLegacy(tx, puid, r.LegacySeals); err != nil {
 				return err
 			}

@@ -37,6 +37,8 @@ func (b SaltLegacyBalance) Validate() error {
 // ImportSaltLegacy는 기존 정산을 바꾸지 않는다. 같은 snapshot 재시도만 멱등 성공한다.
 // 운영 credential과 비공개 원본을 쓰는 cmd/saltmigrate에서만 호출한다(불변식 5·8).
 func (l *Ledger) ImportSaltLegacy(ctx context.Context, b SaltLegacyBalance) error {
+	// Firestore가 보존하는 마이크로초 단위로 저장·비교한다.
+	b.CapturedAt = b.CapturedAt.UTC().Truncate(time.Microsecond)
 	if l.appID != saltAppID || b.Validate() != nil || b.CapturedAt.After(l.now().Add(time.Minute)) {
 		return saltError("이관 기준값과 원본 증거를 확인해 주세요")
 	}
@@ -90,6 +92,9 @@ func (l *Ledger) verifySaltLegacy(tx *store.Tx, puid string, requested int64) er
 		return err
 	}
 	if !exists {
+		if requested == 0 {
+			return nil
+		}
 		return saltError("기존 인장 기록의 확인이 필요해요")
 	}
 	var baseline SaltLegacyBalance
@@ -101,6 +106,9 @@ func (l *Ledger) verifySaltLegacy(tx *store.Tx, puid string, requested int64) er
 	}
 	if requested > baseline.SealCap {
 		return saltError("기존 인장 수량과 이관 기준값이 맞지 않아요")
+	}
+	if requested == 0 && baseline.SealCap > 0 {
+		return saltError("기존 양수 인장과 현재 저장의 확인이 필요해요")
 	}
 	// 동결 후 오프라인에서 쓴 인장을 되살리지 않는다. 감소한 local 값만 반영한다.
 	return nil

@@ -7,6 +7,7 @@ import (
 	"github.com/seorilabs/platform/server/internal/iap/domain"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending(t *testing.T) {
@@ -23,6 +24,9 @@ func TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending(t *testing.T) {
 	baseline := SaltLegacyBalance{PlatformUserID: uid, SealCap: 60, SourceKind: "pre-iap-cloud-snapshot", SourceDigest: strings.Repeat("a", 64), CapturedAt: *now}
 	if err := l.ImportSaltLegacy(ctx, baseline); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := l.TransactSalt(ctx, uid, SaltRequest{RequestID: "lost-save-zero", Action: "bootstrap"}); err == nil {
+		t.Fatal("zero bootstrap erased known positive baseline")
 	}
 	if err := l.ImportSaltLegacy(ctx, baseline); err != nil {
 		t.Fatal(err)
@@ -50,5 +54,16 @@ func TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending(t *testing.T) {
 	foreign := NewForApp(l.store, domain.EnvSandbox, "other-app")
 	if err := foreign.ImportSaltLegacy(ctx, baseline); err == nil {
 		t.Fatal("foreign app imported Salt baseline")
+	}
+}
+
+func TestSaltLegacyImportUsesFirestoreMicrosecondPrecision(t *testing.T) {
+	l, now := saltTestLedger(t)
+	b := SaltLegacyBalance{PlatformUserID: uniqueOperatorPUID(), SealCap: 1, SourceKind: "pre-update-device-snapshot", SourceDigest: strings.Repeat("b", 64), CapturedAt: now.Add(-time.Hour).Add(123 * time.Nanosecond)}
+	if err := l.ImportSaltLegacy(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.ImportSaltLegacy(context.Background(), b); err != nil {
+		t.Fatalf("same manifest could not retry after Firestore precision: %v", err)
 	}
 }

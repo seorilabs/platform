@@ -121,11 +121,12 @@
         "TestSaltRegressionOwnerHoldPreservesBothLedgers",
         "TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion",
         "TestSaltAccountReferencesRequireFinancialBootstrap",
-        "TestSaltMigrationRejectsUnfrozenOrMismatchedSourceBeforeWrites",
+        "TestSaltLegacyCheckRejectsIncompletePositiveMissingAndCorruptSaves",
         "TestSaltCollectClockSkewRetriesSameRequestAfterReturn",
         "TestSaltLegacyExpeditionSpendAndExpiredTimerReplay",
         "TestSaltPrelaunchCancelFencesDelayedPrepare",
-        "TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending"
+        "TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending",
+        "TestSaltLegacyImportUsesFirestoreMicrosecondPrecision"
       ]
     },
     {
