@@ -20,8 +20,10 @@ type SaltRequest struct {
 	DurationSeconds int64  `json:"durationSeconds,omitempty" firestore:"durationSeconds"`
 	ShipClass       string `json:"shipClass,omitempty" firestore:"shipClass"`
 	ClaimID         string `json:"claimId,omitempty" firestore:"claimId"`
+	Deadline        int64  `json:"deadline,omitempty" firestore:"deadline"`
 	// 보상 수량은 HTTP 입력이 아니라 서버에서 확인한 claim으로만 주입한다.
 	rewardVerified bool
+	legacyVerified bool
 }
 
 type SaltStarter struct {
@@ -102,14 +104,19 @@ func (r SaltRequest) validate() error {
 		if r.TargetID == "" || r.DurationSeconds < 10800 || r.DurationSeconds > 43200 {
 			return saltError("원정 시간을 확인해 주세요")
 		}
-	case "expedition_collect", "spend_expedition", "cancel_starter":
+	case "expedition_collect", "cancel_starter":
 		allowed = "target"
 		if r.TargetID == "" {
 			return saltError("정산 대상을 확인해 주세요")
 		}
+	case "spend_expedition":
+		allowed = "target,deadline"
+		if r.TargetID == "" || r.Deadline <= 0 {
+			return saltError("단축할 원정과 완료 시각을 확인해 주세요")
+		}
 	case "spend_build":
-		allowed = "target,ship"
-		if r.TargetID == "" || saltBuildCost(r.ShipClass) <= 0 {
+		allowed = "target,ship,deadline"
+		if r.TargetID == "" || saltBuildCost(r.ShipClass) <= 0 || r.Deadline <= 0 {
 			return saltError("건조 대상을 확인해 주세요")
 		}
 	case "ad_reward":
@@ -122,8 +129,9 @@ func (r SaltRequest) validate() error {
 		return saltError("지원하지 않는 인장 행동이에요")
 	}
 	if (r.LegacySeals != 0 && allowed != "legacy") || (r.DurationSeconds != 0 && allowed != "target,duration") ||
-		(r.ShipClass != "" && allowed != "target,ship") || (r.ClaimID != "" && allowed != "claim") ||
-		(r.TargetID != "" && allowed != "target" && allowed != "target,duration" && allowed != "target,ship") {
+		(r.ShipClass != "" && allowed != "target,ship,deadline") || (r.ClaimID != "" && allowed != "claim") ||
+		(r.Deadline != 0 && allowed != "target,deadline" && allowed != "target,ship,deadline") ||
+		(r.TargetID != "" && allowed != "target" && allowed != "target,duration" && allowed != "target,deadline" && allowed != "target,ship,deadline") {
 		return saltError("행동과 정산 내용이 맞지 않아요")
 	}
 	return nil
@@ -141,6 +149,9 @@ func saltApply(s *saltState, r SaltRequest, now time.Time) error {
 	if r.Action == "bootstrap" {
 		if s.Initialized {
 			return saltError("기존 인장은 이미 정산했어요")
+		}
+		if r.LegacySeals > 0 && !r.legacyVerified {
+			return saltError("기존 인장 기록의 확인이 필요해요")
 		}
 		s.Initialized = true
 		s.SealBalance += r.LegacySeals
@@ -161,8 +172,11 @@ func saltApply(s *saltState, r SaltRequest, now time.Time) error {
 		s.Expeditions[r.TargetID] = now.Unix() + r.DurationSeconds
 	case "expedition_collect":
 		returnsAt, exists := s.Expeditions[r.TargetID]
-		if !exists || now.Unix() < returnsAt {
-			return saltError("아직 귀환하지 않은 원정이에요")
+		if !exists {
+			return saltError("등록된 원정 기록을 확인해 주세요")
+		}
+		if now.Unix() < returnsAt {
+			return platformerr.New(platformerr.CodeSaltExpeditionPending, "아직 원정의 귀환을 확인 중이에요")
 		}
 		delete(s.Expeditions, r.TargetID)
 		if now.Unix() >= s.FirstSeenAt+24*3600 && s.StarterStartsAt == 0 {
@@ -175,21 +189,29 @@ func saltApply(s *saltState, r SaltRequest, now time.Time) error {
 		s.StarterIntent = r.RequestID
 		s.StarterIntentAt = now.Unix()
 	case "cancel_starter":
-		if s.StarterIntent != r.TargetID || s.StarterPendingKey != "" || s.StarterPurchased {
+		if (s.StarterIntent != "" && s.StarterIntent != r.TargetID) || s.StarterPendingKey != "" || s.StarterPurchased {
 			return saltError("확인 중인 구매는 취소할 수 없어요")
 		}
 		s.StarterIntent = ""
 		s.StarterIntentAt = 0
 	case "spend_expedition":
+		if now.Unix() >= r.Deadline {
+			return saltError("이미 완료된 타이머는 인장을 쓰지 않아요")
+		}
 		returnsAt, exists := s.Expeditions[r.TargetID]
-		if !exists || returnsAt <= now.Unix() {
+		if exists && returnsAt <= now.Unix() {
 			return saltError("단축할 원정이 없어요")
 		}
 		if err := saltDebit(s, 10); err != nil {
 			return err
 		}
-		s.Expeditions[r.TargetID] = now.Unix()
+		if exists {
+			s.Expeditions[r.TargetID] = now.Unix()
+		}
 	case "spend_build":
+		if now.Unix() >= r.Deadline {
+			return saltError("이미 완료된 타이머는 인장을 쓰지 않아요")
+		}
 		if err := saltDebit(s, saltBuildCost(r.ShipClass)); err != nil {
 			return err
 		}

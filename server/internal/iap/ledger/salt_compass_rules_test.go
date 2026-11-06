@@ -78,7 +78,7 @@ func TestSaltStarterUsesServerClockAndNeverReopens(t *testing.T) {
 
 func TestSaltBootstrapAndRequestValidation(t *testing.T) {
 	s := newSaltState(time.Unix(1000, 0))
-	if err := saltApply(&s, SaltRequest{Action: "bootstrap", LegacySeals: 17}, time.Unix(1000, 0)); err != nil {
+	if err := saltApply(&s, SaltRequest{Action: "bootstrap", LegacySeals: 17, legacyVerified: true}, time.Unix(1000, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if err := saltApply(&s, SaltRequest{Action: "bootstrap", LegacySeals: 17}, time.Unix(1001, 0)); err == nil {

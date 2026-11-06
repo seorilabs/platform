@@ -102,6 +102,19 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 			return SaltReceipt{}, err
 		}
 	}
+	// 화면을 닫을 때의 미청구 취소가 prepare보다 먼저 도착해도 이후 예약을 막는다.
+	// 결제 SDK를 시작한 구매나 다른 intent는 saltApply에서 취소를 거부한다.
+	var cancellationPath fspath.Path
+	if r.Action == "prepare_starter" || r.Action == "cancel_starter" {
+		intent := r.RequestID
+		if r.Action == "cancel_starter" {
+			intent = r.TargetID
+		}
+		cancellationPath, err = l.saltPath("salt_compass_starter_cancellations", puid+"\x00"+intent)
+		if err != nil {
+			return SaltReceipt{}, err
+		}
+	}
 	var out SaltReceipt
 	err = l.store.RunTransaction(ctx, func(_ context.Context, tx *store.Tx) error {
 		exists, snap, err := tx.Exists(rp)
@@ -110,6 +123,7 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 		}
 		storedRequest := r
 		storedRequest.rewardVerified = false
+		storedRequest.legacyVerified = false
 		if exists {
 			var prior saltTransactionDoc
 			if err := snap.DataTo(&prior); err != nil {
@@ -135,6 +149,21 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 				return platformerr.New(platformerr.CodePurchaseReplayMismatch, "이미 정산한 행동이에요")
 			}
 		}
+		if r.Action == "bootstrap" && r.LegacySeals > 0 {
+			if err := l.verifySaltLegacy(tx, puid, r.LegacySeals); err != nil {
+				return err
+			}
+			r.legacyVerified = true
+		}
+		if r.Action == "prepare_starter" {
+			cancelled, _, err := tx.Exists(cancellationPath)
+			if err != nil {
+				return err
+			}
+			if cancelled {
+				return saltError("중단한 구매 준비는 다시 시작할 수 없어요")
+			}
+		}
 		if err := saltApply(&s, r, now); err != nil {
 			return err
 		}
@@ -145,6 +174,11 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 		}
 		if err := tx.Create(rp, doc); err != nil {
 			return err
+		}
+		if r.Action == "cancel_starter" {
+			if err := tx.Set(cancellationPath, map[string]any{"cancelledAt": now}); err != nil {
+				return err
+			}
 		}
 		if effectKey != "" {
 			return tx.Create(ep, doc)
@@ -196,30 +230,6 @@ func (l *Ledger) grantSaltPurchase(ctx context.Context, in GrantInput) (domain.G
 		if err != nil {
 			return err
 		}
-		var barrier sandboxResetBarrierDoc
-		usesBarrier := l.env == domain.EnvSandbox && in.Purchase.Platform == domain.PlatformAppStore
-		if usesBarrier {
-			barrier, err = l.readSandboxResetBarrier(tx, in.PlatformUserID)
-			if err != nil {
-				return err
-			}
-			blockedAt, err := blockingSandboxResetAt(l.env, order, barrier, in.Purchase)
-			if err != nil {
-				return err
-			}
-			if !blockedAt.IsZero() {
-				held = saltError("초기화된 샌드박스 구매예요")
-				return nil
-			}
-		}
-		entPath, err := l.paths.internalEntitlement(in.PlatformUserID, in.EntitlementID)
-		if err != nil {
-			return err
-		}
-		ent, err := l.readEntitlement(tx, entPath, in.EntitlementID)
-		if err != nil {
-			return err
-		}
 		if exists && !order.Tombstone && order.PlatformUserID != "" && order.PlatformUserID != in.PlatformUserID {
 			// 원래 소유자 주문은 보존하고 요청자별 보류 증거만 추가한다.
 			p, err := l.saltPath("salt_compass_reconciliation", in.Purchase.Key()+"\x00"+in.PlatformUserID)
@@ -235,6 +245,56 @@ func (l *Ledger) grantSaltPurchase(ctx context.Context, in GrantInput) (domain.G
 				return tx.Create(p, map[string]any{"orderKey": in.Purchase.Key(), "platformUserId": in.PlatformUserID, "reason": "owner_mismatch", "createdAt": now})
 			}
 			return nil
+		}
+		var barrier sandboxResetBarrierDoc
+		usesBarrier := l.env == domain.EnvSandbox && in.Purchase.Platform == domain.PlatformAppStore
+		if usesBarrier {
+			barrier, err = l.readSandboxResetBarrier(tx, in.PlatformUserID)
+			if err != nil {
+				return err
+			}
+			blockedAt, err := blockingSandboxResetAt(l.env, order, barrier, in.Purchase)
+			if err != nil {
+				return err
+			}
+			if !blockedAt.IsZero() {
+				// reset 이전 증빙은 지급하지 않고 기존 cleanup 계약으로 반환한다.
+				if order.PlatformUserID == "" {
+					order.PlatformUserID = in.PlatformUserID
+				}
+				if order.EntitlementID == "" {
+					order.EntitlementID = in.EntitlementID
+				}
+				if err := l.revokeSaltOrder(tx, &order, in.Purchase.Key(), now); err != nil {
+					return err
+				}
+				order.Platform = in.Purchase.Platform
+				order.ProductID = in.Purchase.ProductID
+				order.ProviderOrderID = in.Purchase.ProviderOrderID
+				order.PurchasedAt = in.Purchase.PurchasedAt
+				order.ObservedAt = blockedAt
+				order.State = domain.StateRevoked
+				order.Tombstone = false
+				order.SandboxReset = effectiveSandboxResetMark(order, barrier)
+				order.CreatedAt = firstNonZero(order.CreatedAt, now)
+				order.UpdatedAt = now
+				if err := tx.Set(op, order); err != nil {
+					return err
+				}
+				if err := l.touchSandboxResetBarrier(tx, in.PlatformUserID, barrier, now); err != nil {
+					return err
+				}
+				out = domain.GrantResult{EntitlementID: in.EntitlementID, BlockedBySandboxReset: true}
+				return nil
+			}
+		}
+		entPath, err := l.paths.internalEntitlement(in.PlatformUserID, in.EntitlementID)
+		if err != nil {
+			return err
+		}
+		ent, err := l.readEntitlement(tx, entPath, in.EntitlementID)
+		if err != nil {
+			return err
 		}
 		// 환불은 종결 상태다. 더 나중 active timestamp도 환불을 되돌리지 못한다.
 		terminal := order.SaltRefunded || order.State == domain.StateRevoked

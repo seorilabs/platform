@@ -538,6 +538,17 @@ func (s *Service) ListEntitlementsForApp(ctx context.Context, appID, puid string
 }
 
 func (s *Service) AccountReferencesForApp(ctx context.Context, appID, puid string) (string, string, error) {
+	// 기존 beta의 로컬 지급 클라이언트가 운영 설정 활성화만으로 청구창을 열지 않게 한다.
+	// 새 지갑을 연결한 클라이언트만 마켓 계정 참조를 받아 새 구매를 시작한다.
+	if appID == "salt-compass" {
+		snapshot, err := s.SaltSnapshot(ctx, appID, puid)
+		if err != nil {
+			return "", "", err
+		}
+		if !snapshot.Initialized {
+			return "", "", platformerr.New(platformerr.CodeProductNotAllowed, "앱을 업데이트하고 인장 기록을 연결해 주세요")
+		}
+	}
 	if s.apps == nil {
 		return s.AccountReferences(puid)
 	}

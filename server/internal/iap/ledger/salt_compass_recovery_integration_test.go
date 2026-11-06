@@ -132,8 +132,8 @@ func TestSaltRegressionSandboxResetMoneyAndRightsAtomic(t *testing.T) {
 		t.Fatalf("reset rights count=%d err=%v", len(active), err)
 	}
 	p.ObservedAt = now.Add(time.Hour)
-	if _, err := l.Grant(ctx, GrantInput{PlatformUserID: uid, EntitlementID: p.ProductID, Purchase: p}); err == nil {
-		t.Fatal("reset order returned completion-eligible success")
+	if result, err := l.Grant(ctx, GrantInput{PlatformUserID: uid, EntitlementID: p.ProductID, Purchase: p}); err != nil || !result.BlockedBySandboxReset || result.Granted || result.AlreadyGranted {
+		t.Fatalf("reset must use cleanup without monetary grant: %+v %v", result, err)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestSaltRegressionConcurrentRefundSpendConservesBalance(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-start
-		_, spendErr = l.TransactSalt(ctx, uid, SaltRequest{RequestID: "spend", Action: "spend_build", TargetID: "R1_B1", ShipClass: "S17"})
+		_, spendErr = l.TransactSalt(ctx, uid, SaltRequest{RequestID: "spend", Action: "spend_build", TargetID: "R1_B1", ShipClass: "S17", Deadline: now.Unix() + 3600})
 	}()
 	go func() { defer wg.Done(); <-start; refundErr = l.RevokeByCanonicalID(ctx, rev) }()
 	close(start)

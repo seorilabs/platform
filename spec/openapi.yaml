@@ -1401,10 +1401,18 @@ paths:
       operationId: transactSaltCompassIap
       description: |
         같은 requestId와 같은 내용은 최초 결과를 재전송한다. 다른 내용의 재사용은 거부한다.
-        bootstrap은 계정당 최초 1회만 구버전 무료 인장을 보존한다. 이후 잔액 입력은 없다.
+        bootstrap은 계정당 최초 1회만 구버전 인장을 보존한다. legacySeals는 요청자의
+        현재 로컬 잔액 주장이다. 운영자가 활성화 전에 동결한 과거 저장 기준값이 있을 때만
+        그 상한 이내의 감소한 수량을 허용한다. 공개 요청으로 기준값을 만들거나 늘릴 수 없다.
+        양수 주장을 확인할 기준값이 없으면 저장을 보존한 채 연결을 보류한다.
+        0 초기화는 금전을 발행하지 않는다. 이후 잔액 입력은 없다.
         원정 시작은 서버 시각과 검증한 소요 시간으로 기록하고 귀환 이후 정산만
         최초 24시간 이후의 스타터 72시간 창을 연다. prepare_starter는 동시 청구를 막는
         하나의 예약을 만든다. 불확실한 결제 결과는 취소로 처리하지 않는다.
+        귀환 전 정산은 salt_expedition_pending을 반환하며 같은 요청으로 다시 대기한다.
+        인장 소비는 deadline 이전에만 새로 승인한다. 이미 승인된 요청의 재전송은
+        deadline 뒤에도 최초 receipt를 반환한다. 미등록 기존 원정의 소비는 고정 10인장만
+        차감하며 스타터 자격의 원정 근거를 새로 만들지 않는다.
         ad_reward는 해당 세션 소유의 서버 확정 광고 claim만 한 번 사용한다.
         지급 수량·가격·PUID·권리 ID는 클라이언트가 지정할 수 없다.
       security: [{ PlatformToken: [] }]
@@ -3312,10 +3320,15 @@ components:
           type: string
           enum: [bootstrap, expedition_dispatch, expedition_collect, prepare_starter, cancel_starter, spend_expedition, spend_build, ad_reward]
         targetId: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
-        legacySeals: { type: integer, minimum: 0, maximum: 1000000 }
+        legacySeals:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+          description: 현재 로컬 잔액 주장. 서버에 동결된 운영 기준값을 넘는 금액은 적립하지 않는다.
         durationSeconds: { type: integer, minimum: 10800, maximum: 43200 }
         shipClass: { type: string, pattern: '^S[0-9]{2}$' }
         claimId: { type: string, minLength: 1, maxLength: 128 }
+        deadline: { type: integer, minimum: 1, description: 'spend_expedition/spend_build에서 필요한 타이머 완료 시각(Unix 초)' }
     SaltCompassSnapshot:
       type: object
       additionalProperties: false

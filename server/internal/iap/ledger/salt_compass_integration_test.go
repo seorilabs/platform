@@ -5,6 +5,7 @@ package ledger
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,15 @@ func saltTestLedger(t *testing.T) (*Ledger, *time.Time) {
 }
 func saltTx(t *testing.T, l *Ledger, puid string, r SaltRequest) SaltReceipt {
 	t.Helper()
+	if (r.Action == "spend_build" || r.Action == "spend_expedition") && r.Deadline == 0 {
+		r.Deadline = l.now().Unix() + 3600
+	}
+	if r.Action == "bootstrap" && r.LegacySeals > 0 {
+		p, _ := l.saltPath("salt_compass_legacy", puid)
+		if err := l.store.Set(context.Background(), p, SaltLegacyBalance{PlatformUserID: puid, SealCap: r.LegacySeals, SourceDigest: strings.Repeat("a", 64), SourceKind: "pre-iap-cloud-snapshot", CapturedAt: l.now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	x, err := l.TransactSalt(context.Background(), puid, r)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +78,7 @@ func TestSaltAtomicCreditReplayRefundDebtAndRecovery(t *testing.T) {
 	if first != replay || replay.Snapshot.Available != 5 {
 		t.Fatalf("debit replay=%+v", replay)
 	}
-	if _, err := l.TransactSalt(ctx, puid, SaltRequest{RequestID: "other", Action: "spend_build", TargetID: "run_B1", ShipClass: "S17"}); err == nil {
+	if _, err := l.TransactSalt(ctx, puid, SaltRequest{RequestID: "other", Action: "spend_build", TargetID: "run_B1", ShipClass: "S17", Deadline: now.Unix() + 3600}); err == nil {
 		t.Fatal("duplicate effect debited twice")
 	}
 	p.State = domain.StateRevoked

@@ -5,17 +5,19 @@ import (
 	"testing"
 
 	"github.com/seorilabs/platform/server/internal/ads"
+	"github.com/seorilabs/platform/server/internal/iap/binding"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
 	"github.com/seorilabs/platform/server/internal/registry"
 )
 
 type saltFixtureLedger struct {
 	fakeLedger
-	calls int
+	calls       int
+	initialized bool
 }
 
 func (l *saltFixtureLedger) SaltSnapshot(context.Context, string) (ledger.SaltSnapshot, error) {
-	return ledger.SaltSnapshot{}, nil
+	return ledger.SaltSnapshot{Initialized: l.initialized}, nil
 }
 func (l *saltFixtureLedger) TransactSalt(context.Context, string, ledger.SaltRequest) (ledger.SaltReceipt, error) {
 	l.calls++
@@ -25,6 +27,19 @@ func (l *saltFixtureLedger) TransactSalt(context.Context, string, ledger.SaltReq
 type saltFixtureClaim struct{ claim ads.Claim }
 
 func (c saltFixtureClaim) GetClaim(context.Context, string) (ads.Claim, error) { return c.claim, nil }
+
+func TestSaltAccountReferencesRequireFinancialBootstrap(t *testing.T) {
+	l := &saltFixtureLedger{}
+	s := &Service{apps: boxApps{app: registry.App{AppID: "salt-compass", Features: map[string]bool{"iap": true}}}, appLedgers: map[string]Ledger{"salt-compass": l}}
+	s.keyring, _ = binding.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
+	if _, _, err := s.AccountReferencesForApp(context.Background(), "salt-compass", "owner"); err == nil {
+		t.Fatal("old client opened checkout before financial bootstrap")
+	}
+	l.initialized = true
+	if google, apple, err := s.AccountReferencesForApp(context.Background(), "salt-compass", "owner"); err != nil || !binding.ValidGoogleFormat(google) || !binding.ValidAppleFormat(apple) {
+		t.Fatalf("initialized wallet could not get checkout references: %v", err)
+	}
+}
 
 func TestSaltServiceRejectsForeignScopeAndUnsettledReward(t *testing.T) {
 	l := &saltFixtureLedger{}

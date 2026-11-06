@@ -119,7 +119,13 @@
         "TestSaltRegressionSandboxResetMoneyAndRightsAtomic",
         "TestSaltRegressionConcurrentRefundSpendConservesBalance",
         "TestSaltRegressionOwnerHoldPreservesBothLedgers",
-        "TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion"
+        "TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion",
+        "TestSaltAccountReferencesRequireFinancialBootstrap",
+        "TestSaltMigrationRejectsUnfrozenOrMismatchedSourceBeforeWrites",
+        "TestSaltCollectClockSkewRetriesSameRequestAfterReturn",
+        "TestSaltLegacyExpeditionSpendAndExpiredTimerReplay",
+        "TestSaltPrelaunchCancelFencesDelayedPrepare",
+        "TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending"
       ]
     },
     {
