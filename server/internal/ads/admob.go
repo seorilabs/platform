@@ -59,7 +59,12 @@ func (v *AdMobVerifier) Verify(ctx context.Context, rawQuery string) (SSVResult,
 	if !ok || signatureValue == "" || !numericPattern.MatchString(keyIDValue) || strings.Contains(keyIDValue, "&") {
 		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV signature와 key ID 순서가 올바르지 않아요")
 	}
-	signedData := rawQuery[:idx]
+	// Google 공식 verifier의 URI.getQuery()는 percent escapes를 한 번 푼다.
+	// QueryUnescape는 literal +까지 공백으로 바꾸므로 URI 계약과 다르다.
+	signedData, err := url.PathUnescape(rawQuery[:idx])
+	if err != nil {
+		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV URI가 올바르지 않아요")
+	}
 	params, err := url.ParseQuery(rawQuery)
 	if err != nil {
 		return SSVResult{}, platformerr.New(platformerr.CodeSSVInvalid, "AdMob SSV query가 올바르지 않아요")
