@@ -125,7 +125,10 @@
         "TestSaltCollectClockSkewRetriesSameRequestAfterReturn",
         "TestSaltLegacyExpeditionSpendAndExpiredTimerReplay",
         "TestSaltPrelaunchCancelFencesDelayedPrepare",
-        "TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending"
+        "TestSaltLegacyCannotMintFromClientAndKeepsOfflineSpending",
+        "TestSaltSSVClaimCannotCreditTwoWalletEnvironments",
+        "TestSaltVerifiedTimerReturnsAbsoluteDeadlineAndReplayDoesNotHalveAgain",
+        "TestSaltTimerRequiresMatchingServerVerifiedSSV"
       ]
     },
     {
