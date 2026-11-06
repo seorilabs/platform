@@ -1366,6 +1366,74 @@ paths:
                       updatedAt: { type: string, format: date-time }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /iap/salt-compass:
+    get:
+      tags: [iap]
+      summary: Salt & Compass 인장 정산과 스타터 자격 조회
+      operationId: getSaltCompassIap
+      description: |
+        salt-compass 인증 세션만 지원한다. 인장 부족분은 debt로 반환하고 이후 수입에서
+        먼저 정산한다. 주문·계정 참조 원문과 내부 원장은 노출하지 않는다.
+        동일 플랫폼 계정의 구매 1회 제한을 유지하며 새 익명 계정 복구를 보장하지 않는다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      responses:
+        '200':
+          description: 현재 서버 정산 상태
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/SaltCompassSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /iap/salt-compass/transactions:
+    post:
+      tags: [iap]
+      summary: Salt & Compass 인장과 스타터 요청 멱등 정산
+      operationId: transactSaltCompassIap
+      description: |
+        같은 requestId와 같은 내용은 최초 결과를 재전송한다. 다른 내용의 재사용은 거부한다.
+        bootstrap은 계정당 최초 1회만 구버전 무료 인장을 보존한다. 이후 잔액 입력은 없다.
+        원정 시작은 서버 시각과 검증한 소요 시간으로 기록하고 귀환 이후 정산만
+        최초 24시간 이후의 스타터 72시간 창을 연다. prepare_starter는 동시 청구를 막는
+        하나의 예약을 만든다. 불확실한 결제 결과는 취소로 처리하지 않는다.
+        ad_reward는 해당 세션 소유의 서버 확정 광고 claim만 한 번 사용한다.
+        지급 수량·가격·PUID·권리 ID는 클라이언트가 지정할 수 없다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/IapEnvironment'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaltCompassRequest' }
+      responses:
+        '200':
+          description: 최초 요청에 결속한 정산 결과
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/SaltCompassReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /iap/wallet:
     get:
       tags: [iap]
@@ -3234,6 +3302,50 @@ components:
         confirmation:
           type: string
           description: ISSUE INBOX <appId> <platformUserId>
+    SaltCompassRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, action]
+      properties:
+        requestId: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
+        action:
+          type: string
+          enum: [bootstrap, expedition_dispatch, expedition_collect, prepare_starter, cancel_starter, spend_expedition, spend_build, ad_reward]
+        targetId: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
+        legacySeals: { type: integer, minimum: 0, maximum: 1000000 }
+        durationSeconds: { type: integer, minimum: 10800, maximum: 43200 }
+        shipClass: { type: string, pattern: '^S[0-9]{2}$' }
+        claimId: { type: string, minLength: 1, maxLength: 128 }
+    SaltCompassSnapshot:
+      type: object
+      additionalProperties: false
+      required: [version, serverTime, initialized, available, debt, starter]
+      properties:
+        version: { type: integer, minimum: 0 }
+        serverTime: { type: integer }
+        initialized: { type: boolean }
+        available: { type: integer, minimum: 0 }
+        debt: { type: integer, minimum: 0 }
+        starter:
+          type: object
+          additionalProperties: false
+          required: [eligible, purchased, active, startsAt, expiresAt, reserved]
+          properties:
+            eligible: { type: boolean }
+            purchased: { type: boolean }
+            active: { type: boolean }
+            startsAt: { type: integer }
+            expiresAt: { type: integer }
+            reserved: { type: boolean }
+    SaltCompassReceipt:
+      type: object
+      additionalProperties: false
+      required: [requestId, action, snapshot]
+      properties:
+        requestId: { type: string }
+        action: { type: string }
+        snapshot: { $ref: '#/components/schemas/SaltCompassSnapshot' }
+
     CollectionEconomyTransaction:
       type: object
       additionalProperties: false
