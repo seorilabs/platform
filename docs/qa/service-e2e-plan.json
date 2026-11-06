@@ -128,7 +128,8 @@
         "TestSaltLegacyPositiveAndKnownPositiveZeroAreHeld",
         "TestSaltSSVClaimCannotCreditTwoWalletEnvironments",
         "TestSaltVerifiedTimerReturnsAbsoluteDeadlineAndReplayDoesNotHalveAgain",
-        "TestSaltTimerRequiresMatchingServerVerifiedSSV"
+        "TestSaltTimerRequiresMatchingServerVerifiedSSV",
+        "TestServiceRuntimeSaltSignedSSVToFinancialReceiptAndAck"
       ]
     },
     {
