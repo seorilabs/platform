@@ -112,7 +112,14 @@
         "TestSaltStarterReservationPendingExpiryAndSecondChargeHold",
         "TestSaltUnknownRefundAndOtherOwnerCannotDuplicate",
         "TestSaltHTTPRejectsInjectedAuthorityAndUsesAuthenticatedOwner",
-        "TestSaltServiceRejectsForeignScopeAndUnsettledReward"
+        "TestSaltServiceRejectsForeignScopeAndUnsettledReward",
+        "TestSaltRegressionMigrationHoldRecoversAfterBootstrap",
+        "TestSaltRegressionCancelledPendingReleasesUnusedStarter",
+        "TestSaltRegressionRefundRemovesCompletionOutbox",
+        "TestSaltRegressionSandboxResetMoneyAndRightsAtomic",
+        "TestSaltRegressionConcurrentRefundSpendConservesBalance",
+        "TestSaltRegressionOwnerHoldPreservesBothLedgers",
+        "TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion"
       ]
     },
     {

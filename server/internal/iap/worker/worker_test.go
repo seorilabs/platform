@@ -23,6 +23,30 @@ type fakeOutbox struct {
 	claimErr  error
 }
 
+type cancelledOutbox struct {
+	fakeOutbox
+	guardErr error
+}
+
+func (f *cancelledOutbox) AuthorizeCompletion(context.Context, string, string) (bool, error) {
+	return false, f.guardErr
+}
+
+func TestCompletionGuardBlocksClaimedRefundAndReadFailure(t *testing.T) {
+	for _, err := range []error{nil, errors.New("ledger unavailable")} {
+		ob := &cancelledOutbox{guardErr: err}
+		c := &fakeCompleter{}
+		w := newWorker(t, ob, map[domain.Platform]Completer{domain.PlatformGooglePlay: c})
+		w.completeOne(context.Background(), domain.PlatformGooglePlay, outboxItem("refunded", domain.PlatformGooglePlay, 1))
+		if len(ob.completed) != 0 {
+			t.Fatal("cancelled order marked completed")
+		}
+		if c.call != 0 {
+			t.Fatal("cancelled or unreadable order reached provider completion")
+		}
+	}
+}
+
 type failRecord struct {
 	orderKey    string
 	code        platformerr.Code

@@ -245,6 +245,10 @@ func (l *Ledger) grantSaltPurchase(ctx context.Context, in GrantInput) (domain.G
 			out = domain.GrantResult{EntitlementID: in.EntitlementID, AlreadyGranted: true}
 			return nil
 		}
+		if order.SaltReconciliation && order.SaltHoldReason == "migration_required" && s.Initialized && !order.SaltGranted && !order.SaltRefunded {
+			order.SaltReconciliation = false
+			order.SaltHoldReason = ""
+		}
 		if order.SaltReconciliation && in.Purchase.State == domain.StateActive {
 			held = saltError("구매 확인이 필요해요")
 			return nil
@@ -310,6 +314,9 @@ func (l *Ledger) grantSaltPurchase(ctx context.Context, in GrantInput) (domain.G
 		order.CreatedAt = firstNonZero(order.CreatedAt, now)
 		order.UpdatedAt = now
 		order.Tombstone = false
+		if in.Purchase.State == domain.StateRevoked {
+			releaseSaltPending(&s, order, in.Purchase.Key())
+		}
 		if order.SaltGranted {
 			ent.Sources[in.Purchase.Key()] = domain.Source{Platform: in.Purchase.Platform, ProductID: in.Purchase.ProductID,
 				State: in.Purchase.State, PurchasedAt: in.Purchase.PurchasedAt, ObservedAt: in.Purchase.ObservedAt, UpdatedAt: now}
@@ -332,6 +339,15 @@ func (l *Ledger) grantSaltPurchase(ctx context.Context, in GrantInput) (domain.G
 		if err := tx.Set(op, order); err != nil {
 			return err
 		}
+		if in.Purchase.State == domain.StateRevoked {
+			outPath, err := l.paths.outbox(in.Purchase.Key())
+			if err != nil {
+				return err
+			}
+			if err := tx.Delete(outPath); err != nil {
+				return err
+			}
+		}
 		if usesBarrier {
 			if err := l.touchSandboxResetBarrier(tx, in.PlatformUserID, barrier, now); err != nil {
 				return err
@@ -353,8 +369,27 @@ func (l *Ledger) grantSaltPurchase(ctx context.Context, in GrantInput) (domain.G
 
 // revokeSaltOrder는 webhook의 기존 order 트랜잭션에서 다른 쓰기 전에 호출한다.
 func (l *Ledger) revokeSaltOrder(tx *store.Tx, order *orderDoc, key string, now time.Time) error {
+	outPath, err := l.paths.outbox(key)
+	if err != nil {
+		return err
+	}
 	if !order.SaltGranted || order.SaltRefunded {
-		return nil
+		if order.EntitlementID == saltStarterID && !order.SaltGranted {
+			s, err := l.readSalt(tx, order.PlatformUserID, now)
+			if err != nil {
+				return err
+			}
+			if releaseSaltPending(&s, *order, key) {
+				sp, err := l.saltStatePath(order.PlatformUserID)
+				if err != nil {
+					return err
+				}
+				if err := tx.Set(sp, s); err != nil {
+					return err
+				}
+			}
+		}
+		return tx.Delete(outPath)
 	}
 	s, err := l.readSalt(tx, order.PlatformUserID, now)
 	if err != nil {
@@ -393,7 +428,22 @@ func (l *Ledger) revokeSaltOrder(tx *store.Tx, order *orderDoc, key string, now 
 	if err := tx.Create(p, saltFinancialDoc{PlatformUserID: order.PlatformUserID, OrderKey: key, Action: "refund", Delta: -order.SaltCredits, Balance: s.SealBalance, Version: s.Version, CreatedAt: now}); err != nil {
 		return err
 	}
+	if err := tx.Delete(outPath); err != nil {
+		return err
+	}
 	return tx.Set(sp, s)
+}
+
+// 지급된 스타터의 once latch는 유지한다. 미지급 주문의 실제 취소만 예약을 해제한다.
+func releaseSaltPending(s *saltState, order orderDoc, key string) bool {
+	if order.EntitlementID != saltStarterID || order.SaltGranted || s.StarterPurchased || s.StarterPendingKey != key {
+		return false
+	}
+	s.StarterPendingKey = ""
+	s.StarterIntent = ""
+	s.StarterIntentAt = 0
+	s.Version++
+	return true
 }
 
 // 대기 주문을 한 예약의 canonical key에 결속해 만료 뒤에도 같은 주문만 복구한다.

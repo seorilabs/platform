@@ -1852,6 +1852,15 @@ func (l *Ledger) applySandboxResetIntent(
 			if err := tx.Set(orderPath, orders[orderKey]); err != nil {
 				return err
 			}
+			if l.appID == saltAppID {
+				outPath, err := l.paths.outbox(orderKey)
+				if err != nil {
+					return err
+				}
+				if err := tx.Delete(outPath); err != nil {
+					return err
+				}
+			}
 		}
 
 		completionRevision, err := nextLedgerSequence(barrier.Revision)
