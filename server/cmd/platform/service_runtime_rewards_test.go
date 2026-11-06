@@ -104,6 +104,75 @@ func TestServiceRuntimeAdsSignedSSVAndDelivery(t *testing.T) {
 	t.Log("HTTP policy/claim/replay → real ECDSA SSV → restart → deliver/replay/ownership; native ad display untested")
 }
 
+func TestServiceRuntimeSaltSignedSSVToFinancialReceiptAndAck(t *testing.T) {
+	f := newRuntimeFixture(t)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]any{"keyId": 7, "pem": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))}}})
+	}))
+	t.Cleanup(keys.Close)
+	f.app.AppID = "salt-compass"
+	f.app.Features["iap"], f.app.Features["ads"] = true, true
+	f.app.IAP = registry.IAPConfig{LedgerEnvironment: registry.LedgerProduction, Markets: []string{"google_play"}, GooglePlayPackageName: "com.seorilabs.saltcompass", EntitlementIDs: []string{"saltcompass_seal_s"}}
+	f.app.Ads = registry.AdsConfig{Providers: []string{"admob"}, Placements: []registry.AdsPlacementConfig{{ID: "rewarded_offline_double", Format: "rewarded", Providers: map[string]registry.AdsProviderConfig{"admob": {AndroidAdUnitID: "ca-app-pub-3940256099942544/5224354917"}}, Reward: &registry.AdsRewardConfig{Key: "seal", MinAmount: 3, MaxAmount: 3}, DailyLimit: 1}}}
+	f.register = func(mux *http.ServeMux) {
+		repo := ads.NewStoreRepository(f.store)
+		adService, e := ads.NewService(repo, f.registry, newAdsEntitlements(f.store), f.users)
+		if e != nil {
+			t.Fatal(e)
+		}
+		ads.NewHandler(adService, f.identity, ads.NewAdMobVerifier(keys.Client(), keys.URL)).Register(mux)
+		l := ledger.NewForApp(f.store, domain.EnvProduction, "salt-compass")
+		cat, e := catalog.Parse([]byte(`{"version":2,"apps":{"salt-compass":{"entitlements":{"saltcompass_seal_s":{"type":"consumable","google_play":"saltcompass_seal_s"}}}}}`), nil)
+		if e != nil {
+			t.Fatal(e)
+		}
+		financial, e := verify.New(verify.Config{Ledger: l, AppLedgers: map[string]verify.Ledger{"salt-compass": l}, Catalog: cat, Apps: f.registry, SaltRewardClaims: repo})
+		if e != nil {
+			t.Fatal(e)
+		}
+		iap.NewHandler(financial, f.identity).WithApps(f.registry).Register(mux)
+	}
+	f.saveApp()
+	sess := f.session("salt-ads-user")
+	token := sess["platformToken"].(string)
+	f.request("POST", "/v1/iap/salt-compass/transactions", token, map[string]any{"requestId": "boot", "action": "bootstrap", "legacySeals": 0}, 200)
+	claim := f.request("POST", "/v1/ads/reward-claims", token, map[string]any{"requestId": "salt-ssv", "placement": "rewarded_offline_double", "provider": "admob", "clientPlatform": "android", "reward": map[string]any{"key": "seal", "amount": 3}}, 201)
+	id := claim["claimId"].(string)
+	financialRequest := map[string]any{"requestId": "salt-ad-credit", "action": "ad_reward", "claimId": id}
+	f.request("POST", "/v1/iap/salt-compass/transactions", token, financialRequest, 409)
+	raw := strings.Join([]string{"ad_network=5450213213286189855", "ad_unit=5224354917", "custom_data=" + url.QueryEscape(id), "reward_amount=3", "reward_item=seal", fmt.Sprintf("timestamp=%d", time.Now().UnixMilli()), "transaction_id=salt-runtime-signed-ad", "user_id=" + url.QueryEscape(sess["platformUserId"].(string))}, "&")
+	digest := sha256.Sum256([]byte(raw))
+	signature, e := ecdsa.SignASN1(rand.Reader, key, digest[:])
+	if e != nil {
+		t.Fatal(e)
+	}
+	query := raw + "&signature=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString(signature)) + "&key_id=7"
+	f.request("GET", "/v1/ads/admob/ssv/salt-compass?"+query, "", nil, 200)
+	for range 2 {
+		receipt := f.request("POST", "/v1/iap/salt-compass/transactions", token, financialRequest, 200)
+		if receipt["snapshot"].(map[string]any)["available"] != float64(3) {
+			t.Fatal("signed claim did not credit exactly3")
+		}
+	}
+	f.request("POST", "/v1/ads/reward-claims/"+id+"/ack", token, nil, 200)
+	f.restart()
+	f.request("POST", "/v1/iap/salt-compass/transactions", token, financialRequest, 200)
+	if f.request("GET", "/v1/iap/salt-compass", token, nil, 200)["available"] != float64(3) {
+		t.Fatal("ack/restart minted duplicate seals")
+	}
+	other := f.session("salt-other-ads-user")
+	f.request("POST", "/v1/iap/salt-compass/transactions", other["platformToken"].(string), financialRequest, 409)
+	t.Log("HTTP claim → real fixture ECDSA verification → financial receipt/replay → ack/restart; native SDK untested")
+}
+
 func TestServiceRuntimePurchaseCompletionWorkerAndRefund(t *testing.T) {
 	f := newRuntimeFixture(t)
 	f.app.Features["iap"] = true

@@ -21,8 +21,10 @@ type SaltRequest struct {
 	ShipClass       string `json:"shipClass,omitempty" firestore:"shipClass"`
 	ClaimID         string `json:"claimId,omitempty" firestore:"claimId"`
 	Deadline        int64  `json:"deadline,omitempty" firestore:"deadline"`
+	TimerKind       string `json:"timerKind,omitempty" firestore:"timerKind"`
 	// 보상 수량은 HTTP 입력이 아니라 서버에서 확인한 claim으로만 주입한다.
 	rewardVerified bool
+	effectDeadline int64
 }
 
 type SaltStarter struct {
@@ -42,9 +44,10 @@ type SaltSnapshot struct {
 	Starter     SaltStarter `json:"starter" firestore:"starter"`
 }
 type SaltReceipt struct {
-	RequestID string       `json:"requestId" firestore:"requestId"`
-	Action    string       `json:"action" firestore:"action"`
-	Snapshot  SaltSnapshot `json:"snapshot" firestore:"snapshot"`
+	RequestID      string       `json:"requestId" firestore:"requestId"`
+	Action         string       `json:"action" firestore:"action"`
+	Snapshot       SaltSnapshot `json:"snapshot" firestore:"snapshot"`
+	EffectDeadline int64        `json:"effectDeadline,omitempty" firestore:"effectDeadline"`
 }
 
 // signed balance가 정본이다. 화면에서 0으로 보이는 부족분도 원장에서 지우지 않는다.
@@ -123,14 +126,20 @@ func (r SaltRequest) validate() error {
 		if !saltID.MatchString(r.ClaimID) {
 			return saltError("보상 기록을 확인해 주세요")
 		}
+	case "ad_timer":
+		allowed = "target,claim,timer,deadline"
+		if !saltID.MatchString(r.ClaimID) || r.TargetID == "" || r.Deadline <= 0 || (r.TimerKind != "expedition" && r.TimerKind != "build") {
+			return saltError("광고와 단축할 타이머를 확인해 주세요")
+		}
 	case "prepare_starter":
 	default:
 		return saltError("지원하지 않는 인장 행동이에요")
 	}
 	if (r.LegacySeals != 0 && allowed != "legacy") || (r.DurationSeconds != 0 && allowed != "target,duration") ||
-		(r.ShipClass != "" && allowed != "target,ship,deadline") || (r.ClaimID != "" && allowed != "claim") ||
-		(r.Deadline != 0 && allowed != "target,deadline" && allowed != "target,ship,deadline") ||
-		(r.TargetID != "" && allowed != "target" && allowed != "target,duration" && allowed != "target,deadline" && allowed != "target,ship,deadline") {
+		(r.ShipClass != "" && allowed != "target,ship,deadline") || (r.ClaimID != "" && allowed != "claim" && allowed != "target,claim,timer,deadline") ||
+		(r.TimerKind != "" && allowed != "target,claim,timer,deadline") ||
+		(r.Deadline != 0 && allowed != "target,deadline" && allowed != "target,ship,deadline" && allowed != "target,claim,timer,deadline") ||
+		(r.TargetID != "" && allowed != "target" && allowed != "target,duration" && allowed != "target,deadline" && allowed != "target,ship,deadline" && allowed != "target,claim,timer,deadline") {
 		return saltError("행동과 정산 내용이 맞지 않아요")
 	}
 	return nil
@@ -223,6 +232,15 @@ func saltApply(s *saltState, r SaltRequest, now time.Time) error {
 			return platformerr.New(platformerr.CodeClaimStateInvalid, "확정된 광고 보상을 기다리고 있어요")
 		}
 		s.SealBalance += 3
+	case "ad_timer":
+		if !r.rewardVerified || r.effectDeadline <= 0 {
+			return platformerr.New(platformerr.CodeClaimStateInvalid, "확정된 타이머 광고 보상을 기다리고 있어요")
+		}
+		if r.TimerKind == "expedition" {
+			if _, exists := s.Expeditions[r.TargetID]; exists {
+				s.Expeditions[r.TargetID] = r.effectDeadline
+			}
+		}
 	default:
 		return saltError("지원하지 않는 인장 행동이에요")
 	}

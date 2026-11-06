@@ -46,7 +46,7 @@ func (s *Service) TransactSalt(ctx context.Context, appID, puid string, r ledger
 	if err != nil {
 		return ledger.SaltReceipt{}, err
 	}
-	if r.Action == "ad_reward" {
+	if r.Action == "ad_reward" || r.Action == "ad_timer" {
 		if s.saltRewardClaims == nil {
 			return ledger.SaltReceipt{}, platformerr.New(platformerr.CodeClaimStateInvalid, "광고 보상을 확인 중이에요")
 		}
@@ -54,8 +54,12 @@ func (s *Service) TransactSalt(ctx context.Context, appID, puid string, r ledger
 		if err != nil {
 			return ledger.SaltReceipt{}, err
 		}
-		if claim.AppID != appID || claim.PlatformUserID != puid || !ads.SettledClaim(claim) ||
-			claim.PlacementID != "rewarded_offline_double" || claim.Reward.Key != "seal" || claim.Reward.Amount != 3 {
+		placement, key, amount := "rewarded_offline_double", "seal", 3
+		if r.Action == "ad_timer" {
+			placement, key, amount = "rewarded_timer_skip", "timer_half", 1
+		}
+		if claim.AppID != appID || claim.PlatformUserID != puid || claim.Provider != ads.ProviderAdMob || claim.Assurance != ads.AssuranceServerVerified || !ads.SettledClaim(claim) ||
+			claim.PlacementID != placement || claim.Reward.Key != key || claim.Reward.Amount != amount {
 			return ledger.SaltReceipt{}, platformerr.New(platformerr.CodeClaimStateInvalid, "이 계정의 확정 인장 보상이 아니에요")
 		}
 		r = r.WithVerifiedReward()

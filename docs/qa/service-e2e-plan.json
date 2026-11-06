@@ -125,7 +125,11 @@
         "TestSaltCollectClockSkewRetriesSameRequestAfterReturn",
         "TestSaltLegacyExpeditionSpendAndExpiredTimerReplay",
         "TestSaltPrelaunchCancelFencesDelayedPrepare",
-        "TestSaltLegacyPositiveAndKnownPositiveZeroAreHeld"
+        "TestSaltLegacyPositiveAndKnownPositiveZeroAreHeld",
+        "TestSaltSSVClaimCannotCreditTwoWalletEnvironments",
+        "TestSaltVerifiedTimerReturnsAbsoluteDeadlineAndReplayDoesNotHalveAgain",
+        "TestSaltTimerRequiresMatchingServerVerifiedSSV",
+        "TestServiceRuntimeSaltSignedSSVToFinancialReceiptAndAck"
       ]
     },
     {

@@ -92,6 +92,9 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 	if r.Action == "ad_reward" {
 		effectKey = "ad_reward\x00" + r.ClaimID
 	}
+	if r.Action == "ad_timer" {
+		effectKey = "ad_timer\x00" + r.ClaimID
+	}
 	if r.Action == "prepare_starter" || r.Action == "cancel_starter" {
 		effectKey = ""
 	}
@@ -116,6 +119,16 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 		}
 	}
 	var out SaltReceipt
+	var claimUsePath fspath.Path
+	usesClaim := r.Action == "ad_reward" || r.Action == "ad_timer"
+	if usesClaim {
+		// Ads claim은 IAP 환경을 갖지 않는다. 동일 증빙의 첫 금융 commit이 환경을
+		// 고정한다. store의 배포 prefix와 앱 범위는 유지하되 IAP 환경만 뺀다.
+		claimUsePath, err = newAppPathBuilder(domain.EnvProduction, saltAppID).parse("salt_ad_claim_uses/" + contentRequestDigest(r.ClaimID))
+		if err != nil {
+			return SaltReceipt{}, err
+		}
+	}
 	err = l.store.RunTransaction(ctx, func(_ context.Context, tx *store.Tx) error {
 		exists, snap, err := tx.Exists(rp)
 		if err != nil {
@@ -123,6 +136,7 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 		}
 		storedRequest := r
 		storedRequest.rewardVerified = false
+		storedRequest.effectDeadline = 0
 		if exists {
 			var prior saltTransactionDoc
 			if err := snap.DataTo(&prior); err != nil {
@@ -148,6 +162,15 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 				return platformerr.New(platformerr.CodePurchaseReplayMismatch, "이미 정산한 행동이에요")
 			}
 		}
+		if usesClaim {
+			used, _, err := tx.Exists(claimUsePath)
+			if err != nil {
+				return err
+			}
+			if used {
+				return platformerr.New(platformerr.CodePurchaseReplayMismatch, "이미 다른 정산에서 사용한 광고예요")
+			}
+		}
 		if r.Action == "bootstrap" {
 			if err := l.verifySaltLegacy(tx, puid, r.LegacySeals); err != nil {
 				return err
@@ -162,16 +185,33 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 				return saltError("중단한 구매 준비는 다시 시작할 수 없어요")
 			}
 		}
+		if r.Action == "ad_timer" {
+			deadline := r.Deadline
+			if r.TimerKind == "expedition" {
+				if registered, exists := s.Expeditions[r.TargetID]; exists {
+					deadline = registered
+				}
+			}
+			r.effectDeadline = now.Unix() + max(int64(0), deadline-now.Unix())/2
+		}
 		if err := saltApply(&s, r, now); err != nil {
 			return err
 		}
 		out = SaltReceipt{RequestID: r.RequestID, Action: r.Action, Snapshot: s.snapshot(now)}
+		if r.Action == "ad_timer" {
+			out.EffectDeadline = r.effectDeadline
+		}
 		doc := saltTransactionDoc{Request: storedRequest, Receipt: out, CreatedAt: now}
 		if err := tx.Set(sp, s); err != nil {
 			return err
 		}
 		if err := tx.Create(rp, doc); err != nil {
 			return err
+		}
+		if usesClaim {
+			if err := tx.Create(claimUsePath, map[string]any{"platformUserId": puid, "environment": l.env, "request": storedRequest, "receipt": out, "createdAt": now}); err != nil {
+				return err
+			}
 		}
 		if r.Action == "cancel_starter" {
 			if err := tx.Set(cancellationPath, map[string]any{"cancelledAt": now}); err != nil {

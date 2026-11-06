@@ -3318,7 +3318,7 @@ components:
         requestId: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
         action:
           type: string
-          enum: [bootstrap, expedition_dispatch, expedition_collect, prepare_starter, cancel_starter, spend_expedition, spend_build, ad_reward]
+          enum: [bootstrap, expedition_dispatch, expedition_collect, prepare_starter, cancel_starter, spend_expedition, spend_build, ad_reward, ad_timer]
         targetId: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
         legacySeals:
           type: integer
@@ -3329,6 +3329,7 @@ components:
         shipClass: { type: string, pattern: '^S[0-9]{2}$' }
         claimId: { type: string, minLength: 1, maxLength: 128 }
         deadline: { type: integer, minimum: 1, description: 'spend_expedition/spend_build에서 필요한 타이머 완료 시각(Unix 초)' }
+        timerKind: { type: string, enum: [expedition, build], description: 'ad_timer의 고정 대상 종류. 확정된 timer_half SSV claim과 함께 보낸다.' }
     SaltCompassSnapshot:
       type: object
       additionalProperties: false
@@ -3355,6 +3356,7 @@ components:
       additionalProperties: false
       required: [requestId, action, snapshot]
       properties:
+        effectDeadline: { type: integer, minimum: 1, description: 'ad_timer에서 한 번 확정한 절대 완료 시각(Unix 초). 재시도 시 남은 시간에50%를 다시 적용하지 않는다.' }
         requestId: { type: string }
         action: { type: string }
         snapshot: { $ref: '#/components/schemas/SaltCompassSnapshot' }

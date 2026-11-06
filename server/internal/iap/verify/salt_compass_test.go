@@ -61,6 +61,7 @@ func TestSaltServiceRejectsForeignScopeAndUnsettledReward(t *testing.T) {
 		func(c *ads.Claim) { c.Assurance = ads.AssuranceClientConfirmed },
 		func(c *ads.Claim) { c.Reward.Amount = 60 },
 		func(c *ads.Claim) { c.PlacementID = "rewarded_timer_skip" },
+		func(c *ads.Claim) { c.Provider = ads.ProviderAppsInToss; c.Assurance = ads.AssuranceClientConfirmed },
 	} {
 		claim := base
 		change(&claim)
@@ -72,5 +73,21 @@ func TestSaltServiceRejectsForeignScopeAndUnsettledReward(t *testing.T) {
 	s.saltRewardClaims = saltFixtureClaim{base}
 	if _, err := s.TransactSalt(ctx, "salt-compass", "owner", ledger.SaltRequest{RequestID: "r", Action: "ad_reward", ClaimID: "c"}); err != nil || l.calls != 1 {
 		t.Fatalf("settled owner reward rejected: %v", err)
+	}
+}
+
+func TestSaltTimerRequiresMatchingServerVerifiedSSV(t *testing.T) {
+	l := &saltFixtureLedger{}
+	s := &Service{apps: boxApps{app: registry.App{AppID: "salt-compass", Features: map[string]bool{"iap": true}}}, appLedgers: map[string]Ledger{"salt-compass": l}}
+	claim := ads.Claim{AppID: "salt-compass", PlatformUserID: "owner", Provider: ads.ProviderAdMob, State: ads.StateConfirmed, Assurance: ads.AssuranceServerVerified, PlacementID: "rewarded_timer_skip", Reward: ads.Reward{Key: "timer_half", Amount: 1}}
+	s.saltRewardClaims = saltFixtureClaim{claim}
+	r := ledger.SaltRequest{RequestID: "timer", Action: "ad_timer", ClaimID: "timer-claim", TimerKind: "expedition", TargetID: "X1", Deadline: 2000000000}
+	if _, err := s.TransactSalt(context.Background(), "salt-compass", "owner", r); err != nil || l.calls != 1 {
+		t.Fatalf("matching timer claim rejected: %v", err)
+	}
+	claim.Provider, claim.Assurance = ads.ProviderAppsInToss, ads.AssuranceClientConfirmed
+	s.saltRewardClaims = saltFixtureClaim{claim}
+	if _, err := s.TransactSalt(context.Background(), "salt-compass", "owner", r); err == nil || l.calls != 1 {
+		t.Fatal("client-confirmed timer claim reached financial ledger")
 	}
 }
