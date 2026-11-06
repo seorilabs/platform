@@ -107,7 +107,12 @@
         "TestWalletRejectsAnonymousAndIdentityInjection",
         "TestWalletUsesAppLedgerAndServerFixedUnits",
         "TestStarterRejectsRealAndUnobservedPurchasesBeforeGrant",
-        "TestStarterTicketSourcesStayAtomicAndScoped"
+        "TestStarterTicketSourcesStayAtomicAndScoped",
+        "TestSaltAtomicCreditReplayRefundDebtAndRecovery",
+        "TestSaltStarterReservationPendingExpiryAndSecondChargeHold",
+        "TestSaltUnknownRefundAndOtherOwnerCannotDuplicate",
+        "TestSaltHTTPRejectsInjectedAuthorityAndUsesAuthenticatedOwner",
+        "TestSaltServiceRejectsForeignScopeAndUnsettledReward"
       ]
     },
     {

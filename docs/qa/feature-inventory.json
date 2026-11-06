@@ -442,6 +442,14 @@
     {
       "path": "/iap/wallet",
       "featureId": "purchase-entitlements"
+    },
+    {
+      "path": "/iap/salt-compass",
+      "featureId": "purchase-entitlements"
+    },
+    {
+      "path": "/iap/salt-compass/transactions",
+      "featureId": "purchase-entitlements"
     }
   ],
   "nonHttp": [
