@@ -103,7 +103,7 @@ func (l *Ledger) TransactSalt(ctx context.Context, puid string, r SaltRequest) (
 		}
 	}
 	// 화면을 닫을 때의 미청구 취소가 prepare보다 먼저 도착해도 이후 예약을 막는다.
-	// 결제 SDK를 시작한 구매나 다른 intent는 saltApply에서 취소를 거부한다.
+	// 다른 intent의 활성 예약은 보존하고, 이 대상의 미도착 prepare만 막는다.
 	var cancellationPath fspath.Path
 	if r.Action == "prepare_starter" || r.Action == "cancel_starter" {
 		intent := r.RequestID

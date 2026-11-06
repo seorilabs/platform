@@ -189,7 +189,11 @@ func saltApply(s *saltState, r SaltRequest, now time.Time) error {
 		s.StarterIntent = r.RequestID
 		s.StarterIntentAt = now.Unix()
 	case "cancel_starter":
-		if (s.StarterIntent != "" && s.StarterIntent != r.TargetID) || s.StarterPendingKey != "" || s.StarterPurchased {
+		if s.StarterIntent != r.TargetID {
+			// 다른 세션의 활성 예약은 그대로 두고 이 대상의 늦은 prepare만 막는다.
+			break
+		}
+		if s.StarterPendingKey != "" || s.StarterPurchased {
 			return saltError("확인 중인 구매는 취소할 수 없어요")
 		}
 		s.StarterIntent = ""

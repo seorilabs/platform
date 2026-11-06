@@ -59,9 +59,13 @@ func TestSaltLegacyExpeditionSpendAndExpiredTimerReplay(t *testing.T) {
 func TestSaltPrelaunchCancelFencesDelayedPrepare(t *testing.T) {
 	l, _, uid := recoveryEligibleStarter(t)
 	ctx := context.Background()
+	// 이전 예약 A가 아직 취소되지 않았어도 버린 준비 B의 tombstone은 남긴다.
+	saltTx(t, l, uid, SaltRequest{RequestID: "cancel-delayed", Action: "cancel_starter", TargetID: "delayed-prepare"})
+	if still, _ := l.SaltSnapshot(ctx, uid); !still.Starter.Reserved {
+		t.Fatal("cancelling B removed active A")
+	}
 	saltTx(t, l, uid, SaltRequest{RequestID: "cancel-original", Action: "cancel_starter", TargetID: "prepare"})
 	// A second prelaunch was cancelled before its delayed network request arrived.
-	saltTx(t, l, uid, SaltRequest{RequestID: "cancel-delayed", Action: "cancel_starter", TargetID: "delayed-prepare"})
 	if _, err := l.TransactSalt(ctx, uid, SaltRequest{RequestID: "delayed-prepare", Action: "prepare_starter"}); err == nil {
 		t.Fatal("late prepare recreated abandoned reservation")
 	}
