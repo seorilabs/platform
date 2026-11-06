@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,14 +26,13 @@ type ssvQueryParam struct{ key, value string }
 
 func signSSVQuery(t *testing.T, privateKey *ecdsa.PrivateKey, params []ssvQueryParam) string {
 	t.Helper()
-	signedData := ""
-	for i, item := range params {
-		if i > 0 {
-			signedData += "&"
-		}
-		signedData += url.QueryEscape(item.key) + "=" + url.QueryEscape(item.value)
+	var uriContent, escaped []string
+	for _, item := range params {
+		uriContent = append(uriContent, item.key+"="+item.value)
+		escaped = append(escaped, url.QueryEscape(item.key)+"="+strings.ReplaceAll(url.QueryEscape(item.value), "+", "%20"))
 	}
-	digest := sha256.Sum256([]byte(signedData))
+	signedData := strings.Join(escaped, "&")
+	digest := sha256.Sum256([]byte(strings.Join(uriContent, "&")))
 	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
 	if err != nil {
 		t.Fatal(err)
@@ -350,5 +350,59 @@ func TestAdMobRejectsRetiredUnitWithoutCurrentUnit(t *testing.T) {
 	})
 	if platformerr.CodeOf(err) != platformerr.CodeAdUnitMismatch {
 		t.Fatalf("code = %q, want %q", platformerr.CodeOf(err), platformerr.CodeAdUnitMismatch)
+	}
+}
+
+// Google 공식 Java verifier의 URI.getQuery()와 같은 계약이다.
+// 콘솔 실제 콜백의 한국어 reward_item은 raw query로 검증하면 실패하고
+// percent escapes를 한 번 푼 UTF-8 바이트로 검증해야 한다.
+func TestAdMobVerifierUsesDecodedURIBytesForUnicodeRewards(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{"keyId": 7, "pem": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))}}})
+	}))
+	defer keys.Close()
+	now := time.Now().UTC()
+	params := []ssvQueryParam{{"ad_network", "5450213213286189855"}, {"ad_unit", "1234567890"}, {"custom_data", "cl_12345678-1234-1234-1234-123456789abc"}, {"reward_amount", "1"}, {"reward_item", "남은 시간 50% 단축 + 돛"}, {"timestamp", strconv.FormatInt(now.UnixMilli(), 10)}, {"transaction_id", "unicode-transaction"}, {"user_id", "pu_unicode"}}
+	var canonical, escaped []string
+	for _, p := range params {
+		canonical = append(canonical, p.key+"="+p.value)
+		escaped = append(escaped, p.key+"="+strings.ReplaceAll(url.QueryEscape(p.value), "+", "%20"))
+	}
+	digest := sha256.Sum256([]byte(strings.Join(canonical, "&")))
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := strings.Join(escaped, "&") + "&signature=" + base64.RawURLEncoding.EncodeToString(signature) + "&key_id=7"
+	verifier := NewAdMobVerifier(keys.Client(), keys.URL)
+	result, err := verifier.Verify(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("공식 URI 서명 계약의 한국어 보상 거절: %v", err)
+	}
+	if result.RewardItem != "남은 시간 50% 단축 + 돛" {
+		t.Fatalf("보상 문구가 달라짐: %q", result.RewardItem)
+	}
+	literalPlus := strings.Replace(raw, "%2B", "+", 1)
+	same, err := verifier.Verify(context.Background(), literalPlus)
+	if err != nil || same.RewardItem != result.RewardItem {
+		t.Fatalf("URI 동치인 literal plus가 보상 값을 바꿈: %q %v", same.RewardItem, err)
+	}
+	// percent decode와 form decode는 다르다. 인코딩된 +를 한 번 푼 뒤 공백으로 바꾸거나
+	// %25를 두 번 풀면 원본 서명이 성립하지 않아야 한다.
+	tampered := strings.Replace(raw, "%2B", "%20", 1)
+	if _, err := verifier.Verify(context.Background(), tampered); platformerr.CodeOf(err) != platformerr.CodeSSVSignatureInvalid {
+		t.Fatalf("보상 변조 허용: %v", err)
+	}
+	doubleEncoded := strings.Replace(raw, "%25", "%2525", 1)
+	if _, err := verifier.Verify(context.Background(), doubleEncoded); platformerr.CodeOf(err) != platformerr.CodeSSVSignatureInvalid {
+		t.Fatalf("percent 중복 해석 허용: %v", err)
 	}
 }
