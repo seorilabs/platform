@@ -29,6 +29,12 @@ type Outbox interface {
 		errCode platformerr.Code, maxAttempts int, maxAge time.Duration) error
 }
 
+// 원장에 승인 재확인 기능이 있으면 점유 뒤 환불도 외부 호출 전에 반영한다.
+// Salt 전용 금융 정책이며 다른 outbox 구현의 completion 의미는 유지한다.
+type completionGuard interface {
+	AuthorizeCompletion(context.Context, string, string) (bool, error)
+}
+
 // Completer는 마켓에 완료를 알린다.
 //
 // providers의 검증기가 그대로 구현한다.
@@ -256,6 +262,16 @@ func (w *Worker) respondRefundReview(ctx context.Context, item ledger.RefundRevi
 // 대기열 전체가 그 한 건에 인질로 잡힌다.
 func (w *Worker) completeOne(ctx context.Context, platform domain.Platform, item ledger.OutboxItem) bool {
 	completer := w.completers[platform]
+	if guard, ok := w.outbox.(completionGuard); ok {
+		allowed, err := guard.AuthorizeCompletion(ctx, item.OrderKey, item.LeaseID)
+		if err != nil {
+			slog.ErrorContext(ctx, "완료 승인 확인 실패", "platform", string(platform), "err", err)
+			return false
+		}
+		if !allowed {
+			return false
+		}
+	}
 
 	err := completer.CompleteGrant(ctx, item.Purchase)
 	if err == nil {

@@ -148,6 +148,7 @@ const (
 	CodePurchaseNotFound           Code = "purchase_not_found"
 	CodePurchaseOwnedByAnotherUser Code = "purchase_owned_by_another_user" // 불변식 4
 	CodePurchaseReplayMismatch     Code = "purchase_replay_mismatch"
+	CodeSaltExpeditionPending      Code = "salt_expedition_pending"
 	CodeOperatorReplayMismatch     Code = "operator_replay_mismatch"
 	CodeSandboxResetBusy           Code = "sandbox_reset_busy"
 	CodeSandboxResetPending        Code = "sandbox_reset_pending"
@@ -324,6 +325,7 @@ var statusByCode = map[Code]int{
 	CodePurchaseNotFound:           http.StatusUnprocessableEntity,
 	CodePurchaseOwnedByAnotherUser: http.StatusConflict,
 	CodePurchaseReplayMismatch:     http.StatusConflict,
+	CodeSaltExpeditionPending:      http.StatusConflict,
 	CodeOperatorReplayMismatch:     http.StatusConflict,
 	CodeSandboxResetBusy:           http.StatusConflict,
 	CodeSandboxResetPending:        http.StatusServiceUnavailable,
@@ -391,6 +393,7 @@ func statusOf(c Code) int {
 func IsRetryable(c Code) bool {
 	switch c {
 	case CodeEventBusy,
+		CodeSaltExpeditionPending,
 		CodeEventCommitFailed,
 		CodeEventClaimLost,
 		CodePurchaseNotFound, // 마켓 반영 지연일 수 있다

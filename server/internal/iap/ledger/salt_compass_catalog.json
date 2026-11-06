@@ -1,0 +1,29 @@
+{
+  "version": "2026-11-06-v1",
+  "sourceRepo": "seorilabs/salt-compass",
+  "sourceSha": "78bc9f7a7c4f2f975faa9c3cefcdeff3945d0b42",
+  "sourceFiles": {
+    "data/monetization/bm-profile.json": "8ac5704032992c477d7a5bacbc4ddff98a2e0c9c51241a6fc4bd345213f940f7",
+    "data/ships/ship-classes.json": "55821d1138cbc235256ebcf7f7883ac9bff75968612f4ab4b9bf356e5753ec91"
+  },
+  "credits": {
+    "saltcompass_seal_s": 10,
+    "saltcompass_seal_m": 60,
+    "saltcompass_seal_l": 280,
+    "saltcompass_starter": 40
+  },
+  "buildCosts": {
+    "S07": 20,
+    "S08": 20,
+    "S09": 20,
+    "S10": 20,
+    "S11": 20,
+    "S12": 20,
+    "S13": 40,
+    "S14": 40,
+    "S15": 40,
+    "S16": 40,
+    "S17": 60,
+    "S18": 60
+  }
+}

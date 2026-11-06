@@ -107,7 +107,25 @@
         "TestWalletRejectsAnonymousAndIdentityInjection",
         "TestWalletUsesAppLedgerAndServerFixedUnits",
         "TestStarterRejectsRealAndUnobservedPurchasesBeforeGrant",
-        "TestStarterTicketSourcesStayAtomicAndScoped"
+        "TestStarterTicketSourcesStayAtomicAndScoped",
+        "TestSaltAtomicCreditReplayRefundDebtAndRecovery",
+        "TestSaltStarterReservationPendingExpiryAndSecondChargeHold",
+        "TestSaltUnknownRefundAndOtherOwnerCannotDuplicate",
+        "TestSaltHTTPRejectsInjectedAuthorityAndUsesAuthenticatedOwner",
+        "TestSaltServiceRejectsForeignScopeAndUnsettledReward",
+        "TestSaltRegressionMigrationHoldRecoversAfterBootstrap",
+        "TestSaltRegressionCancelledPendingReleasesUnusedStarter",
+        "TestSaltRegressionRefundRemovesCompletionOutbox",
+        "TestSaltRegressionSandboxResetMoneyAndRightsAtomic",
+        "TestSaltRegressionConcurrentRefundSpendConservesBalance",
+        "TestSaltRegressionOwnerHoldPreservesBothLedgers",
+        "TestSaltRegressionTCPHTTPVerifySnapshotRefundAndHeldCompletion",
+        "TestSaltAccountReferencesRequireFinancialBootstrap",
+        "TestSaltLegacyCheckRejectsIncompletePositiveMissingAndCorruptSaves",
+        "TestSaltCollectClockSkewRetriesSameRequestAfterReturn",
+        "TestSaltLegacyExpeditionSpendAndExpiredTimerReplay",
+        "TestSaltPrelaunchCancelFencesDelayedPrepare",
+        "TestSaltLegacyPositiveAndKnownPositiveZeroAreHeld"
       ]
     },
     {

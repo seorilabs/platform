@@ -11,6 +11,52 @@ import (
 	"github.com/seorilabs/platform/server/internal/store"
 )
 
+// AuthorizeCompletion은 이미 점유한 Salt 작업도 외부 호출 직전에 다시 확인한다.
+// 환불은 outbox를 지우고 늦은 Enqueue도 막는다. 외부 API와 Firestore를 한
+// transaction으로 묶을 수 없으므로 provider의 멱등 처리도 그대로 유지한다.
+func (l *Ledger) AuthorizeCompletion(ctx context.Context, key, leaseID string) (bool, error) {
+	if l.appID != saltAppID {
+		return true, nil
+	}
+	op, err := l.paths.order(key)
+	if err != nil {
+		return false, err
+	}
+	bp, err := l.paths.outbox(key)
+	if err != nil {
+		return false, err
+	}
+	allowed := false
+	err = l.store.RunTransaction(ctx, func(_ context.Context, tx *store.Tx) error {
+		allowed = false
+		exists, bs, err := tx.Exists(bp)
+		if err != nil || !exists {
+			return err
+		}
+		var box outboxDoc
+		if err := bs.DataTo(&box); err != nil {
+			return err
+		}
+		if box.LeaseID != leaseID || box.Status != outboxProcessing {
+			return nil
+		}
+		exists, os, err := tx.Exists(op)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return platformerr.New(platformerr.CodeLedgerStateInvalid, "완료할 주문 기록이 없어요")
+		}
+		var order orderDoc
+		if err := os.DataTo(&order); err != nil {
+			return err
+		}
+		allowed = order.State == domain.StateActive && !order.SaltRefunded && !order.SaltReconciliation
+		return nil
+	})
+	return allowed, err
+}
+
 // 마켓 완료 처리 재시도 대기열이다.
 //
 // 지급은 끝났는데 마켓에 "완료했다"고 알리지 못한 주문이 여기 쌓인다.
@@ -78,6 +124,26 @@ func (l *Ledger) Enqueue(ctx context.Context, orderKey string, p domain.Verified
 
 	return l.store.RunTransaction(ctx, func(ctx context.Context, tx *store.Tx) error {
 		now := l.now()
+		if l.appID == saltAppID {
+			op, err := l.paths.order(orderKey)
+			if err != nil {
+				return err
+			}
+			exists, snap, err := tx.Exists(op)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return platformerr.New(platformerr.CodeLedgerStateInvalid, "완료할 주문 기록이 없어요")
+			}
+			var order orderDoc
+			if err := snap.DataTo(&order); err != nil {
+				return err
+			}
+			if order.State != domain.StateActive || order.SaltRefunded || order.SaltReconciliation {
+				return nil
+			}
+		}
 
 		path, err := l.paths.outbox(orderKey)
 		if err != nil {

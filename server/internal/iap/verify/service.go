@@ -68,16 +68,17 @@ type Action struct {
 
 // Service는 검증 유스케이스다.
 type Service struct {
-	verifiers    map[domain.Platform]Verifier
-	appVerifiers map[string]map[domain.Platform]Verifier
-	ledger       Ledger
-	appLedgers   map[string]Ledger
-	catalog      *catalog.Catalog
-	keyring      *binding.Keyring
-	outbox       OutboxWriter
-	appOutboxes  map[string]OutboxWriter
-	auditor      Auditor
-	apps         interface {
+	saltRewardClaims SaltRewardClaims
+	verifiers        map[domain.Platform]Verifier
+	appVerifiers     map[string]map[domain.Platform]Verifier
+	ledger           Ledger
+	appLedgers       map[string]Ledger
+	catalog          *catalog.Catalog
+	keyring          *binding.Keyring
+	outbox           OutboxWriter
+	appOutboxes      map[string]OutboxWriter
+	auditor          Auditor
+	apps             interface {
 		GetUsable(context.Context, string) (registry.App, error)
 	}
 	// boxes는 앱별 확률 상자 카탈로그다. ADR 0029.
@@ -88,16 +89,17 @@ type Service struct {
 
 // Config는 서비스 조립 설정이다.
 type Config struct {
-	Verifiers    []Verifier
-	AppVerifiers map[string][]Verifier
-	Ledger       Ledger
-	AppLedgers   map[string]Ledger
-	Catalog      *catalog.Catalog
-	Keyring      *binding.Keyring
-	Outbox       OutboxWriter
-	AppOutboxes  map[string]OutboxWriter
-	Auditor      Auditor
-	Apps         interface {
+	SaltRewardClaims SaltRewardClaims
+	Verifiers        []Verifier
+	AppVerifiers     map[string][]Verifier
+	Ledger           Ledger
+	AppLedgers       map[string]Ledger
+	Catalog          *catalog.Catalog
+	Keyring          *binding.Keyring
+	Outbox           OutboxWriter
+	AppOutboxes      map[string]OutboxWriter
+	Auditor          Auditor
+	Apps             interface {
 		GetUsable(context.Context, string) (registry.App, error)
 	}
 	// Boxes는 앱별 확률 상자 카탈로그다. 없으면 상자 API가 닫힌다.
@@ -130,19 +132,20 @@ func New(cfg Config) (*Service, error) {
 	}
 
 	return &Service{
-		verifiers:    m,
-		appVerifiers: appVerifiers,
-		ledger:       cfg.Ledger,
-		appLedgers:   cfg.AppLedgers,
-		catalog:      cfg.Catalog,
-		keyring:      cfg.Keyring,
-		outbox:       cfg.Outbox,
-		appOutboxes:  cfg.AppOutboxes,
-		auditor:      cfg.Auditor,
-		apps:         cfg.Apps,
-		boxes:        cfg.Boxes,
-		boxRandom:    boxes.CryptoRandom{},
-		now:          time.Now,
+		saltRewardClaims: cfg.SaltRewardClaims,
+		verifiers:        m,
+		appVerifiers:     appVerifiers,
+		ledger:           cfg.Ledger,
+		appLedgers:       cfg.AppLedgers,
+		catalog:          cfg.Catalog,
+		keyring:          cfg.Keyring,
+		outbox:           cfg.Outbox,
+		appOutboxes:      cfg.AppOutboxes,
+		auditor:          cfg.Auditor,
+		apps:             cfg.Apps,
+		boxes:            cfg.Boxes,
+		boxRandom:        boxes.CryptoRandom{},
+		now:              time.Now,
 	}, nil
 }
 
@@ -535,6 +538,17 @@ func (s *Service) ListEntitlementsForApp(ctx context.Context, appID, puid string
 }
 
 func (s *Service) AccountReferencesForApp(ctx context.Context, appID, puid string) (string, string, error) {
+	// 기존 beta의 로컬 지급 클라이언트가 운영 설정 활성화만으로 청구창을 열지 않게 한다.
+	// 새 지갑을 연결한 클라이언트만 마켓 계정 참조를 받아 새 구매를 시작한다.
+	if appID == "salt-compass" {
+		snapshot, err := s.SaltSnapshot(ctx, appID, puid)
+		if err != nil {
+			return "", "", err
+		}
+		if !snapshot.Initialized {
+			return "", "", platformerr.New(platformerr.CodeProductNotAllowed, "앱을 업데이트하고 인장 기록을 연결해 주세요")
+		}
+	}
 	if s.apps == nil {
 		return s.AccountReferences(puid)
 	}
