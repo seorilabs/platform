@@ -17,10 +17,15 @@ import (
 
 // orderDoc은 주문 원장 문서다. 불변식 5에 따라 삭제하지 않는다.
 type orderDoc struct {
-	EconomyGranted  bool   `firestore:"economyGranted,omitempty"`
-	EconomyRefunded bool   `firestore:"economyRefunded,omitempty"`
-	EconomyCredits  int64  `firestore:"economyCredits,omitempty"`
-	EconomyVersion  string `firestore:"economyVersion,omitempty"`
+	SaltGranted        bool   `firestore:"saltGranted,omitempty"`
+	SaltRefunded       bool   `firestore:"saltRefunded,omitempty"`
+	SaltCredits        int64  `firestore:"saltCredits,omitempty"`
+	SaltReconciliation bool   `firestore:"saltReconciliation,omitempty"`
+	SaltHoldReason     string `firestore:"saltHoldReason,omitempty"`
+	EconomyGranted     bool   `firestore:"economyGranted,omitempty"`
+	EconomyRefunded    bool   `firestore:"economyRefunded,omitempty"`
+	EconomyCredits     int64  `firestore:"economyCredits,omitempty"`
+	EconomyVersion     string `firestore:"economyVersion,omitempty"`
 
 	PlatformUserID string `firestore:"platformUserId"`
 	EntitlementID  string `firestore:"entitlementId"`
@@ -224,6 +229,9 @@ func (l *Ledger) grant(
 	in GrantInput,
 	expectedOwner string,
 ) (domain.GrantResult, error) {
+	if l.isSaltConsumable(in.EntitlementID) {
+		return l.grantSaltPurchase(ctx, in)
+	}
 	if l.isEconomyPack(in.EntitlementID) {
 		if in.PlatformUserID == "" || !in.Purchase.Platform.IsMarket() || in.Purchase.CanonicalID == "" {
 			return domain.GrantResult{}, economyError("구매 정보를 확인할 수 없어요")
@@ -1759,6 +1767,16 @@ func (l *Ledger) applySandboxResetIntent(
 				"다른 계정의 주문이에요")
 		}
 
+		// Salt의 소비성 source도 같은 reset barrier에 포함된다. 금융 원장을
+		// 함께 조정하지 않으면 취소된 샌드박스 구매의 잔액이 살아남는다.
+		var saltResetState saltState
+		if l.appID == saltAppID {
+			saltResetState, err = l.readSalt(tx, intent.PlatformUserID, l.now().UTC())
+			if err != nil {
+				return err
+			}
+		}
+		saltRefunds := []saltFinancialDoc{}
 		dirtyEntitlements := make(map[string]bool)
 		for _, orderKey := range orderKeys {
 			order := orders[orderKey]
@@ -1778,6 +1796,15 @@ func (l *Ledger) applySandboxResetIntent(
 			order.ObservedAt = intent.ResetAt
 			order.UpdatedAt = intent.ResetAt
 			order.SandboxReset = &sandboxResetMark{RequestID: intent.RequestID, ResetAt: intent.ResetAt}
+			if l.appID == saltAppID && order.SaltGranted && !order.SaltRefunded {
+				saltResetState.SealBalance -= order.SaltCredits
+				saltResetState.Version++
+				order.SaltRefunded = true
+				if order.EntitlementID == saltStarterID {
+					saltResetState.StarterActive = false
+				}
+				saltRefunds = append(saltRefunds, saltFinancialDoc{PlatformUserID: intent.PlatformUserID, OrderKey: orderKey, Action: "refund", Delta: -order.SaltCredits, Balance: saltResetState.SealBalance, Version: saltResetState.Version, CreatedAt: intent.ResetAt})
+			}
 			orders[orderKey] = order
 		}
 		for _, orderKey := range shadowKeys {
@@ -1793,6 +1820,24 @@ func (l *Ledger) applySandboxResetIntent(
 			sortedEntitlementIDs = append(sortedEntitlementIDs, entitlementID)
 		}
 		sort.Strings(sortedEntitlementIDs)
+		if len(saltRefunds) > 0 {
+			p, err := l.saltStatePath(intent.PlatformUserID)
+			if err != nil {
+				return err
+			}
+			if err := tx.Set(p, saltResetState); err != nil {
+				return err
+			}
+			for _, refund := range saltRefunds {
+				p, err := l.saltPath("salt_compass_financial", refund.OrderKey+"\x00refund")
+				if err != nil {
+					return err
+				}
+				if err := tx.Create(p, refund); err != nil {
+					return err
+				}
+			}
+		}
 		for _, entitlementID := range sortedEntitlementIDs {
 			if err := l.writeEntitlement(tx, intent.PlatformUserID,
 				entitlementsByID[entitlementID], intent.ResetAt); err != nil {
@@ -1903,6 +1948,9 @@ func checkReplay(order orderDoc, in GrantInput) error {
 // 이미 active이거나 revoked면 아무것도 하지 않는다.
 // pending이 확정 상태를 덮으면 안 된다.
 func (l *Ledger) RecordPending(ctx context.Context, in GrantInput) error {
+	if l.isSaltConsumable(in.EntitlementID) {
+		return l.recordSaltPending(ctx, in)
+	}
 	orderKey := in.Purchase.Key()
 	var economyCatalog EconomyCatalog
 	testEconomy := l.isEconomyTestPurchase(in.Purchase)
@@ -2039,6 +2087,15 @@ func (l *Ledger) RevokeByCanonicalID(
 			return tx.Set(orderPath, order)
 		}
 
+		if l.isSaltConsumable(order.EntitlementID) {
+			if err := l.revokeSaltOrder(tx, &order, orderKey, now); err != nil {
+				return err
+			}
+			order.State = domain.StateRevoked
+			order.ObservedAt = observedAt
+			order.UpdatedAt = now
+			return tx.Set(orderPath, order)
+		}
 		if order.EconomyGranted {
 			if err := l.revokeEconomyOrder(tx, &order, orderKey, now); err != nil {
 				return err

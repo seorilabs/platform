@@ -11,6 +11,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	"github.com/seorilabs/platform/server/internal/ads"
 	"github.com/seorilabs/platform/server/internal/config"
 	"github.com/seorilabs/platform/server/internal/events"
 	"github.com/seorilabs/platform/server/internal/iap/binding"
@@ -182,11 +183,12 @@ func newIAPService(
 	}
 
 	svc, err := verify.New(verify.Config{
-		Verifiers: verifiers,
-		Ledger:    led,
-		Catalog:   cat,
-		Keyring:   keyring,
-		Auditor:   auditAdapter{col: col},
+		SaltRewardClaims: ads.NewStoreRepository(st),
+		Verifiers:        verifiers,
+		Ledger:           led,
+		Catalog:          cat,
+		Keyring:          keyring,
+		Auditor:          auditAdapter{col: col},
 		// 완료 호출이 실패해도 지급은 롤백하지 않는다. 불변식 7이다.
 		// 대신 여기 쌓아두고 워커가 다시 시도한다.
 		Outbox:       led,
@@ -258,7 +260,8 @@ func newAppleSandboxEnvironment(
 	}
 	l := ledgerForRegistryApp(st, app, domain.EnvSandbox).WithOperationalEvents(opEvents)
 	svc, err := verify.New(verify.Config{
-		Verifiers: list, Ledger: l, Catalog: cat, Keyring: keyring, Outbox: l,
+		SaltRewardClaims: ads.NewStoreRepository(st),
+		Verifiers:        list, Ledger: l, Catalog: cat, Keyring: keyring, Outbox: l,
 		AppVerifiers: map[string][]verify.Verifier{app.AppID: list},
 		AppLedgers:   map[string]verify.Ledger{app.AppID: l},
 		AppOutboxes:  map[string]verify.OutboxWriter{app.AppID: l},
