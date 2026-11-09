@@ -90,6 +90,15 @@
       ]
     },
     {
+      "id": "iap-defense",
+      "core": true,
+      "foundation": true,
+      "runtimeKind": "service",
+      "paths": [
+        "server/internal/iap/**"
+      ]
+    },
+    {
       "id": "refund-sandbox-reset",
       "core": true,
       "foundation": true,
@@ -278,6 +287,14 @@
     {
       "path": "/iap/passes/claim",
       "featureId": "iap-passes"
+    },
+    {
+      "path": "/iap/defense",
+      "featureId": "iap-defense"
+    },
+    {
+      "path": "/iap/defense/actions",
+      "featureId": "iap-defense"
     },
     {
       "path": "/iap/verify",
