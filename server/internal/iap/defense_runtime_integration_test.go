@@ -36,12 +36,24 @@ func TestDefenseHTTPRuntimeRoundTripAndRefund(t *testing.T) {
 	}
 	defer st.Close()
 	l := ledger.NewForApp(st, domain.EnvSandbox, "mechanical-frontier")
-	cat, e := catalog.Parse([]byte(`{"version":2,"apps":{"mechanical-frontier":{"entitlements":{"defense_crystals_100":{"type":"consumable","google_play":"crystals_100","app_store":"crystals_100"}}}}}`), nil)
+	entitlements := map[string]any{}
+	var entitlementIDs []string
+	for _, units := range []int{100, 550, 1150, 2400, 6200} {
+		id, sku := fmt.Sprintf("defense_crystals_%d", units), fmt.Sprintf("crystals_%d", units)
+		entitlementIDs = append(entitlementIDs, id)
+		entitlements[id] = map[string]any{"type": "consumable", "google_play": sku, "app_store": sku}
+	}
+	rawCatalog, e := json.Marshal(map[string]any{"version": 2, "apps": map[string]any{"mechanical-frontier": map[string]any{"entitlements": entitlements}}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	cat, e := catalog.Parse(rawCatalog, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
 	app := registry.App{AppID: "mechanical-frontier", Features: map[string]bool{"iap": true}}
 	app.IAP.RequireLinkedAccount = true
+	app.IAP.EntitlementIDs = entitlementIDs
 	apps := &fakeApps{app: app}
 	svc, e := verify.New(verify.Config{Ledger: l, AppLedgers: map[string]verify.Ledger{"mechanical-frontier": l}, Catalog: cat, Apps: apps})
 	if e != nil {
@@ -93,6 +105,11 @@ func TestDefenseHTTPRuntimeRoundTripAndRefund(t *testing.T) {
 	if before.State.Balance != 0 {
 		t.Fatalf("new account %+v", before.State)
 	}
+	for range 3 {
+		if unchanged := read(); unchanged.State.Version != before.State.Version {
+			t.Fatalf("repeated empty GET advanced version %+v -> %+v", before.State, unchanged.State)
+		}
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	purchase := domain.VerifiedPurchase{Platform: domain.PlatformGooglePlay, ProductID: "crystals_100", CanonicalID: fmt.Sprintf("proof-%d", time.Now().UnixNano()), ProviderOrderID: "test-order", PurchasedAt: now, ObservedAt: now, State: domain.StateActive}
 	if _, e = l.Grant(ctx, ledger.GrantInput{PlatformUserID: sess.PlatformUserID, EntitlementID: "defense_crystals_100", Purchase: purchase}); e != nil {
@@ -101,6 +118,36 @@ func TestDefenseHTTPRuntimeRoundTripAndRefund(t *testing.T) {
 	funded := read()
 	if funded.State.Balance != 100 {
 		t.Fatalf("verified funds %+v", funded.State)
+	}
+	for range 3 {
+		if unchanged := read(); unchanged.State.Version != funded.State.Version {
+			t.Fatalf("repeated funded GET advanced version %+v -> %+v", funded.State, unchanged.State)
+		}
+	}
+	for _, body := range []string{
+		`{"requestId":"short","actionId":"damage","catalogVersion":"defense-1"}`,
+		`{"requestId":"invalid_action_0001","actionId":"grant-money","catalogVersion":"defense-1"}`,
+		`{"requestId":"invalid_run_0001","actionId":"revive","catalogVersion":"defense-1","runId":"short"}`,
+		`{"requestId":"missing_run_0001","actionId":"revive","catalogVersion":"defense-1"}`,
+	} {
+		status, raw := call(http.MethodPost, "/v1/iap/defense/actions", body)
+		var failure struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if e := json.Unmarshal(raw, &failure); e != nil || status != 400 || failure.Error.Code != "request_invalid" {
+			t.Fatalf("invalid request status=%d body=%s err=%v", status, raw, e)
+		}
+	}
+	status, raw := call(http.MethodPost, "/v1/iap/defense/actions", `{"requestId":"insufficient_0001","actionId":"storm","catalogVersion":"defense-1"}`)
+	var rejected struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if e := json.Unmarshal(raw, &rejected); e != nil || status != 403 || rejected.Error.Code != "content_ticket_empty" {
+		t.Fatalf("insufficient funds status=%d body=%s err=%v", status, raw, e)
 	}
 	code, first := call(http.MethodPost, "/v1/iap/defense/actions", defenseBody)
 	if code != 200 {

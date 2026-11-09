@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"github.com/seorilabs/platform/server/internal/iap/domain"
+	"github.com/seorilabs/platform/server/internal/platformerr"
 	"reflect"
 	"testing"
 )
@@ -101,5 +102,22 @@ func TestDefenseBalanceUsesSourceStateAndRefundDebt(t *testing.T) {
 	ents["defense_crystals_100"] = ent
 	if _, _, e = defenseUnits(cat, ents); e == nil {
 		t.Fatal("corrupt consumed units accepted")
+	}
+}
+
+func TestDefenseMalformedActionsUseRequestInvalid(t *testing.T) {
+	cat, err := DefenseCatalogCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []DefenseRequest{
+		{RequestID: "action_0001", ActionID: "unknown", CatalogVersion: cat.Version},
+		{RequestID: "action_0002", ActionID: "revive", CatalogVersion: cat.Version},
+		{RequestID: "action_0003", ActionID: "revive", CatalogVersion: cat.Version, RunID: "short"},
+		{RequestID: "action_0004", ActionID: "damage", CatalogVersion: cat.Version, RunID: "valid_run_0001"},
+	} {
+		if _, _, err := defenseApply(cat, defenseView(DefenseState{}, 1000, 0), req); platformerr.CodeOf(err) != platformerr.CodeRequestInvalid {
+			t.Fatalf("malformed request %+v err=%v", req, err)
+		}
 	}
 }

@@ -22,6 +22,15 @@ func (s *Service) defenseLedgerFor(ctx context.Context, appID string) (defenseLe
 	if !app.FeatureEnabled("iap") {
 		return nil, platformerr.New(platformerr.CodeProductNotAllowed, "결제 연결을 준비 중이에요")
 	}
+	catalog, err := ledger.DefenseCatalogCurrent()
+	if err != nil {
+		return nil, err
+	}
+	for _, pack := range catalog.Packs {
+		if s.catalog == nil || !app.EntitlementAllowed(pack.EntitlementID) || !s.catalog.HasForApp(appID, pack.EntitlementID) {
+			return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "방어 상품 매핑을 확인해 주세요")
+		}
+	}
 	l, ok := s.appLedgers[appID].(defenseLedger)
 	if !ok {
 		return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "방어 원장 연결을 확인해 주세요")

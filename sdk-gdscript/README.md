@@ -380,3 +380,7 @@ platform.request_account_deletion(id_token, receipt, app_check, func(res):
         platform.request_account_deletion(id_token, receipt, app_check, on_done, code)
 )
 ```
+
+## 1.2.0 개발 후보
+
+미발행 후보이며 태그·SDK 배포는 하지 않았다. `get_defense`와 `act_defense`로 버전 카탈로그와 방어 자산을 조회·소비한다. 가격·지급량은 서버가 결정하고, 클라이언트는 요청 ID와 소모품의 전투 ID를 전송 전에 저장한다.

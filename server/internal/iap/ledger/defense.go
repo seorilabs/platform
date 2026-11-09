@@ -122,10 +122,10 @@ func defenseApply(c DefenseCatalog, s DefenseState, r DefenseRequest) (DefenseSt
 		}
 	}
 	if a.ID == "" {
-		return s, 0, defenseError("알 수 없는 방어 행동이에요")
+		return s, 0, platformerr.New(platformerr.CodeRequestInvalid, "알 수 없는 방어 행동이에요")
 	}
 	if (a.Kind == "consumable" && !boxRequestIDPattern.MatchString(r.RunID)) || (a.Kind != "consumable" && r.RunID != "") {
-		return s, 0, defenseError("전투 요청 범위를 확인해 주세요")
+		return s, 0, platformerr.New(platformerr.CodeRequestInvalid, "전투 요청 범위를 확인해 주세요")
 	}
 	cost := a.BaseCost
 	// 불변식 8: 가격과 지급량은 서버 카탈로그만 결정한다.
@@ -158,48 +158,49 @@ func defenseApply(c DefenseCatalog, s DefenseState, r DefenseRequest) (DefenseSt
 	s.Version++
 	return s, cost, nil
 }
-func (l *Ledger) readDefense(tx *store.Tx, puid string, c DefenseCatalog) (DefenseState, map[string]entitlementDoc, error) {
+func (l *Ledger) readDefense(tx *store.Tx, puid string, c DefenseCatalog) (DefenseState, map[string]entitlementDoc, bool, error) {
 	var state DefenseState
 	p, e := l.saltPath("defense_states", puid)
 	if e != nil {
-		return state, nil, e
+		return state, nil, false, e
 	}
 	exists, snap, e := tx.Exists(p)
 	if e != nil {
-		return state, nil, e
+		return state, nil, false, e
 	}
 	if exists {
 		if e = snap.DataTo(&state); e != nil {
-			return state, nil, e
+			return state, nil, false, e
 		}
 	}
 	ents := map[string]entitlementDoc{}
 	for _, pack := range c.Packs {
 		path, e := l.paths.internalEntitlement(puid, pack.EntitlementID)
 		if e != nil {
-			return state, nil, e
+			return state, nil, false, e
 		}
 		ok, s, e := tx.Exists(path)
 		if e != nil {
-			return state, nil, e
+			return state, nil, false, e
 		}
 		if ok {
 			var ent entitlementDoc
 			if e = s.DataTo(&ent); e != nil {
-				return state, nil, e
+				return state, nil, false, e
 			}
 			if ent.EntitlementID != "" && ent.EntitlementID != pack.EntitlementID {
-				return state, nil, defenseError("구매 원장 종류를 확인해 주세요")
+				return state, nil, false, defenseError("구매 원장 종류를 확인해 주세요")
 			}
 			ents[pack.EntitlementID] = ent
 		}
 	}
 	balance, debt, e := defenseUnits(c, ents)
+	changed := e == nil && (state.Balance != balance || state.Debt != debt)
 	// Refunds and verified recharges are asset changes too. Persist their revision so an old receipt cannot undo a newer refund snapshot.
-	if e == nil && (state.Balance != balance || state.Debt != debt) {
+	if changed {
 		state.Version++
 	}
-	return defenseView(state, balance, debt), ents, e
+	return defenseView(state, balance, debt), ents, changed, e
 }
 func (l *Ledger) DefenseSnapshot(ctx context.Context, puid string) (DefenseSnapshot, error) {
 	var out DefenseSnapshot
@@ -212,10 +213,13 @@ func (l *Ledger) DefenseSnapshot(ctx context.Context, puid string) (DefenseSnaps
 	}
 	out.Catalog = c
 	e = l.store.RunTransaction(ctx, func(_ context.Context, tx *store.Tx) error {
-		s, _, err := l.readDefense(tx, puid, c)
+		s, _, changed, err := l.readDefense(tx, puid, c)
 		out.State = s
 		if err != nil {
 			return err
+		}
+		if !changed {
+			return nil
 		}
 		p, err := l.saltPath("defense_states", puid)
 		if err != nil {
@@ -227,8 +231,11 @@ func (l *Ledger) DefenseSnapshot(ctx context.Context, puid string) (DefenseSnaps
 }
 func (l *Ledger) ActDefense(ctx context.Context, puid string, r DefenseRequest) (DefenseReceipt, error) {
 	var out DefenseReceipt
-	if l.appID != "mechanical-frontier" || puid == "" || !boxRequestIDPattern.MatchString(r.RequestID) {
-		return out, defenseError("방어 요청을 확인해 주세요")
+	if l.appID != "mechanical-frontier" || puid == "" {
+		return out, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱은 방어 자산을 지원하지 않아요")
+	}
+	if !boxRequestIDPattern.MatchString(r.RequestID) {
+		return out, platformerr.New(platformerr.CodeRequestInvalid, "방어 요청을 확인해 주세요")
 	}
 	c, e := DefenseCatalogCurrent()
 	if e != nil {
@@ -260,7 +267,7 @@ func (l *Ledger) ActDefense(ctx context.Context, puid string, r DefenseRequest) 
 			out.State = defenseView(out.State, out.State.Balance, out.State.Debt)
 			return nil
 		}
-		state, ents, err := l.readDefense(tx, puid, c)
+		state, ents, _, err := l.readDefense(tx, puid, c)
 		if err != nil {
 			return err
 		}

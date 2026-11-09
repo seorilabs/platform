@@ -1426,8 +1426,8 @@ paths:
                       result: { $ref: '#/components/schemas/DefenseReceipt' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { description: 잔액 부족·요청 본문 불일치·카탈로그 버전 불일치 }
+        '403': { description: 연결 계정 필요·지원하지 않는 앱·방어 재화 부족, content_ticket_empty 포함 }
+        '409': { description: 요청 본문 불일치·카탈로그 버전 불일치·이미 보유한 병기 또는 강화 상한 }
 
   /iap/salt-compass:
     get:

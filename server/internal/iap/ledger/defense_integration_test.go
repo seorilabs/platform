@@ -62,6 +62,11 @@ func TestDefenseConcurrentReplayRefundAndRecovery(t *testing.T) {
 	if funded.State.Balance != 100 || funded.State.Version <= before.State.Version {
 		t.Fatalf("funding did not advance state %+v -> %+v", before.State, funded.State)
 	}
+	for range 3 {
+		if stable := defenseSnapshot(t, l, puid); stable.State.Version != funded.State.Version {
+			t.Fatalf("read-only GET changed revision %+v -> %+v", funded.State, stable.State)
+		}
+	}
 	req := defenseRequest("damage")
 	results := make(chan DefenseReceipt, 8)
 	errors := make(chan error, 8)
@@ -224,6 +229,29 @@ func TestDefenseScopeIsolationAndUnlimitedRevives(t *testing.T) {
 		t.Fatalf("repeat revival balance %+v", s.State)
 	}
 }
+func TestDefenseInvalidRequestIDsNeverReachFinancialState(t *testing.T) {
+	l, done := newDefenseTestLedger(t)
+	defer done()
+	puid := uniqueID("pu-invalid-request")
+	defenseGrant(t, l, puid, 100, time.Now().UTC())
+	before := defenseSnapshot(t, l, puid)
+	for _, req := range []DefenseRequest{
+		{RequestID: "", ActionID: "damage", CatalogVersion: "defense-1"},
+		{RequestID: "short", ActionID: "damage", CatalogVersion: "defense-1"},
+		{RequestID: "invalid/0001", ActionID: "damage", CatalogVersion: "defense-1"},
+		{RequestID: "action_0001", ActionID: "grant-money", CatalogVersion: "defense-1"},
+		{RequestID: "action_0002", ActionID: "revive", CatalogVersion: "defense-1", RunID: "short"},
+	} {
+		if _, err := l.ActDefense(context.Background(), puid, req); platformerr.CodeOf(err) != platformerr.CodeRequestInvalid {
+			t.Fatalf("invalid request %+v err=%v", req, err)
+		}
+	}
+	after := defenseSnapshot(t, l, puid)
+	if !reflect.DeepEqual(before.State, after.State) {
+		t.Fatalf("invalid request changed assets %+v -> %+v", before.State, after.State)
+	}
+}
+
 func TestDefensePendingPurchaseDoesNotFundActions(t *testing.T) {
 	l, done := newDefenseTestLedger(t)
 	defer done()

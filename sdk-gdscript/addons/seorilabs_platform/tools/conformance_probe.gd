@@ -16,7 +16,7 @@ const PlatformClient := preload("res://addons/seorilabs_platform/platform_client
 ## 최소 검사 수.
 ##
 ## 벡터가 늘면 이 값도 올린다. 줄어들면 무언가 조용히 빠진 것이다.
-const MIN_EXPECTED_CHECKS := 76
+const MIN_EXPECTED_CHECKS := 86
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -30,6 +30,7 @@ func _initialize() -> void:
 	_check_backoff(dir)
 	_check_envelope(dir)
 	_check_update_gate(dir)
+	_check_defense_requests()
 
 	print("[conformance] 검사 %d건" % _checks)
 
@@ -290,3 +291,41 @@ func _check_update_gate(dir: String) -> void:
 
 func _fail(message: String) -> void:
 	_failures.append(message)
+
+
+class DefenseTransportProbe:
+	extends PlatformClient
+	var sent: Array = []
+	func _iap_request(request_data: Dictionary, callback: Callable) -> void:
+		sent.append(request_data.duplicate(true))
+		callback.call({"ok": true, "result": {}})
+
+func _check_defense_requests() -> void:
+	var client := DefenseTransportProbe.new()
+	var base := {"requestId": "request_0001", "actionId": "damage", "catalogVersion": "defense-1"}
+	var invalid := [
+		{"requestId": "short"}, {"requestId": 12345678}, {"cost": 1},
+		{"actionId": "revive"}, {"runId": "run_0001"},
+		{"catalogVersion": ""}, {"actionId": "repair", "runId": "bad"},
+	]
+	for changes: Dictionary in invalid:
+		var request := base.duplicate(true)
+		request.merge(changes, true)
+		var answer := {}
+		client.act_defense(request, func(result: Dictionary): answer.merge(result, true))
+		_checks += 1
+		if answer.get("ok", true) or not client.sent.is_empty() or answer.get("code") != "request_invalid":
+			_fail("defense invalid request reached transport: " + str(changes.keys()))
+	client.act_defense(base, func(_answer: Dictionary): pass)
+	_checks += 1
+	if client.sent.size() != 1 or client.sent[0].body != base: _fail("defense upgrade request changed in SDK")
+	var item := base.duplicate(true)
+	item.actionId = "revive"
+	item["runId"] = "run_0001"
+	client.act_defense(item, func(_answer: Dictionary): pass)
+	_checks += 1
+	if client.sent.size() != 2 or client.sent[1].body != item: _fail("defense consumable request changed in SDK")
+	client.get_defense(func(_answer: Dictionary): pass)
+	_checks += 1
+	if client.sent.size() != 3 or client.sent[2].path != "/v1/iap/defense": _fail("defense snapshot route changed")
+	client.free()

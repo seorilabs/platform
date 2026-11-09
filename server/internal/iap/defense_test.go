@@ -18,13 +18,13 @@ type defenseHTTPFixture struct {
 func (f *defenseHTTPFixture) DefenseSnapshot(_ context.Context, app, puid string) (ledger.DefenseSnapshot, error) {
 	f.gotAppID, f.gotPUID = app, puid
 	f.snapshots++
-	return ledger.DefenseSnapshot{State: ledger.DefenseState{Balance: 100, Enabled: true, Upgrades: map[string]int{}, Weapons: []string{}}}, nil
+	return ledger.DefenseSnapshot{State: ledger.DefenseState{Balance: 100, Enabled: true, Upgrades: map[string]int{}, Weapons: []string{}}}, f.err
 }
 func (f *defenseHTTPFixture) ActDefense(_ context.Context, app, puid string, r ledger.DefenseRequest) (ledger.DefenseReceipt, error) {
 	f.gotAppID, f.gotPUID = app, puid
 	f.actions++
 	f.request = r
-	return ledger.DefenseReceipt{RequestID: r.RequestID, ActionID: r.ActionID, CatalogVersion: r.CatalogVersion, RunID: r.RunID, Cost: 25}, nil
+	return ledger.DefenseReceipt{RequestID: r.RequestID, ActionID: r.ActionID, CatalogVersion: r.CatalogVersion, RunID: r.RunID, Cost: 25}, f.err
 }
 
 const defenseBody = `{"requestId":"action_0001","actionId":"damage","catalogVersion":"defense-1"}`
@@ -81,5 +81,15 @@ func TestDefenseHTTPRejectsClientPricesAndOwnership(t *testing.T) {
 	}
 	if e := json.Unmarshal(w.Body.Bytes(), &env); e != nil || !env.OK || env.Result.Cost != 25 || f.request.ActionID != "damage" {
 		t.Fatalf("server receipt lost: %s err=%v", w.Body.String(), e)
+	}
+}
+
+func TestDefenseHTTPInsufficientBalanceRemainsForbidden(t *testing.T) {
+	sess := paidSession()
+	sess.IsLinkedAccount = true
+	fixture := &defenseHTTPFixture{fakeService: fakeService{err: platformerr.New(platformerr.CodeContentTicketEmpty, "insufficient funds")}}
+	w := serve(t, NewHandler(fixture, &fakeSessions{sess: sess}), http.MethodPost, "/v1/iap/defense/actions", defenseBody)
+	if w.Code != http.StatusForbidden || errorCode(t, w) != string(platformerr.CodeContentTicketEmpty) || fixture.actions != 1 {
+		t.Fatalf("insufficient balance response %d %s", w.Code, w.Body.String())
 	}
 }
