@@ -1,0 +1,91 @@
+{
+  "version": "defense-1",
+  "packs": [
+    {
+      "id": "crystals_100",
+      "entitlementId": "defense_crystals_100",
+      "units": 100,
+      "usdCents": 99
+    },
+    {
+      "id": "crystals_550",
+      "entitlementId": "defense_crystals_550",
+      "units": 550,
+      "usdCents": 499
+    },
+    {
+      "id": "crystals_1150",
+      "entitlementId": "defense_crystals_1150",
+      "units": 1150,
+      "usdCents": 999
+    },
+    {
+      "id": "crystals_2400",
+      "entitlementId": "defense_crystals_2400",
+      "units": 2400,
+      "usdCents": 1999
+    },
+    {
+      "id": "crystals_6200",
+      "entitlementId": "defense_crystals_6200",
+      "units": 6200,
+      "usdCents": 4999
+    }
+  ],
+  "actions": [
+    {
+      "id": "damage",
+      "kind": "upgrade",
+      "stat": "damage",
+      "baseCost": 25,
+      "costStep": 10,
+      "step": 200,
+      "maxLevel": 10000
+    },
+    {
+      "id": "soldiers",
+      "kind": "upgrade",
+      "stat": "soldiers",
+      "baseCost": 25,
+      "costStep": 10,
+      "step": 5,
+      "maxLevel": 180
+    },
+    {
+      "id": "core",
+      "kind": "upgrade",
+      "stat": "core",
+      "baseCost": 25,
+      "costStep": 10,
+      "step": 50,
+      "maxLevel": 10000
+    },
+    {
+      "id": "siege",
+      "kind": "weapon",
+      "baseCost": 300,
+      "multiplier": 2
+    },
+    {
+      "id": "storm",
+      "kind": "weapon",
+      "baseCost": 900,
+      "multiplier": 3
+    },
+    {
+      "id": "revive",
+      "kind": "consumable",
+      "baseCost": 75
+    },
+    {
+      "id": "airstrike",
+      "kind": "consumable",
+      "baseCost": 25
+    },
+    {
+      "id": "repair",
+      "kind": "consumable",
+      "baseCost": 30
+    }
+  ]
+}

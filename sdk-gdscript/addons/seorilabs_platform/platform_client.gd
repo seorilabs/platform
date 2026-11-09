@@ -23,7 +23,7 @@ const AtomicJsonStore := preload("core/atomic_json_store.gd")
 const UpdateGate := preload("core/update_gate.gd")
 
 ## SDK 버전. 이벤트 context와 배포본 VERSION 파일이 같은 값을 사용한다.
-const SDK_VERSION := "1.1.1"
+const SDK_VERSION := "1.2.0"
 
 ## OpenAPI BoxOpenRequest.requestId 와 같다.
 static var _BOX_REQUEST_ID := RegEx.create_from_string("^[A-Za-z0-9_-]{8,64}$")
@@ -1105,6 +1105,24 @@ static func _fallback_config() -> Dictionary:
 
 
 # ---------------------------------------------------------------- 결제
+
+## Defense requests are persisted by the game before transmission.
+func get_defense(callback: Callable) -> void:
+	_iap_request({"method": "GET", "path": "/v1/iap/defense"}, callback)
+
+func act_defense(request: Dictionary, callback: Callable) -> void:
+	for key in request:
+		if key not in ["requestId", "actionId", "catalogVersion", "runId"]:
+			callback.call(_client_error("request_invalid", "서버가 결정하는 가격과 효과는 보낼 수 없어요"))
+			return
+	if not request.get("requestId") is String or _BOX_REQUEST_ID.search(request.get("requestId", "")) == null or not request.get("catalogVersion") is String or str(request.get("catalogVersion", "")).is_empty() or str(request.get("catalogVersion", "")).length() > 64 or not request.get("actionId") is String:
+		callback.call(_client_error("request_invalid", "방어 요청 정보를 확인해 주세요"))
+		return
+	# The server catalog owns action kinds. The SDK checks wire format without duplicating that catalog.
+	if request.has("runId") and (not request.get("runId") is String or _BOX_REQUEST_ID.search(str(request.get("runId", ""))) == null):
+		callback.call(_client_error("request_invalid", "전투 요청 범위를 확인해 주세요"))
+		return
+	_iap_request({"method": "POST", "path": "/v1/iap/defense/actions", "body": request}, callback)
 
 ## 구매를 검증하고 지급받는다.
 ##

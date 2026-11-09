@@ -153,6 +153,29 @@
       ]
     },
     {
+      "id": "iap-defense",
+      "featureIds": [
+        "iap-defense"
+      ],
+      "requiredTests": [
+        "TestDefenseHTTPRuntimeRoundTripAndRefund",
+        "TestDefenseConcurrentReplayRefundAndRecovery",
+        "TestDefenseConcurrentUniqueRequestsNeverOverdraw",
+        "TestDefenseScopeIsolationAndUnlimitedRevives",
+        "TestDefenseInvalidRequestIDsNeverReachFinancialState",
+        "TestDefensePendingPurchaseDoesNotFundActions",
+        "TestDefenseHTTPRequiresLinkedAuthenticatedAccount",
+        "TestDefenseHTTPRejectsClientPricesAndOwnership",
+        "TestDefenseHTTPInsufficientBalanceRemainsForbidden",
+        "TestDefenseServiceKeepsAppScopeAndNoLegacyFallback",
+        "TestDefenseServiceRequiresAllPackMappingsBeforeReadingOrSpending",
+        "TestDefenseCatalogPricesAndDeterministicActions",
+        "TestDefenseRejectsInvalidAuthorityWithoutMutatingInput",
+        "TestDefenseBalanceUsesSourceStateAndRefundDebt",
+        "TestDefenseMalformedActionsUseRequestInvalid"
+      ]
+    },
+    {
       "id": "refund-sandbox-reset",
       "featureIds": [
         "refund-sandbox-reset"

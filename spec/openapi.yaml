@@ -1366,6 +1366,75 @@ paths:
                       updatedAt: { type: string, format: date-time }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /iap/defense:
+    get:
+      tags: [iap]
+      summary: Titanstride 유료 방어 자산과 버전 카탈로그 조회
+      operationId: getDefense
+      description: |
+        연결된 mechanical-frontier 앱 계정만 허용한다. 캠페인·무료 진행을 받거나 저장하지 않는다.
+        구매 원장의 활성 source 단위와 소비 기록으로 잔액을 계산한다. 환불로 잔액이 음수가 되면
+        유료 효과를 중지하고 신규 소비를 거부한다. 로컬 진행 초기화는 이 원장을 지우지 않는다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SeoriApp' }
+        - { $ref: '#/components/parameters/IapEnvironment' }
+      responses:
+        '200':
+          description: 서버 자산 상태와 가격·효과 카탈로그
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/EnvelopeOk' }
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/DefenseSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: 저장된 원장 상태 또는 카탈로그 구조 불일치 }
+        '422': { description: 방어 자산을 지원하지 않는 앱 또는 상품 }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /iap/defense/actions:
+    post:
+      tags: [iap]
+      summary: 방어 강화·확정 병기 구매·전투 소모품 원자 차감
+      operationId: actDefense
+      description: |
+        requestId와 동일한 본문을 재전송하면 최초 영수증을 그대로 반환한다. 다른 본문으로
+        ID를 재사용하면 거부한다. 가격·지급량·강화 수치를 클라이언트가 보내지 않는다.
+        영수증과 구매 source 차감, 영구 강화 상태를 하나의 트랜잭션에서 기록한다.
+        소모품은 runId 필수이며 한 영수증의 로컬 전투 적용은 소비자가 원자 저장한다.
+        부활에는 실행 횟수 제한이 없다. 카탈로그 변경 뒤에도 기존 영수증을 우선 재전송한다.
+      security: [{ PlatformToken: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SeoriApp' }
+        - { $ref: '#/components/parameters/IapEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DefenseActionRequest' }
+      responses:
+        '200':
+          description: 최초 확정 영수증
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/EnvelopeOk' }
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/DefenseReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 연결 계정 필요·방어 재화 부족, content_ticket_empty 포함 }
+        '409': { description: 요청 본문 불일치·카탈로그 버전 불일치·이미 보유한 병기 또는 강화 상한 }
+        '422': { description: 방어 자산을 지원하지 않는 앱 또는 상품 }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /iap/salt-compass:
     get:
       tags: [iap]
@@ -3978,6 +4047,74 @@ components:
       type: string
       maxLength: 128
       pattern: '^[A-Za-z0-9._-]{1,128}$'
+
+    DefenseActionRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, actionId, catalogVersion]
+      properties:
+        requestId: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        actionId: { type: string, enum: [damage, soldiers, core, siege, storm, revive, airstrike, repair] }
+        catalogVersion: { type: string, minLength: 1, maxLength: 64 }
+        runId: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+    DefenseState:
+      type: object
+      required: [version, balance, debt, enabled, upgrades, weapons]
+      properties:
+        version: { type: integer, format: int64, minimum: 0 }
+        balance: { type: integer, format: int64 }
+        debt: { type: integer, format: int64, minimum: 0 }
+        enabled: { type: boolean }
+        upgrades:
+          type: object
+          additionalProperties: { type: integer, minimum: 0, maximum: 10000 }
+        weapons:
+          type: array
+          items: { type: string, enum: [siege, storm] }
+    DefenseSnapshot:
+      type: object
+      required: [state, catalog]
+      properties:
+        state: { $ref: '#/components/schemas/DefenseState' }
+        catalog:
+          type: object
+          required: [version, packs, actions]
+          properties:
+            version: { type: string }
+            packs:
+              type: array
+              items:
+                type: object
+                required: [id, entitlementId, units, usdCents]
+                properties:
+                  id: { type: string }
+                  entitlementId: { type: string }
+                  units: { type: integer, minimum: 1 }
+                  usdCents: { type: integer, minimum: 1 }
+            actions:
+              type: array
+              items:
+                type: object
+                required: [id, kind, baseCost]
+                properties:
+                  id: { type: string }
+                  kind: { type: string, enum: [upgrade, weapon, consumable] }
+                  stat: { type: string }
+                  baseCost: { type: integer, minimum: 1 }
+                  costStep: { type: integer, minimum: 0 }
+                  step: { type: integer, minimum: 0 }
+                  maxLevel: { type: integer, minimum: 1 }
+                  multiplier: { type: integer, minimum: 1 }
+    DefenseReceipt:
+      type: object
+      required: [requestId, actionId, catalogVersion, runId, cost, state]
+      properties:
+        requestId: { type: string }
+        actionId: { type: string }
+        catalogVersion: { type: string }
+        runId: { type: string }
+        cost: { type: integer, minimum: 1 }
+        state: { $ref: '#/components/schemas/DefenseState' }
 
     CreateSessionRequest:
       type: object
