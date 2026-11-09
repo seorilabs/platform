@@ -1106,6 +1106,13 @@ static func _fallback_config() -> Dictionary:
 
 # ---------------------------------------------------------------- 결제
 
+## Defense requests are persisted by the game before transmission.
+func get_defense(callback: Callable) -> void:
+	_iap_request({"method": "GET", "path": "/v1/iap/defense"}, callback)
+
+func act_defense(request: Dictionary, callback: Callable) -> void:
+	_iap_request({"method": "POST", "path": "/v1/iap/defense/actions", "body": request}, callback)
+
 ## 구매를 검증하고 지급받는다.
 ##
 ## 일반 전송 실패는 재시도하지 않는다. 인증 미들웨어가 원장에 닿기 전에
