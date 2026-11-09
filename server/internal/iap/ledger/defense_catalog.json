@@ -49,7 +49,7 @@
       "baseCost": 25,
       "costStep": 10,
       "step": 5,
-      "maxLevel": 10000
+      "maxLevel": 180
     },
     {
       "id": "core",

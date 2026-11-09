@@ -195,6 +195,10 @@ func (l *Ledger) readDefense(tx *store.Tx, puid string, c DefenseCatalog) (Defen
 		}
 	}
 	balance, debt, e := defenseUnits(c, ents)
+	// Refunds and verified recharges are asset changes too. Persist their revision so an old receipt cannot undo a newer refund snapshot.
+	if e == nil && (state.Balance != balance || state.Debt != debt) {
+		state.Version++
+	}
 	return defenseView(state, balance, debt), ents, e
 }
 func (l *Ledger) DefenseSnapshot(ctx context.Context, puid string) (DefenseSnapshot, error) {
@@ -210,7 +214,14 @@ func (l *Ledger) DefenseSnapshot(ctx context.Context, puid string) (DefenseSnaps
 	e = l.store.RunTransaction(ctx, func(_ context.Context, tx *store.Tx) error {
 		s, _, err := l.readDefense(tx, puid, c)
 		out.State = s
-		return err
+		if err != nil {
+			return err
+		}
+		p, err := l.saltPath("defense_states", puid)
+		if err != nil {
+			return err
+		}
+		return tx.Set(p, s)
 	})
 	return out, e
 }
@@ -246,6 +257,7 @@ func (l *Ledger) ActDefense(ctx context.Context, puid string, r DefenseRequest) 
 				return defenseError("이미 사용한 요청 ID의 내용이 달라요")
 			}
 			out = doc.Receipt
+			out.State = defenseView(out.State, out.State.Balance, out.State.Debt)
 			return nil
 		}
 		state, ents, err := l.readDefense(tx, puid, c)
