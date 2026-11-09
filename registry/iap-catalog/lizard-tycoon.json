@@ -77,6 +77,18 @@
           "type": "non_consumable",
           "google_play": "crystal_starter",
           "app_store": "crystal_starter"
+        },
+        "sp_bearded_dragon": {
+          "google_play": "sp_bearded_dragon",
+          "app_store": "com.seorilabs.lizardtycoon.premium.bearded_dragon"
+        },
+        "sp_blue_tongue_skink": {
+          "google_play": "sp_blue_tongue_skink",
+          "app_store": "com.seorilabs.lizardtycoon.premium.blue_tongue_skink"
+        },
+        "sp_veiled_chameleon": {
+          "google_play": "sp_veiled_chameleon",
+          "app_store": "com.seorilabs.lizardtycoon.premium.veiled_chameleon"
         }
       }
     }

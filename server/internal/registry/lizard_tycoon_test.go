@@ -34,6 +34,7 @@ func TestLizardTycoonRegistryEventContract(t *testing.T) {
 		"ck_starlight_accessory_set",
 		"crystal_300", "crystal_1000", "crystal_3200",
 		"crystal_5500", "crystal_starter",
+		"sp_bearded_dragon", "sp_blue_tongue_skink", "sp_veiled_chameleon",
 	}
 	if !reflect.DeepEqual(lizardTycoon.IAP.EntitlementIDs, wantEntitlements) {
 		t.Fatalf("도마뱀 IAP 허용 목록 불일치: %v", lizardTycoon.IAP.EntitlementIDs)

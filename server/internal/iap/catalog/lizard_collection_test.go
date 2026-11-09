@@ -16,8 +16,8 @@ func TestLizardCollectionCatalogKeepsExistingProducts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(c.IDs()); got != 15 {
-		t.Fatalf("catalog has %d products, want 10 existing and 5 crystals", got)
+	if got := len(c.IDs()); got != 18 {
+		t.Fatalf("catalog has %d products, want 13 permanent products and 5 crystals", got)
 	}
 	for _, id := range []string{"sp_galaxy_gecko", "ft_rack_pack_1", "ck_starlight_accessory_set"} {
 		product, err := c.ProductForApp("lizard-tycoon", domain.PlatformGooglePlay, id)
