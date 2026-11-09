@@ -1391,7 +1391,11 @@ paths:
                     properties:
                       result: { $ref: '#/components/schemas/DefenseSnapshot' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: 저장된 원장 상태 또는 카탈로그 구조 불일치 }
+        '422': { description: 방어 자산을 지원하지 않는 앱 또는 상품 }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /iap/defense/actions:
     post:
@@ -1426,8 +1430,10 @@ paths:
                       result: { $ref: '#/components/schemas/DefenseReceipt' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: 연결 계정 필요·지원하지 않는 앱·방어 재화 부족, content_ticket_empty 포함 }
+        '403': { description: 연결 계정 필요·방어 재화 부족, content_ticket_empty 포함 }
         '409': { description: 요청 본문 불일치·카탈로그 버전 불일치·이미 보유한 병기 또는 강화 상한 }
+        '422': { description: 방어 자산을 지원하지 않는 앱 또는 상품 }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /iap/salt-compass:
     get:

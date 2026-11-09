@@ -1115,11 +1115,11 @@ func act_defense(request: Dictionary, callback: Callable) -> void:
 		if key not in ["requestId", "actionId", "catalogVersion", "runId"]:
 			callback.call(_client_error("request_invalid", "서버가 결정하는 가격과 효과는 보낼 수 없어요"))
 			return
-	var consumable: bool = request.get("actionId") in ["revive", "repair", "airstrike"]
 	if not request.get("requestId") is String or _BOX_REQUEST_ID.search(request.get("requestId", "")) == null or not request.get("catalogVersion") is String or str(request.get("catalogVersion", "")).is_empty() or str(request.get("catalogVersion", "")).length() > 64 or not request.get("actionId") is String:
 		callback.call(_client_error("request_invalid", "방어 요청 정보를 확인해 주세요"))
 		return
-	if (consumable and (not request.get("runId") is String or _BOX_REQUEST_ID.search(str(request.get("runId", ""))) == null)) or (not consumable and request.has("runId")):
+	# The server catalog owns action kinds. The SDK checks wire format without duplicating that catalog.
+	if request.has("runId") and (not request.get("runId") is String or _BOX_REQUEST_ID.search(str(request.get("runId", ""))) == null):
 		callback.call(_client_error("request_invalid", "전투 요청 범위를 확인해 주세요"))
 		return
 	_iap_request({"method": "POST", "path": "/v1/iap/defense/actions", "body": request}, callback)

@@ -305,7 +305,7 @@ func _check_defense_requests() -> void:
 	var base := {"requestId": "request_0001", "actionId": "damage", "catalogVersion": "defense-1"}
 	var invalid := [
 		{"requestId": "short"}, {"requestId": 12345678}, {"cost": 1},
-		{"actionId": "revive"}, {"runId": "run_0001"},
+		{"actionId": 7}, {"runId": 12345678},
 		{"catalogVersion": ""}, {"actionId": "repair", "runId": "bad"},
 	]
 	for changes: Dictionary in invalid:

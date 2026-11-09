@@ -205,7 +205,7 @@ func (l *Ledger) readDefense(tx *store.Tx, puid string, c DefenseCatalog) (Defen
 func (l *Ledger) DefenseSnapshot(ctx context.Context, puid string) (DefenseSnapshot, error) {
 	var out DefenseSnapshot
 	if l.appID != "mechanical-frontier" || puid == "" {
-		return out, defenseError("이 앱은 방어 자산을 지원하지 않아요")
+		return out, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱은 방어 자산을 지원하지 않아요")
 	}
 	c, e := DefenseCatalogCurrent()
 	if e != nil {
