@@ -42,6 +42,11 @@ func (d FirebaseAccountDeleter) DeleteFirebaseIdentity(ctx context.Context, app 
 		return fmt.Errorf("identity: deletion credentials unavailable: %w", err)
 	}
 	client.Timeout = 30 * time.Second
+	if app.AppID == "my-little-parasite" {
+		if err := deleteParasiteSave(ctx, client, app.FirebaseProjectID, uid); err != nil {
+			return err
+		}
+	}
 	if app.AppID == "starter-game" {
 		base := "https://firestore.googleapis.com/v1/projects/" + url.PathEscape(app.FirebaseProjectID) + "/databases/(default)/documents/"
 		// Block unexpired ID tokens before deleting progress. The marker survives retries.
