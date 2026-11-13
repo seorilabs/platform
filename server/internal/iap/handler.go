@@ -201,7 +201,7 @@ type entitlementsResponse struct {
 }
 
 func (h *Handler) listEntitlements(w http.ResponseWriter, r *http.Request) error {
-	sess, err := h.requirePayingSession(r)
+	sess, err := h.requireSession(r, true)
 	if err != nil {
 		return err
 	}
@@ -276,23 +276,31 @@ func (h *Handler) accountReferences(w http.ResponseWriter, r *http.Request) erro
 //
 // RemoteConfig 조회와 이벤트 로그는 익명도 허용한다. 결제만 막는다.
 func (h *Handler) requirePayingSession(r *http.Request) (identity.Session, error) {
+	return h.requireSession(r, false)
+}
+
+func (h *Handler) requireSession(r *http.Request, inboxRead bool) (identity.Session, error) {
 	sess, err := h.sessions.Authenticate(r)
 	if err != nil {
 		return identity.Session{}, err
 	}
-	if sess.IsAnonymous {
-		return identity.Session{}, platformerr.New(platformerr.CodeAnonymousNotAllowed,
-			"로그인 후에 구매할 수 있어요")
-	}
+	var app registry.App
 	if h.apps != nil {
-		app, err := h.apps.GetUsable(r.Context(), sess.AppID)
+		app, err = h.apps.GetUsable(r.Context(), sess.AppID)
 		if err != nil {
 			return identity.Session{}, err
 		}
-		if app.IAP.RequireLinkedAccount && !sess.IsLinkedAccount {
-			return identity.Session{}, platformerr.New(platformerr.CodeAccountLinkRequired,
-				"계정을 연결한 뒤 구매하거나 복원할 수 있어요")
+		// A free mailbox uses the same authenticated session as /v1/inbox.
+		// This exception never reaches purchase verification or market references.
+		if inboxRead && app.FeatureEnabled("inbox") && !app.FeatureEnabled("iap") {
+			return sess, nil
 		}
+	}
+	if sess.IsAnonymous {
+		return identity.Session{}, platformerr.New(platformerr.CodeAnonymousNotAllowed, "로그인 후에 구매할 수 있어요")
+	}
+	if app.IAP.RequireLinkedAccount && !sess.IsLinkedAccount {
+		return identity.Session{}, platformerr.New(platformerr.CodeAccountLinkRequired, "계정을 연결한 뒤 구매하거나 복원할 수 있어요")
 	}
 	return sess, nil
 }

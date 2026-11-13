@@ -151,10 +151,11 @@ func newIAPService(
 		}
 		appLedger := ledgerForRegistryApp(st, app, appEnv).WithOperationalEvents(opEvents)
 		appLedgers[app.AppID] = appLedger
-		appLedgerValues[app.AppID] = appLedger
 		if !app.FeatureEnabled("iap") {
 			continue
 		}
+		// Webhook and completion workers only consume market ledgers.
+		appLedgerValues[app.AppID] = appLedger
 		if bc, ok, err := boxes.Load(app.AppID); err != nil {
 			return nil, fmt.Errorf("iap: %s 상자 카탈로그가 올바르지 않다: %w", app.AppID, err)
 		} else if ok {

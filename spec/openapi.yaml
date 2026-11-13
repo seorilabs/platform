@@ -1761,6 +1761,8 @@ paths:
         마켓 SDK가 없어도 이 엔드포인트만으로 환불 projection을 반영할 수 있다.
         구매 또는 서버 우편함을 채택한 앱의 활성 권리를 읽는다. 우편함만 채택해도
         앱별 원장에서 수령 권리를 복원하며 구매 검증이나 마켓 계정 참조는 허용하지 않는다.
+        우편 전용 앱의 인증된 익명 세션도 무료 권리를 읽을 수 있다. 구매 기능을 함께
+        채택한 앱의 기존 익명·연결 계정 정책은 유지한다.
       operationId: listEntitlements
       parameters:
         - $ref: '#/components/parameters/IapEnvironment'

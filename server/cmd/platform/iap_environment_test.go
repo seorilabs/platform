@@ -77,9 +77,13 @@ func TestInboxOnlyLedgerCompositionDoesNotCreatePurchaseVerifiers(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			scoped := part.appLedgers[app.AppID]
-			if scoped == nil || string(scoped.Environment()) != string(env) {
-				t.Fatalf("isolated inbox ledger missing: %v", scoped)
+			if _, exists := part.appLedgers[app.AppID]; exists {
+				t.Fatal("inbox-only ledger entered the purchase completion queue")
+			}
+			for id, l := range part.appLedgers {
+				if _, err := newWorkerFor(id, l, part.appVerifiers[id], nil, cfg, nil); err != nil {
+					t.Fatalf("inbox must not break completion workers: %v", err)
+				}
 			}
 			if _, exists := part.appVerifiers[app.AppID]; exists {
 				t.Fatal("inbox-only app acquired purchase verifiers")

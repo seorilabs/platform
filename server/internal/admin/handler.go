@@ -298,7 +298,7 @@ func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, 
 		return nil, err
 	}
 	// 카탈로그는 원장을 읽거나 변경하지 않는다. 기존 appId 경로 조회를 보존한다.
-	if !app.FeatureEnabled("iap") || len(app.IAP.EntitlementIDs) == 0 {
+	if (!app.FeatureEnabled("iap") && !app.FeatureEnabled("inbox")) || len(app.IAP.EntitlementIDs) == 0 {
 		return nil, platformerr.New(platformerr.CodeAuthForbidden,
 			"이 앱은 IAP 관리가 활성화되지 않았어요")
 	}

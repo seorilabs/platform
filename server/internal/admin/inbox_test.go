@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/seorilabs/platform/server/internal/iap/ledger"
 	"github.com/seorilabs/platform/server/internal/identity"
+	"github.com/seorilabs/platform/server/internal/platformerr"
 	"github.com/seorilabs/platform/server/internal/registry"
 	"net/http"
 	"net/http/httptest"
@@ -64,5 +65,17 @@ func TestInboxIssueAuthorization(t *testing.T) {
 				t.Fatal("unauthorized issue executed")
 			}
 		})
+	}
+}
+
+func TestInboxOnlyCatalogIsReadOnly(t *testing.T) {
+	h := newHandler(t, &fakeLedger{}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	h.apps = &fakeApps{app: registry.App{AppID: "game", Status: registry.StatusActive, Features: map[string]bool{"inbox": true}, IAP: registry.IAPConfig{LedgerEnvironment: "sandbox", EntitlementIDs: []string{"starter"}}}}
+	ids, err := h.appEntitlements(context.Background(), "game")
+	if err != nil || len(ids) != 1 || ids[0] != "starter" {
+		t.Fatalf("mail allowlist unavailable: %v %v", ids, err)
+	}
+	if _, err := h.validateIAPContext(context.Background(), "game", testPUID, "sandbox"); platformerr.CodeOf(err) != platformerr.CodeAuthForbidden {
+		t.Fatalf("mail catalog enabled IAP mutation: %v", err)
 	}
 }

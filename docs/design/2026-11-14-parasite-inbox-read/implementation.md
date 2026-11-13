@@ -2,7 +2,7 @@
 
 사용자가 승인한 게임 설계는 [my-little-parasite의 ac95d68 잔여 출시 설계](https://github.com/seorilabs/my-little-parasite/blob/ac95d68d7995bc602fcc310e160edff7c8fd1e0f/docs/design/2026-11-13-launch-completion/design.md)다. Android는 배너만 사용하고 구매를 채택하지 않는다. 이 문서는 그 범위의 서버 구현과 미반영 상태를 기록하며 새로운 운영 배포 승인을 주장하지 않는다.
 
-`iap:false`, `inbox:true` 앱은 서버가 지급한 영구 권리를 재로그인 후 읽을 수 있어야 한다. 기존 GET `/v1/iap/entitlements`는 구매 기능만 허용해 이 경우도 403이었다. 조회만 우편 채택 앱에 허용하고, 결제 검증·마켓 계정 참조·영수증 검증·판매는 계속 금지한다. 우편 앱에는 앱별 원장을 명시적으로 구성하고 누락 시 공유 기본 원장으로 우회하지 않는다. production과 sandbox를 분리한다.
+`iap:false`, `inbox:true` 앱은 서버가 지급한 영구 권리를 재로그인 후 읽을 수 있어야 한다. 기존 GET `/v1/iap/entitlements`는 구매 기능만 허용해 이 경우도 403이었다. 조회만 우편 채택 앱에 허용하고, 결제 검증·마켓 계정 참조·영수증 검증·판매는 계속 금지한다. 우편 앱에는 앱별 원장을 명시적으로 구성하고 누락 시 공유 기본 원장으로 우회하지 않는다. production과 sandbox를 분리한다. 우편 전용 원장은 조회 서비스에만 넣고 웹훅·마켓 완료 worker 목록에는 넣지 않는다. 인증된 우편 세션의 익명 여부는 무료 권리 읽기를 막지 않지만 구매·마켓 계정 참조의 익명 차단은 유지한다. Admin 카탈로그는 우편 allowlist를 읽을 수 있으며 일반 IAP 지급·회수 권한은 넓히지 않는다.
 
 검증은 결함을 재현한 단위 검사부터 시작했다. 앱·사용자·환경 격리, 회수 반영, 읽기로 지급하지 않음, 구매 금지, 원장 누락 차단과 실제 bootstrap 조합을 검사했다. `go test ./...`와 `go vet ./internal/iap/verify ./cmd/platform` 통과는 개발 환경 증거이며 실제 Firestore·SDK 성공을 뜻하지 않는다. PR의 확인된 서비스 런타임 CI가 전체 서비스 회귀를 담당한다.
 
