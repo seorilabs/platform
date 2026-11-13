@@ -197,14 +197,16 @@ func (v *Verifier) mapTransaction(
 	case appstore.Sandbox:
 		environment = domain.EnvSandbox
 	}
+	country, countrySource := domain.VerifiedCountry(tx.Storefront, "app_store.storefront", 3)
 	isTestPurchase := v.environment == appstore.Sandbox
 	return domain.VerifiedPurchase{
-		Platform:          domain.PlatformAppStore,
-		Environment:       environment,
-		ProductID:         tx.ProductID,
-		CanonicalID:       canonicalID,
-		ProviderOrderID:   tx.TransactionID,
-		IsTestPurchase:    &isTestPurchase,
+		Platform:        domain.PlatformAppStore,
+		Environment:     environment,
+		ProductID:       tx.ProductID,
+		CanonicalID:     canonicalID,
+		ProviderOrderID: tx.TransactionID,
+		IsTestPurchase:  &isTestPurchase,
+		CountryCode:     country, CountrySource: countrySource,
 		PlatformAccountID: tx.AppAccountToken,
 		PurchasedAt:       millisToTime(tx.PurchaseDate),
 		ObservedAt:        observedAt,

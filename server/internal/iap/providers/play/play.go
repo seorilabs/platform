@@ -45,6 +45,7 @@ const (
 // 필요한 필드만 정의한다. 미지 필드는 무시한다.
 type productsV2Response struct {
 	Kind                 string `json:"kind"`
+	RegionCode           string `json:"regionCode"`
 	PurchaseStateContext struct {
 		PurchaseState string `json:"purchaseState"`
 	} `json:"purchaseStateContext"`
@@ -66,6 +67,7 @@ type productsV2Response struct {
 // productPurchaseResponse는 purchases.products.get 응답이다.
 // 소모성 상품의 소비 여부를 확인하는 데 필요한 필드만 받는다.
 type productPurchaseResponse struct {
+	RegionCode                  string `json:"regionCode"`
 	PurchaseTimeMillis          string `json:"purchaseTimeMillis"`
 	PurchaseState               *int   `json:"purchaseState"`
 	ConsumptionState            *int   `json:"consumptionState"`
@@ -186,13 +188,15 @@ func (v *Verifier) verifyNonConsumable(ctx context.Context, proof domain.Proof) 
 		completion = domain.CompletionNone
 	}
 
+	country, countrySource := domain.VerifiedCountry(resp.RegionCode, "google_play.regionCode", 2)
 	isTestPurchase := resp.TestPurchaseContext != nil
 	return domain.VerifiedPurchase{
-		Platform:          domain.PlatformGooglePlay,
-		ProductID:         item.ProductID,
-		CanonicalID:       proof.Token, // 불변식 1. Play는 purchaseToken이다
-		ProviderOrderID:   resp.OrderID,
-		IsTestPurchase:    &isTestPurchase,
+		Platform:        domain.PlatformGooglePlay,
+		ProductID:       item.ProductID,
+		CanonicalID:     proof.Token, // 불변식 1. Play는 purchaseToken이다
+		ProviderOrderID: resp.OrderID,
+		IsTestPurchase:  &isTestPurchase,
+		CountryCode:     country, CountrySource: countrySource,
 		PlatformAccountID: resp.ObfuscatedExternalAccountID,
 		PurchasedAt:       purchasedAt,
 		ObservedAt:        observedAt,
@@ -238,9 +242,11 @@ func (v *Verifier) verifyConsumable(ctx context.Context, proof domain.Proof) (do
 		value := resp.PurchaseType != nil
 		isTestPurchase = &value
 	}
+	country, countrySource := domain.VerifiedCountry(resp.RegionCode, "google_play.regionCode", 2)
 	return domain.VerifiedPurchase{
-		Platform:          domain.PlatformGooglePlay,
-		ProductID:         proof.ProductID,
+		Platform:    domain.PlatformGooglePlay,
+		ProductID:   proof.ProductID,
+		CountryCode: country, CountrySource: countrySource,
 		CanonicalID:       proof.Token,
 		ProviderOrderID:   resp.OrderID,
 		IsTestPurchase:    isTestPurchase,

@@ -397,6 +397,9 @@ func (l *Ledger) grantEconomyPurchase(ctx context.Context, in GrantInput) (domai
 		order.PurchasedAt = in.Purchase.PurchasedAt
 		order.ProviderOrderID = in.Purchase.ProviderOrderID
 		order.IsTestPurchase = in.Purchase.IsTestPurchase
+		if in.Purchase.CountryCode != "" {
+			order.CountryCode, order.CountrySource = in.Purchase.CountryCode, in.Purchase.CountrySource
+		}
 		order.PlatformAccountIDHash = domain.HashAccountID(in.Purchase.PlatformAccountID)
 		order.Tombstone = false
 		order.CreatedAt = firstNonZero(order.CreatedAt, now)
@@ -417,6 +420,11 @@ func (l *Ledger) grantEconomyPurchase(ctx context.Context, in GrantInput) (domai
 		if applied && l.operational != nil && l.appID != "" {
 			attributes := map[string]any{
 				"platform": string(order.Platform), "entitlementId": order.EntitlementID,
+				"platformUserId": in.PlatformUserID, "grantKind": "purchase",
+			}
+			if order.CountryCode != "" {
+				attributes["countryCode"] = order.CountryCode
+				attributes["countrySource"] = order.CountrySource
 			}
 			if order.IsTestPurchase != nil {
 				attributes["isTestPurchase"] = *order.IsTestPurchase

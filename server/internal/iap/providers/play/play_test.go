@@ -494,3 +494,24 @@ func TestConsumableNonStandardPurchaseIsNotAssumedPaid(t *testing.T) {
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+func TestVerifiedBillingCountry(t *testing.T) {
+	for _, code := range []string{"US", "", "bad"} {
+		body := strings.Replace(purchasedBody, `"kind":`, `"regionCode":"`+code+`","kind":`, 1)
+		v, _ := newFakeServer(t, jsonResponse(http.StatusOK, body))
+		got, err := v.Verify(context.Background(), testProof())
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		if code == "US" {
+			want = code
+		}
+		if got.CountryCode != want {
+			t.Fatalf("country=%q want %q", got.CountryCode, want)
+		}
+		if want != "" && got.CountrySource != "google_play.regionCode" {
+			t.Fatal("country source missing")
+		}
+	}
+}
