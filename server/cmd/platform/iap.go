@@ -142,13 +142,8 @@ func newIAPService(
 	// 카탈로그가 깨졌으면 부팅을 막는다(ADR 0029).
 	boxCatalogs := make(map[string]*boxes.Catalog)
 	for _, app := range apps {
-		if !app.FeatureEnabled("iap") {
+		if !app.FeatureEnabled("iap") && !app.FeatureEnabled("inbox") {
 			continue
-		}
-		if bc, ok, err := boxes.Load(app.AppID); err != nil {
-			return nil, fmt.Errorf("iap: %s 상자 카탈로그가 올바르지 않다: %w", app.AppID, err)
-		} else if ok {
-			boxCatalogs[app.AppID] = bc
 		}
 		appEnv := domain.EnvProduction
 		if app.IAP.LedgerEnvironment == registry.LedgerSandbox {
@@ -157,6 +152,14 @@ func newIAPService(
 		appLedger := ledgerForRegistryApp(st, app, appEnv).WithOperationalEvents(opEvents)
 		appLedgers[app.AppID] = appLedger
 		appLedgerValues[app.AppID] = appLedger
+		if !app.FeatureEnabled("iap") {
+			continue
+		}
+		if bc, ok, err := boxes.Load(app.AppID); err != nil {
+			return nil, fmt.Errorf("iap: %s 상자 카탈로그가 올바르지 않다: %w", app.AppID, err)
+		} else if ok {
+			boxCatalogs[app.AppID] = bc
+		}
 		appsByID[app.AppID] = app
 		appOutboxes[app.AppID] = appLedger
 		list, err := newVerifiersForApp(ctx, ic, app, aitCertificates)
