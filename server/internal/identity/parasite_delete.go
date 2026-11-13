@@ -24,7 +24,9 @@ func deleteParasiteSave(ctx context.Context, client *http.Client, project, uid s
 		return err
 	}
 	for {
-		body, err := parasiteDeletionRequest(ctx, client, http.MethodGet, base+owner+"/blobs?pageSize=200", nil)
+		// Immutable pages contain only payload. Mask that content out: deletion needs names,
+		// and reading 200 full pages could exceed the bounded response before cleanup.
+		body, err := parasiteDeletionRequest(ctx, client, http.MethodGet, base+owner+"/blobs?pageSize=200&mask.fieldPaths=deletionMetadata", nil)
 		if err != nil {
 			return err
 		}

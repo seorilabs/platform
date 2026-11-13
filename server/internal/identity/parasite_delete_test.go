@@ -20,6 +20,9 @@ func TestParasiteDeletionRemovesEveryPageBeforeAuth(t *testing.T) {
 			calls = append(calls, r.Method+" "+r.URL.Path)
 			body := "{}"
 			if r.Method == http.MethodGet {
+				if r.URL.Query().Get("mask.fieldPaths") != "deletionMetadata" {
+					t.Fatal("deletion list must omit full save payloads")
+				}
 				lists++
 				if lists < 3 {
 					body = `{"documents":[{"name":"` + base + `parasite_users/uid/blobs/` + strings.Repeat(string(rune('a'+lists)), 64) + `"}]}`
