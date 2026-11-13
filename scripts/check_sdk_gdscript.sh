@@ -76,3 +76,5 @@ run_probe addons/seorilabs_platform/tools/adapter_probe.gd
 
 echo
 echo "GDScript SDK 검증 통과"
+
+run_probe addons/seorilabs_platform/tools/config_observation_probe.gd
