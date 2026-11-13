@@ -70,6 +70,7 @@ func TestInboxIssueAuthorization(t *testing.T) {
 
 func TestInboxOnlyCatalogIsReadOnly(t *testing.T) {
 	h := newHandler(t, &fakeLedger{}, &fakeValidator{email: backofficeSA}, &fakeAuditor{})
+	h.catalog = &fakeCatalog{allowed: false}
 	h.apps = &fakeApps{app: registry.App{AppID: "game", Status: registry.StatusActive, Features: map[string]bool{"inbox": true}, IAP: registry.IAPConfig{LedgerEnvironment: "sandbox", EntitlementIDs: []string{"starter"}}}}
 	ids, err := h.appEntitlements(context.Background(), "game")
 	if err != nil || len(ids) != 1 || ids[0] != "starter" {

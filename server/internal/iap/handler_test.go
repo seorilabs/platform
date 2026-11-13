@@ -435,3 +435,14 @@ func TestInboxOnlyAnonymousReadsCannotEnablePayments(t *testing.T) {
 		})
 	}
 }
+
+func TestInboxOnlyLegacyAnonymousCannotReadRights(t *testing.T) {
+	sess := paidSession()
+	sess.IsAnonymous = true
+	sess.AppUserID = "anon:guest-7"
+	h := NewHandler(&fakeService{entitlements: []string{"gift"}}, &fakeSessions{sess: sess}).WithApps(&fakeApps{app: registry.App{AppID: sess.AppID, Features: map[string]bool{"inbox": true}}})
+	w := serve(t, h, "GET", "/v1/iap/entitlements", "")
+	if w.Code != 403 {
+		t.Fatalf("spoofable identity read rights: status=%d %s", w.Code, w.Body.String())
+	}
+}
