@@ -75,4 +75,9 @@ echo "== adapters =="
 run_probe addons/seorilabs_platform/tools/adapter_probe.gd
 
 echo
+echo
+echo "== config observation =="
+run_probe addons/seorilabs_platform/tools/config_observation_probe.gd
+
 echo "GDScript SDK 검증 통과"
+
