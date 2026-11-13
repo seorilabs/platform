@@ -912,8 +912,10 @@ func fetch_config(target: Dictionary, callback: Callable = Callable()) -> void:
 		func(response: Dictionary) -> void:
 			if response.get("ok", false):
 				_set_config(response["result"])
+			# Startup remains fail-open; callers can separately report connectivity.
 			_invoke(callback, {
 				"ok": true,
+				"networkOk": response.get("ok", false) == true,
 				"result": _config,
 				"code": "",
 				"message": "",
