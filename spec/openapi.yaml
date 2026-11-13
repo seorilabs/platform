@@ -1,6 +1,12 @@
 openapi: 3.0.3
 
 # 내부 서명 callback이며 앱 SDK의 공개 요청 필드가 아니다.
+x-backoffice-operational-context:
+  description: 모든 확정 이벤트에 적용하는 선택 속성. 원본에서 확인한 값만 전달하며 기존 이벤트는 그대로 유효하다.
+  attributes:
+    platformUserId: { type: string, pattern: '^pu_[0-9A-HJKMNP-TV-Z]{26}$' }
+    countryCode: { type: string, pattern: '^[A-Z]{2,3}$' }
+    countrySource: { type: string, pattern: '^[a-z][a-zA-Z0-9_.-]{0,79}$' }
 x-backoffice-operational-events:
   identity.recovered:
     outcome: recovered
@@ -28,6 +34,28 @@ x-backoffice-operational-events:
         type: string
         pattern: '^pu_[0-9A-HJKMNP-TV-Z]{26}$'
         description: 신규 계정 transaction에서 서버가 생성한 운영 조회용 ID. 선택 항목이며 앱 로그인 UID는 전송하지 않는다.
+
+  iap.granted:
+    outcome: granted
+    attributes:
+      platform: { type: string }
+      entitlementId: { type: string }
+      isTestPurchase: { type: boolean, nullable: true }
+      platformUserId: { type: string, pattern: '^pu_[0-9A-HJKMNP-TV-Z]{26}$' }
+      countryCode: { type: string, pattern: '^[A-Z]{2,3}$', description: 마켓 검증으로 확인한 결제 국가. 접속 국가와 구분한다. }
+      countrySource: { type: string, enum: [google_play.regionCode, app_store.storefront] }
+      grantKind: { type: string, enum: [purchase, restore, transfer] }
+  ad.reward.delivered:
+    outcome: delivered
+    attributes:
+      provider: { type: string }
+      placementId: { type: string }
+      rewardKey: { type: string }
+      rewardAmount: { type: number }
+      clientPlatform: { type: string, enum: [android, ios, apps_in_toss] }
+      platformUserId: { type: string, pattern: '^pu_[0-9A-HJKMNP-TV-Z]{26}$' }
+      countryCode: { type: string, pattern: '^[A-Z]{2,3}$' }
+      countrySource: { type: string }
 
 info:
   title: Seorilabs Platform API

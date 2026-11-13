@@ -34,6 +34,8 @@ type orderDoc struct {
 	ProductID       string          `firestore:"productId"`
 	ProviderOrderID string          `firestore:"providerOrderId"`
 	IsTestPurchase  *bool           `firestore:"isTestPurchase,omitempty"`
+	CountryCode     string          `firestore:"countryCode,omitempty"`
+	CountrySource   string          `firestore:"countrySource,omitempty"`
 
 	// 마켓 계정 참조는 원문이 아니라 해시로 저장한다. ADR 0005
 	PlatformAccountIDHash string `firestore:"platformAccountIdHash"`
@@ -440,6 +442,9 @@ func (l *Ledger) grant(
 			order.ProductID = in.Purchase.ProductID
 			order.ProviderOrderID = in.Purchase.ProviderOrderID
 			order.IsTestPurchase = in.Purchase.IsTestPurchase
+			if in.Purchase.CountryCode != "" {
+				order.CountryCode, order.CountrySource = in.Purchase.CountryCode, in.Purchase.CountrySource
+			}
 			order.PlatformAccountIDHash = domain.HashAccountID(in.Purchase.PlatformAccountID)
 			order.State = domain.StateRevoked
 			order.PurchasedAt = in.Purchase.PurchasedAt
@@ -481,6 +486,10 @@ func (l *Ledger) grant(
 		storedObservedAt := in.Purchase.ObservedAt
 		storedProviderOrderID := in.Purchase.ProviderOrderID
 		storedIsTestPurchase := in.Purchase.IsTestPurchase
+		storedCountry, storedCountrySource := in.Purchase.CountryCode, in.Purchase.CountrySource
+		if storedCountry == "" && exists {
+			storedCountry, storedCountrySource = order.CountryCode, order.CountrySource
+		}
 		storedAccountHash := domain.HashAccountID(in.Purchase.PlatformAccountID)
 		if preserveLatestOnTransfer {
 			storedState = order.State
@@ -488,6 +497,7 @@ func (l *Ledger) grant(
 			storedObservedAt = order.ObservedAt
 			storedProviderOrderID = order.ProviderOrderID
 			storedIsTestPurchase = order.IsTestPurchase
+			storedCountry, storedCountrySource = order.CountryCode, order.CountrySource
 			storedAccountHash = order.PlatformAccountIDHash
 		}
 
@@ -501,12 +511,13 @@ func (l *Ledger) grant(
 
 		// 여기서부터 쓰기다.
 		order = orderDoc{
-			PlatformUserID:        in.PlatformUserID,
-			EntitlementID:         in.EntitlementID,
-			Platform:              in.Purchase.Platform,
-			ProductID:             in.Purchase.ProductID,
-			ProviderOrderID:       storedProviderOrderID,
-			IsTestPurchase:        storedIsTestPurchase,
+			PlatformUserID:  in.PlatformUserID,
+			EntitlementID:   in.EntitlementID,
+			Platform:        in.Purchase.Platform,
+			ProductID:       in.Purchase.ProductID,
+			ProviderOrderID: storedProviderOrderID,
+			IsTestPurchase:  storedIsTestPurchase,
+			CountryCode:     storedCountry, CountrySource: storedCountrySource,
 			PlatformAccountIDHash: storedAccountHash,
 			State:                 storedState,
 			PurchasedAt:           storedPurchasedAt,
@@ -585,6 +596,7 @@ func (l *Ledger) grant(
 		if result.Granted && l.operational != nil && l.appID != "" {
 			attributes := map[string]any{
 				"platform": string(in.Purchase.Platform), "entitlementId": in.EntitlementID,
+				"platformUserId": in.PlatformUserID, "grantKind": "purchase",
 			}
 			// 미확인(nil)은 키를 싣지 않는다. 없는 사실을 false로 만들면 AppsInToss
 			// 주문이 전부 실거래로 보인다(providers/toss는 이 값을 세팅하지 않는다).
@@ -596,6 +608,15 @@ func (l *Ledger) grant(
 			//
 			// in.Purchase가 아니라 order 문서에 실제로 쓰이는 값을 쓴다.
 			// preserveLatestOnTransfer 경로에서 둘이 갈라진다.
+			if transferredFrom != "" {
+				attributes["grantKind"] = "transfer"
+			} else if exists {
+				attributes["grantKind"] = "restore"
+			}
+			if storedCountry != "" {
+				attributes["countryCode"] = storedCountry
+				attributes["countrySource"] = storedCountrySource
+			}
 			if storedIsTestPurchase != nil {
 				attributes["isTestPurchase"] = *storedIsTestPurchase
 			}

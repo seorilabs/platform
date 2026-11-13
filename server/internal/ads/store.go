@@ -379,6 +379,7 @@ func (r *StoreRepository) AcknowledgeClaim(ctx context.Context, id, appID, puid 
 			Attributes: map[string]any{
 				"provider": result.Provider, "placementId": result.PlacementID,
 				"rewardKey": result.Reward.Key, "rewardAmount": result.Reward.Amount,
+				"clientPlatform": result.ClientPlatform, "platformUserId": result.PlatformUserID,
 			},
 		})
 	})

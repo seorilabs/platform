@@ -38,7 +38,7 @@ func TestDebugBuildRewardDeliverySkipsOperationalEvent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			puid := "pu_ads_" + uuid.NewString()
+			puid := map[bool]string{false: "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV", true: "pu_01ARZ3NDEKTSV4RRFFQ69G5FAW"}[tt.debug]
 			requestID := "ads-" + uuid.NewString()
 			input := integrationClaim(now, requestID, puid)
 			input.DebugBuild = tt.debug

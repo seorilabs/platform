@@ -482,3 +482,16 @@ func TestStrictClaimsRejectMissingBundleAndEnvironment(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifiedStorefrontCountry(t *testing.T) {
+	tx := validTx()
+	tx.Storefront = "KOR"
+	v := newVerifier(t, &fakeSource{tx: tx}, false)
+	got, err := v.Verify(context.Background(), appleProof())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CountryCode != "KOR" || got.CountrySource != "app_store.storefront" {
+		t.Fatalf("country = %q (%s)", got.CountryCode, got.CountrySource)
+	}
+}

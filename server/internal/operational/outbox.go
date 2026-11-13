@@ -47,6 +47,8 @@ type eventContract struct {
 var (
 	eventIDPattern        = regexp.MustCompile(`^[a-z_]+_[0-9a-f]{32}$`)
 	appIDPattern          = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	countryPattern        = regexp.MustCompile(`^[A-Z]{2,3}$`)
+	countrySourcePattern  = regexp.MustCompile(`^[a-z][a-zA-Z0-9_.-]{0,79}$`)
 	platformUserIDPattern = regexp.MustCompile(`^pu_[0-9A-HJKMNP-TV-Z]{26}$`)
 	eventContracts        = map[string]eventContract{
 		"identity.recovered": {
@@ -75,14 +77,22 @@ var (
 			prefix: "iap_", outcome: "granted",
 			// isTestPurchase는 마켓 검증의 관측 사실이다. 키가 없으면 "미확인"이고
 			// 실거래로 추정하지 않는다 — AppsInToss는 provider가 이 값을 만들지 않는다.
-			attributes: setOf("platform", "entitlementId", "isTestPurchase"),
+			attributes: setOf("platform", "entitlementId", "isTestPurchase", "grantKind"),
 		},
 		"ad.reward.delivered": {
 			prefix: "ad_reward_", outcome: "delivered",
-			attributes: setOf("provider", "placementId", "rewardKey", "rewardAmount"),
+			attributes: setOf("provider", "placementId", "rewardKey", "rewardAmount", "clientPlatform"),
 		},
 	}
 )
+
+func init() {
+	for _, contract := range eventContracts {
+		for _, key := range []string{"platformUserId", "countryCode", "countrySource"} {
+			contract.attributes[key] = struct{}{}
+		}
+	}
+}
 
 type outboxDoc struct {
 	Event
@@ -157,6 +167,22 @@ func validateEvent(event Event) error {
 	for key, value := range event.Attributes {
 		if _, allowed := contract.attributes[key]; !allowed || !safeScalar(value) {
 			return fmt.Errorf("operational: 허용되지 않은 attribute: %s", key)
+		}
+		if key == "countryCode" {
+			if v, ok := value.(string); !ok || !countryPattern.MatchString(v) {
+				return errors.New("operational: 잘못된 국가 코드")
+			}
+		}
+		if key == "countrySource" {
+			if v, ok := value.(string); !ok || !countrySourcePattern.MatchString(v) {
+				return errors.New("operational: 잘못된 국가 출처")
+			}
+		}
+		if key == "clientPlatform" && value != "android" && value != "ios" && value != "apps_in_toss" {
+			return errors.New("operational: 잘못된 광고 플랫폼")
+		}
+		if key == "grantKind" && value != "purchase" && value != "restore" && value != "transfer" {
+			return errors.New("operational: 잘못된 지급 구분")
 		}
 		if key == "platformUserId" {
 			uid, ok := value.(string)

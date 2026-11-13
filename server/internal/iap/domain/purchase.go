@@ -165,6 +165,10 @@ type VerifiedPurchase struct {
 	// 구매 키와 지급 상태는 그대로 두므로 IAP 불변식 1과 2에 영향을 주지 않는다.
 	IsTestPurchase *bool
 
+	// 결제 국가만 보존한다. 언어·통화·IP로 채우지 않으며 불변식 1의 주문 키와 무관하다.
+	CountryCode   string
+	CountrySource string
+
 	// PlatformAccountID는 마켓 계정 참조다.
 	// 저장할 때는 원문이 아니라 sha256만 남긴다. ADR 0005.
 	PlatformAccountID string
@@ -364,4 +368,17 @@ func (e Environment) PathPrefix() string {
 		return "iap_environments/sandbox/"
 	}
 	return ""
+}
+
+// VerifiedCountry는 공급자가 확인한 코드만 반환한다. 잘못된 선택 속성 때문에 구매를 거부하지 않는다.
+func VerifiedCountry(code, source string, size int) (string, string) {
+	if len(code) != size {
+		return "", ""
+	}
+	for _, ch := range code {
+		if ch < 'A' || ch > 'Z' {
+			return "", ""
+		}
+	}
+	return code, source
 }

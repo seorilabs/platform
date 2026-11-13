@@ -79,7 +79,7 @@ func TestEconomyGrantNotificationsCoverPacksMarketsAndTestFlags(t *testing.T) {
 		for _, product := range []string{"crystal_300", "crystal_1000", "crystal_3200", "crystal_5500", "crystal_starter"} {
 			t.Run(tc.name+"/"+product, func(t *testing.T) {
 				l := newEconomyNotificationLedger(t, tc.environment)
-				ctx, puid := context.Background(), uniqueID("pu_crystal")
+				ctx, puid := context.Background(), "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 				purchase := testPurchase(uniqueID("crystal-order"), domain.StateActive, time.Now().UTC())
 				purchase.Platform, purchase.ProductID, purchase.IsTestPurchase = tc.platform, product, tc.flag
 				if l.isEconomyTestPurchase(purchase) {
@@ -110,7 +110,7 @@ func TestEconomyGrantNotificationsCoverPacksMarketsAndTestFlags(t *testing.T) {
 					t.Fatalf("notification attributes = %+v", event.Attributes)
 				}
 				flag, present := event.Attributes["isTestPurchase"]
-				wantAttributes := 2
+				wantAttributes := 4
 				if tc.flag != nil {
 					wantAttributes++
 					if !present || flag != *tc.flag {
@@ -118,6 +118,9 @@ func TestEconomyGrantNotificationsCoverPacksMarketsAndTestFlags(t *testing.T) {
 					}
 				} else if present {
 					t.Fatalf("unobserved test flag was invented: %v", flag)
+				}
+				if event.Attributes["platformUserId"] != puid || event.Attributes["grantKind"] != "purchase" {
+					t.Fatal("원장 사용자 ID 또는 지급 구분 누락")
 				}
 				if len(event.Attributes) != wantAttributes {
 					t.Fatalf("unexpected notification attributes: %+v", event.Attributes)
@@ -129,7 +132,7 @@ func TestEconomyGrantNotificationsCoverPacksMarketsAndTestFlags(t *testing.T) {
 
 func TestEconomyGrantNotificationsAreOncePerOrderUnderConcurrency(t *testing.T) {
 	l := newEconomyNotificationLedger(t, domain.EnvProduction)
-	ctx, puid := context.Background(), uniqueID("pu_concurrent_crystal")
+	ctx, puid := context.Background(), "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 	purchase := testPurchase(uniqueID("crystal-order"), domain.StateActive, time.Now().UTC())
 	purchase.ProductID = "crystal_300"
 	input := GrantInput{PlatformUserID: puid, EntitlementID: purchase.ProductID, Purchase: purchase}
@@ -194,7 +197,7 @@ func TestEconomyGrantNotificationsAreOncePerOrderUnderConcurrency(t *testing.T) 
 
 func TestEconomyGrantNotificationWriteFailureRollsBackCreditAndOrder(t *testing.T) {
 	l := newEconomyNotificationLedger(t, domain.EnvProduction)
-	ctx, puid := context.Background(), uniqueID("pu_atomic_crystal")
+	ctx, puid := context.Background(), "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 	purchase := testPurchase(uniqueID("crystal-order"), domain.StateActive, time.Now().UTC())
 	purchase.ProductID = "crystal_300"
 	// outbox 기록 실패를 실제 Firestore의 중복 문서 오류로 만든다.
@@ -227,7 +230,7 @@ func TestEconomyGrantNotificationWriteFailureRollsBackCreditAndOrder(t *testing.
 
 func TestEconomyGrantNotificationsExcludePendingAndRejectedStarter(t *testing.T) {
 	l := newEconomyNotificationLedger(t, domain.EnvProduction)
-	ctx, puid := context.Background(), uniqueID("pu_pending_crystal")
+	ctx, puid := context.Background(), "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 	purchase := testPurchase(uniqueID("starter-order"), domain.StatePending, time.Now().UTC())
 	purchase.ProductID = "crystal_starter"
 	input := GrantInput{PlatformUserID: puid, EntitlementID: purchase.ProductID, Purchase: purchase}
@@ -248,5 +251,57 @@ func TestEconomyGrantNotificationsExcludePendingAndRejectedStarter(t *testing.T)
 	}
 	if events := economyNotificationEvents(t, l); len(events) != 1 {
 		t.Fatalf("starter completion and rejected repurchase notifications = %d, want 1", len(events))
+	}
+}
+
+func TestEconomyNotificationPreservesVerifiedCountryAndLedgerUser(t *testing.T) {
+	l := newEconomyNotificationLedger(t, domain.EnvProduction)
+	purchase := testPurchase(uniqueID("context-order"), domain.StateActive, time.Now().UTC())
+	flag := false
+	purchase.Platform, purchase.ProductID, purchase.IsTestPurchase = domain.PlatformGooglePlay, "crystal_300", &flag
+	purchase.CountryCode, purchase.CountrySource = "US", "google_play.regionCode"
+	puid := "pu_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	got, err := l.Grant(context.Background(), GrantInput{PlatformUserID: puid, EntitlementID: "crystal_300", Purchase: purchase})
+	if err != nil || !got.Granted {
+		t.Fatalf("grant=%+v err=%v", got, err)
+	}
+	events := economyNotificationEvents(t, l)
+	if len(events) != 1 {
+		t.Fatalf("events=%d", len(events))
+	}
+	a := events[0].Attributes
+	if a["platformUserId"] != puid || a["countryCode"] != "US" || a["countrySource"] != "google_play.regionCode" || a["isTestPurchase"] != false {
+		t.Fatalf("context=%+v", a)
+	}
+}
+
+func TestGrantNotificationSeparatesOwnershipTransfer(t *testing.T) {
+	l := newEconomyNotificationLedger(t, domain.EnvProduction)
+	l.economy = nil
+	purchase := testPurchase(uniqueID("transfer-context"), domain.StateActive, time.Now().UTC())
+	purchase.CountryCode, purchase.CountrySource = "US", "google_play.regionCode"
+	for i, puid := range []string{"pu_01ARZ3NDEKTSV4RRFFQ69G5FAV", "pu_01ARZ3NDEKTSV4RRFFQ69G5FAW"} {
+		purchase.ObservedAt = purchase.ObservedAt.Add(time.Minute)
+		if i == 1 {
+			purchase.CountryCode, purchase.CountrySource = "", ""
+		}
+		got, err := l.Grant(context.Background(), GrantInput{PlatformUserID: puid, EntitlementID: "species", Purchase: purchase})
+		if err != nil || !got.Granted {
+			t.Fatalf("grant %d = %+v err=%v", i, got, err)
+		}
+	}
+	events := economyNotificationEvents(t, l)
+	if len(events) != 2 {
+		t.Fatalf("events=%d", len(events))
+	}
+	kinds := map[any]bool{}
+	for _, e := range events {
+		kinds[e.Attributes["grantKind"]] = true
+		if e.Attributes["countryCode"] != "US" {
+			t.Fatalf("known country lost: %+v", e.Attributes)
+		}
+	}
+	if !kinds["purchase"] || !kinds["transfer"] {
+		t.Fatalf("kinds=%v", kinds)
 	}
 }
