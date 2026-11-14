@@ -1,0 +1,15 @@
+{
+  "status": "approved",
+  "approvedDesignCommit": "5101a0afd850a51c5d56ef91a374a177b551316d",
+  "testPlan": "docs/design/2026-11-14-parasite-inbox-read/test-plan.json",
+  "approvalUserMessage": "계속 진행해",
+  "approvalUserMessageAt": "2026-11-14T03:14:32.756Z",
+  "recordedAt": "2026-11-14T03:19:20.245271+00:00",
+  "scope": "준비된 무료 우편 인증·SKU 경계 수정과17기능L3, 앱 한정 keyless 서명/IAM/registry와 검증된 같은 이미지의 기존6대상 운영 적용을 계속 진행",
+  "additionalLocalModelReview": false,
+  "devicesAuthorized": false,
+  "newUiReviewRoundsAuthorized": false,
+  "realUserDataDeletionAuthorized": false,
+  "productionMailOrRewardIssuanceAuthorized": false,
+  "approvalEvidence": "사용자가 서버 수정 설계와 버전코드 기준의 기존 대기 상태를 보고받은 뒤 계속 진행해라고 지시함. Google 로그인 완료를 의미하지 않음."
+}
