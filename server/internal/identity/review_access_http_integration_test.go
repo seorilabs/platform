@@ -4,12 +4,11 @@ package identity
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/google/uuid"
 	"github.com/seorilabs/platform/server/internal/fspath"
 	"github.com/seorilabs/platform/server/internal/operational"
 	"github.com/seorilabs/platform/server/internal/store"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"io"
 	"net"
 	"net/http"
@@ -135,7 +134,7 @@ func TestReviewBridgeMustNotEmitOperationalEvents(t *testing.T) {
 		_, err = st.Get(t.Context(), path)
 		if err == nil {
 			t.Errorf("review bridge emitted real emulator outbox event %s", event.name)
-		} else if status.Code(err) != codes.NotFound {
+		} else if !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
 		}
 	}
