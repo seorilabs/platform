@@ -284,6 +284,11 @@ func (h *Handler) requireSession(r *http.Request, inboxRead bool) (identity.Sess
 	if err != nil {
 		return identity.Session{}, err
 	}
+	// 무료 우편 권리도 클라이언트가 고른 anon: 신원에는 공개하지 않는다.
+	// Firebase가 증명한 익명 사용자는 통과하며, 구매 경로는 아래에서 계속 차단한다.
+	if err := sess.EnsureNotAnonymous(); err != nil {
+		return identity.Session{}, err
+	}
 	var app registry.App
 	if h.apps != nil {
 		app, err = h.apps.GetUsable(r.Context(), sess.AppID)
