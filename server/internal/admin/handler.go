@@ -298,7 +298,7 @@ func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, 
 		return nil, err
 	}
 	// 카탈로그는 원장을 읽거나 변경하지 않는다. 기존 appId 경로 조회를 보존한다.
-	if !app.FeatureEnabled("iap") || len(app.IAP.EntitlementIDs) == 0 {
+	if (!app.FeatureEnabled("iap") && !app.FeatureEnabled("inbox")) || len(app.IAP.EntitlementIDs) == 0 {
 		return nil, platformerr.New(platformerr.CodeAuthForbidden,
 			"이 앱은 IAP 관리가 활성화되지 않았어요")
 	}
@@ -309,8 +309,11 @@ func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, 
 
 	result := append([]string(nil), app.IAP.EntitlementIDs...)
 	for _, entitlementID := range result {
+		// IAP 불변식 8: 요청이 아닌 registry가 허용 권리와 구매 채택을 결정한다.
 		// registry 검증을 우회한 잘못된 Firestore 문서도 여기서 fail-close한다.
-		if !adminEntitlementPattern.MatchString(entitlementID) || !h.catalog.Has(entitlementID) {
+		// 우편 전용 권리에는 판매 SKU가 없으므로 구매 앱만 SKU 교집합을 확인한다.
+		// 실제 IAP 변경 권한은 validateIAPContext의 별도 검사로 계속 차단한다.
+		if !adminEntitlementPattern.MatchString(entitlementID) || (app.FeatureEnabled("iap") && !h.catalog.Has(entitlementID)) {
 			return nil, platformerr.New(platformerr.CodeCatalogIncomplete,
 				"앱 entitlement allowlist와 SKU 카탈로그가 일치하지 않아요")
 		}

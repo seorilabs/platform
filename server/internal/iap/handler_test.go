@@ -406,3 +406,43 @@ func TestAccountReferences(t *testing.T) {
 		t.Errorf("참조 = %+v", env.Result)
 	}
 }
+
+func TestInboxOnlyAnonymousReadsCannotEnablePayments(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		inbox, iap   bool
+		path, method string
+		want         int
+	}{
+		{"mail read", true, false, "/v1/iap/entitlements", "GET", 200},
+		{"purchase read stays blocked", true, true, "/v1/iap/entitlements", "GET", 403},
+		{"no adoption", false, false, "/v1/iap/entitlements", "GET", 403},
+		{"no mail purchase", true, false, "/v1/iap/verify", "POST", 403},
+		{"no market reference", true, false, "/v1/iap/account-references", "POST", 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sess := paidSession()
+			sess.IsAnonymous = true
+			svc := &fakeService{entitlements: []string{"gift"}}
+			h := NewHandler(svc, &fakeSessions{sess: sess}).WithApps(&fakeApps{app: registry.App{AppID: sess.AppID, Features: map[string]bool{"inbox": tc.inbox, "iap": tc.iap}}})
+			w := serve(t, h, tc.method, tc.path, "")
+			if w.Code != tc.want {
+				t.Fatalf("status=%d want=%d %s", w.Code, tc.want, w.Body.String())
+			}
+			if tc.want == 200 && svc.gotPUID != sess.PlatformUserID {
+				t.Fatal("owner not taken from session")
+			}
+		})
+	}
+}
+
+func TestInboxOnlyLegacyAnonymousCannotReadRights(t *testing.T) {
+	sess := paidSession()
+	sess.IsAnonymous = true
+	sess.AppUserID = "anon:guest-7"
+	h := NewHandler(&fakeService{entitlements: []string{"gift"}}, &fakeSessions{sess: sess}).WithApps(&fakeApps{app: registry.App{AppID: sess.AppID, Features: map[string]bool{"inbox": true}}})
+	w := serve(t, h, "GET", "/v1/iap/entitlements", "")
+	if w.Code != 403 {
+		t.Fatalf("spoofable identity read rights: status=%d %s", w.Code, w.Body.String())
+	}
+}

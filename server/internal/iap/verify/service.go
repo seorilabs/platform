@@ -527,10 +527,19 @@ func (s *Service) ListEntitlementsForApp(ctx context.Context, appID, puid string
 	if err != nil {
 		return nil, err
 	}
-	if !app.FeatureEnabled("iap") {
-		return nil, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱은 IAP를 사용하지 않아요")
+	if !app.FeatureEnabled("iap") && !app.FeatureEnabled("inbox") {
+		return nil, platformerr.New(platformerr.CodeProductNotAllowed, "이 앱은 구매 또는 우편 권리를 사용하지 않아요")
 	}
-	list, err := s.ledgerFor(appID).ListActive(ctx, puid)
+	scoped := s.ledgerFor(appID)
+	if !app.FeatureEnabled("iap") {
+		// Inbox-only apps never fall back to the legacy purchase ledger.
+		var exists bool
+		scoped, exists = s.appLedgers[appID]
+		if !exists || scoped == nil {
+			return nil, platformerr.New(platformerr.CodeRuntimeConfigInvalid, "앱 우편 원장이 준비되지 않았어요")
+		}
+	}
+	list, err := scoped.ListActive(ctx, puid)
 	if err != nil {
 		return nil, err
 	}

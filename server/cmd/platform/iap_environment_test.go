@@ -66,3 +66,28 @@ func testAppleSandboxComposition(t *testing.T, legacy bool) {
 		t.Fatal("unapproved app acquired a sandbox runtime")
 	}
 }
+
+func TestInboxOnlyLedgerCompositionDoesNotCreatePurchaseVerifiers(t *testing.T) {
+	for _, env := range []registry.LedgerEnvironment{registry.LedgerProduction, registry.LedgerSandbox} {
+		t.Run(string(env), func(t *testing.T) {
+			app := registry.App{AppID: "mail-app", DisplayName: "Mail app", FirebaseProjectID: "mail-app", Status: registry.StatusActive, Features: map[string]bool{"inbox": true}, IAP: registry.IAPConfig{LedgerEnvironment: env, EntitlementIDs: []string{"gift"}}}
+			reg := registry.New(environmentRegistrySource{app: app})
+			cfg := config.Config{IAP: config.IAPConfig{Environment: "production", CatalogJSON: []byte(`{"version":1,"entitlements":{"fixture":{"app_store":"com.seorilabs.fixture"}}}`), BindingKeys: [][]byte{make([]byte, 32)}, Apple: config.AppleConfig{KeyContent: []byte("test-only-placeholder"), KeyID: "test-key", Issuer: "test-issuer", BundleID: "com.seorilabs.fixture"}}}
+			part, err := newIAPService(context.Background(), cfg, nil, nil, reg, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := part.appLedgers[app.AppID]; exists {
+				t.Fatal("inbox-only ledger entered the purchase completion queue")
+			}
+			for id, l := range part.appLedgers {
+				if _, err := newWorkerFor(id, l, part.appVerifiers[id], nil, cfg, nil); err != nil {
+					t.Fatalf("inbox must not break completion workers: %v", err)
+				}
+			}
+			if _, exists := part.appVerifiers[app.AppID]; exists {
+				t.Fatal("inbox-only app acquired purchase verifiers")
+			}
+		})
+	}
+}
