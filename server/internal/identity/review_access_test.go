@@ -157,7 +157,7 @@ func TestReviewSessionRequiresSignedAppClaims(t *testing.T) {
 	}
 }
 func TestReviewHTTPRejectsChosenUIDAndAppMismatch(t *testing.T) {
-	for _, body := range []string{`{"appId":"lizard-tycoon","code":"TESTONLYDEMOACCESSCODE","uid":"personal-user"}`, `{"appId":"other-app","code":"TESTONLYDEMOACCESSCODE"}`} {
+	for _, body := range []string{`{"code":"TESTONLYDEMOACCESSCODE"}`, `{"appId":"lizard-tycoon","code":"TESTONLYDEMOACCESSCODE","uid":"personal-user"}`, `{"appId":"other-app","code":"TESTONLYDEMOACCESSCODE"}`} {
 		s, _, tokens := reviewTestService(t)
 		mux := http.NewServeMux()
 		NewHandler(s).Register(mux)

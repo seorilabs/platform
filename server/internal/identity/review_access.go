@@ -128,6 +128,9 @@ func (h *Handler) createReviewAccess(w http.ResponseWriter, r *http.Request) err
 	if err := httpx.DecodeStrict(w, r, &req); err != nil {
 		return err
 	}
+	if req.AppID == "" {
+		return platformerr.New(platformerr.CodeRequestInvalid, "appId가 필요해요")
+	}
 	appID, err := resolveAppID(r, req.AppID)
 	if err != nil {
 		return err
