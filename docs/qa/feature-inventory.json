@@ -459,6 +459,10 @@
     {
       "path": "/iap/salt-compass/transactions",
       "featureId": "purchase-entitlements"
+    },
+    {
+      "path": "/auth/review-access",
+      "featureId": "review-access"
     }
   ],
   "nonHttp": [

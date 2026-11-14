@@ -210,6 +210,17 @@
       "requiredTests": [
         "TestServiceRuntimeRoleRoutingAndRegistry"
       ]
+    },
+    {
+      "id": "review-access",
+      "featureIds": [
+        "review-access"
+      ],
+      "requiredTests": [
+        "TestReviewAccessTransactions",
+        "TestReviewHTTPUsesFirestore",
+        "TestReviewBridgeMustNotEmitOperationalEvents"
+      ]
     }
   ],
   "boundaries": [

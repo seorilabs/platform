@@ -467,16 +467,26 @@ func (s *Service) CreateFirebaseCustomToken(
 			"Firebase 인증 토큰을 만들지 못했어요",
 		)
 	}
+	authType := "firebase_bridge"
+	review, err := reviewIdentity(app, uid)
+	if err != nil {
+		return FirebaseCustomTokenResult{}, err
+	}
+	if review {
+		authType = "review"
+	}
 	platformUserID, err := s.users.EnsureUser(ctx, app.AppID, NewIdentity{
 		UID:            uid,
-		AuthType:       "firebase_bridge",
+		AuthType:       authType,
 		SignInProvider: signInProvider,
 		Client:         client,
 	})
 	if err != nil {
 		return FirebaseCustomTokenResult{}, err
 	}
-	s.observeAppVersion(ctx, app.AppID, client)
+	if !review {
+		s.observeAppVersion(ctx, app.AppID, client)
+	}
 	return FirebaseCustomTokenResult{
 		FirebaseCustomToken: customToken,
 		AppUserID:           uid,

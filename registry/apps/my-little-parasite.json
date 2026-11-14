@@ -27,7 +27,8 @@
       "apple": {
         "audience": "com.seorilabs.mylittleparasite"
       }
-    }
+    },
+    "review_access_code_sha256": "c424e15309b4d1088482ee2f0a33f73a552c65d9a56a82a4be9ecce8d85365bd"
   },
   "ga4": {
     "event_prefix": "",
