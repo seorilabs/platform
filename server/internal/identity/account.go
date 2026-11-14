@@ -87,6 +87,9 @@ func (s *Service) BeginAccountLink(
 	sess Session,
 	provider string,
 ) (AccountLinkChallenge, error) {
+	if err := forbidReviewLink(sess.AppUserID); err != nil {
+		return AccountLinkChallenge{}, err
+	}
 	if err := sess.EnsureNotAnonymous(); err != nil {
 		return AccountLinkChallenge{}, err
 	}
@@ -115,6 +118,9 @@ func (s *Service) CompleteAccountLink(
 	sess Session,
 	provider, idToken, nonce string,
 ) (AccountLinkResult, error) {
+	if err := forbidReviewLink(sess.AppUserID); err != nil {
+		return AccountLinkResult{}, err
+	}
 	if err := sess.EnsureNotAnonymous(); err != nil {
 		return AccountLinkResult{}, err
 	}

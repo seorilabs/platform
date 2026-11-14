@@ -14,7 +14,13 @@ func validRecoveryUID(uid string) bool {
 }
 
 func (s *Service) BeginAccountLinkRecovery(ctx context.Context, sess Session, provider, expectedAppUserID string) (AccountLinkChallenge, error) {
+	if err := forbidReviewLink(sess.AppUserID); err != nil {
+		return AccountLinkChallenge{}, err
+	}
 	if err := sess.EnsureNotAnonymous(); err != nil {
+		return AccountLinkChallenge{}, err
+	}
+	if err := forbidReviewLink(expectedAppUserID); err != nil {
 		return AccountLinkChallenge{}, err
 	}
 	if !validRecoveryUID(expectedAppUserID) {
@@ -39,7 +45,13 @@ func (s *Service) BeginAccountLinkRecovery(ctx context.Context, sess Session, pr
 }
 
 func (s *Service) RecoverAccountLink(ctx context.Context, sess Session, provider, idToken, nonce, expectedAppUserID string) (AccountLinkResult, error) {
+	if err := forbidReviewLink(sess.AppUserID); err != nil {
+		return AccountLinkResult{}, err
+	}
 	if err := sess.EnsureNotAnonymous(); err != nil {
+		return AccountLinkResult{}, err
+	}
+	if err := forbidReviewLink(expectedAppUserID); err != nil {
 		return AccountLinkResult{}, err
 	}
 	if !validRecoveryUID(expectedAppUserID) {

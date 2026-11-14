@@ -288,7 +288,7 @@ func (r *StoreRepository) EnsureUser(
 		}
 		// QA 기기는 저장을 지울 때마다 새 익명 계정을 만든다. 그 계정이
 		// 신규 가입 알림과 누적 수로 흘러가지 않게 운영 이벤트만 뺀다.
-		if r.operational == nil || identity.Client.DebugBuild {
+		if r.operational == nil || identity.Client.DebugBuild || identity.AuthType == "review" {
 			return nil
 		}
 		// 승인된 운영 조회용 ID만 보낸다. identity.UID는 앱 로그인 식별자라 제외한다.

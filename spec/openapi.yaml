@@ -444,6 +444,42 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /auth/review-access:
+    post:
+      tags: [auth]
+      summary: 앱 전용 체험 코드로 격리된 Firebase 신원 연결
+      description: |
+        명시적으로 허용한 무료 앱의 재사용 가능한 체험 코드와 App Check를 검증한다.
+        UID는 서버에서 앱별로 생성하며 클라이언트가 지정할 수 없다. 개인 Google
+        계정이나 일반 사용자 권한을 대신하지 않는다. 삭제한 체험 UID는 재사용하지
+        않으며 이후 진입은 새 체험 공간에 연결된다. 코드와 반환 토큰은 로그에 남기지 않는다.
+      operationId: createReviewAccess
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SeoriApp'
+        - $ref: '#/components/parameters/AppCheck'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReviewAccessRequest' }
+      responses:
+        '200':
+          description: 체험 Firebase 신원 교환 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/EnvelopeOk'
+                  - type: object
+                    properties:
+                      result: { $ref: '#/components/schemas/FirebaseCustomToken' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /auth/session/firebase-custom-token:
     post:
       tags: [auth]
@@ -4267,6 +4303,19 @@ components:
         grantRequestId: { type: string, maxLength: 128 }
         reason: { $ref: '#/components/schemas/AdminMutationReason' }
         confirmation: { type: string, maxLength: 300 }
+
+    CreateReviewAccessRequest:
+      type: object
+      required: [appId, code]
+      additionalProperties: false
+      properties:
+        appId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+        code:
+          type: string
+          minLength: 1
+          maxLength: 128
+          writeOnly: true
+          description: 영문 대소문자·공백·하이픈을 정규화하는 앱 전용 체험 코드. 로그 금지.
 
     CreateFirebaseCustomTokenRequest:
       type: object

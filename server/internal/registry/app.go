@@ -141,7 +141,9 @@ func (a App) IAPEnvironmentAllowed(env LedgerEnvironment) bool {
 }
 
 type AuthConfig struct {
-	AccountProviders map[string]AuthProviderConfig `json:"account_providers,omitempty" firestore:"account_providers,omitempty"`
+	// ReviewAccessCodeSHA256 opts a free app into isolated, reusable demo access.
+	ReviewAccessCodeSHA256 string                        `json:"review_access_code_sha256,omitempty" firestore:"review_access_code_sha256,omitempty"`
+	AccountProviders       map[string]AuthProviderConfig `json:"account_providers,omitempty" firestore:"account_providers,omitempty"`
 	// RequireAccountLinkAppCheck limits attestation to the two account-link endpoints.
 	// Older session and IAP clients keep their existing app-wide policy.
 	RequireAccountLinkAppCheck bool `json:"require_account_link_app_check,omitempty" firestore:"require_account_link_app_check,omitempty"`
@@ -401,6 +403,12 @@ func (a App) Validate() error {
 }
 
 func (a App) validateAuth() error {
+	if hash := a.Auth.ReviewAccessCodeSHA256; hash != "" {
+		matched, _ := regexp.MatchString(`^[a-f0-9]{64}$`, hash)
+		if !matched || a.FeatureEnabled("iap") || !a.FeatureEnabled("firebase_custom_token_bridge") || (!a.RequireAppCheck && !a.Auth.RequireAccountLinkAppCheck) {
+			return fmt.Errorf("%s: 체험 접근에는 SHA256, 무료 앱, Firebase bridge와 App Check가 필요하다", a.AppID)
+		}
+	}
 	if len(a.Auth.AccountProviders) == 0 {
 		if a.Auth.RequireAccountLinkAppCheck {
 			return fmt.Errorf("%s: account-link App Check에는 auth provider가 필요하다", a.AppID)

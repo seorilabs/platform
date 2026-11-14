@@ -171,6 +171,7 @@ type FirebaseCustomTokenResult struct {
 
 // Service는 세션 교환 유스케이스다.
 type Service struct {
+	reviewAccess     ReviewAccessRepository
 	registry         *registry.Registry
 	verifier         TokenVerifier
 	blocklist        Blocklist
@@ -438,6 +439,9 @@ func (s *Service) CreateFirebaseCustomToken(
 		if verifyErr != nil {
 			return FirebaseCustomTokenResult{}, verifyErr
 		}
+		if err := validateReviewClaims(app, claims); err != nil {
+			return FirebaseCustomTokenResult{}, err
+		}
 		uid = claims.UID
 		signInProvider = claims.SignInProvider
 	} else {
@@ -544,14 +548,23 @@ func (s *Service) CreateSession(
 	if err != nil {
 		return Result{}, err
 	}
+	review, err := reviewIdentity(app, identity.UID)
+	if err != nil {
+		return Result{}, err
+	}
+	if review {
+		identity.AuthType = "review"
+	}
 	identity.Client = client
 
 	puid, err := s.users.EnsureUser(ctx, app.AppID, identity)
 	if err != nil {
 		return Result{}, err
 	}
-	s.observeAppVersion(ctx, app.AppID, client)
-	linked := identity.AuthType == "apps_in_toss"
+	if !review {
+		s.observeAppVersion(ctx, app.AppID, client)
+	}
+	linked := identity.AuthType == "apps_in_toss" || review
 	if s.accounts != nil {
 		storedLinked, linkErr := s.accounts.IsAccountLinked(ctx, app.AppID, puid)
 		if linkErr != nil {
@@ -606,6 +619,12 @@ func (s *Service) resolveIdentity(
 		// 실제로 이걸 묶어 두면 lizard-tycoon은 결제가 하나도 되지 않는다.
 		// 전 사용자가 Firebase 익명 계정이기 때문이다.
 		authType := "firebase"
+		if err := validateReviewClaims(app, claims); err != nil {
+			return NewIdentity{}, err
+		}
+		if strings.HasPrefix(claims.UID, "review_") {
+			authType = "review"
+		}
 		// uid 접두사만으로 공급자를 정하지 않는다. 이 앱에서 발급했고
 		// 게스트가 아닌 서명된 custom token claim도 함께 일치해야 한다.
 		if hasAITFirebaseIdentity(app, claims) {
@@ -701,6 +720,13 @@ func (s *Service) Refresh(
 	if err := s.ensureNotBlocked(ctx, app.AppID, sess.AppUserID); err != nil {
 		return Result{}, err
 	}
+	review, err := reviewIdentity(app, sess.AppUserID)
+	if err != nil {
+		return Result{}, err
+	}
+	if review && !sess.IsLinkedAccount {
+		return Result{}, platformerr.New(platformerr.CodeAuthForbidden, "체험 세션을 확인해 주세요")
+	}
 	if s.accounts != nil {
 		linked, err := s.accounts.IsAccountLinked(ctx, app.AppID, sess.PlatformUserID)
 		if err != nil {
@@ -708,7 +734,7 @@ func (s *Service) Refresh(
 		}
 		// AIT의 연결 사실은 mTLS로 확인한 세션에 있고 OIDC 연결 표에는 없다.
 		// 현재 서명 세션의 AIT 연결만 보존하며 일반 계정의 해제는 반영한다.
-		sess.IsLinkedAccount = linked || (sess.IsLinkedAccount && strings.HasPrefix(sess.AppUserID, "ait:") && isSHA256(strings.TrimPrefix(sess.AppUserID, "ait:")))
+		sess.IsLinkedAccount = linked || review || (sess.IsLinkedAccount && strings.HasPrefix(sess.AppUserID, "ait:") && isSHA256(strings.TrimPrefix(sess.AppUserID, "ait:")))
 	}
 
 	// 회전. 실패해도 새 토큰 발급은 진행한다.
@@ -773,6 +799,9 @@ func (s *Service) Authenticate(ctx context.Context, appID, sessionToken string) 
 	// 세션 발급 후 차단됐을 수 있다. 세션 수명이 revocation 지연의 상한이지만
 	// 차단은 캐시 TTL 안에 반영된다.
 	if err := s.ensureNotBlocked(ctx, app.AppID, sess.AppUserID); err != nil {
+		return Session{}, err
+	}
+	if _, err := reviewIdentity(app, sess.AppUserID); err != nil {
 		return Session{}, err
 	}
 	return sess, nil

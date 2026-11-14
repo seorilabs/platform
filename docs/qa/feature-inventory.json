@@ -136,6 +136,15 @@
       "paths": [
         "server/cmd/platform/**"
       ]
+    },
+    {
+      "id": "review-access",
+      "core": true,
+      "foundation": true,
+      "paths": [
+        "server/internal/identity/review_access*.go",
+        "server/internal/registry/app.go"
+      ]
     }
   ],
   "apiRoutes": [

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "level": "L3",
+  "baseline": "56d6a8f9131d25a862b802323b6fee7c71979b4c",
+  "changedFeatures": [
+    "identity-session",
+    "firebase-bridge",
+    "account-link-recovery",
+    "account-deletion",
+    "configuration",
+    "content",
+    "inbox",
+    "ads-rewards",
+    "purchase-entitlements",
+    "economy-boxes",
+    "iap-passes",
+    "refund-sandbox-reset",
+    "operator-administration",
+    "events-analytics",
+    "presence",
+    "operational-outbox",
+    "role-registry-routing",
+    "review-access"
+  ],
+  "environments": [
+    "dev"
+  ],
+  "redesign": false,
+  "foundationRerun": true,
+  "floorOverrides": [],
+  "release": {
+    "markets": [
+      "service"
+    ],
+    "until": "public"
+  }
+}

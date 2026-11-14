@@ -74,6 +74,7 @@ func (h *Handler) WithKakaoUnlinkWebhook(config KakaoUnlinkWebhookConfig) *Handl
 // 표준 net/http의 ServeMux 패턴 라우팅을 쓴다.
 // Go 1.22+가 메서드와 경로 변수를 지원하므로 외부 라우터가 불필요하다.
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/auth/review-access", httpx.Wrap(h.createReviewAccess))
 	mux.HandleFunc("POST /v1/auth/session", httpx.Wrap(h.createSession))
 	mux.HandleFunc("POST /v1/auth/firebase-custom-token", httpx.Wrap(h.createFirebaseCustomToken))
 	mux.HandleFunc("POST /v1/auth/session/firebase-custom-token", httpx.Wrap(h.createSessionFirebaseCustomToken))

@@ -209,6 +209,7 @@ func newDeps(ctx context.Context, cfg config.Config) (*deps, error) {
 				return nil, err
 			}
 			svc.WithCustomTokenIssuer(customTokens)
+			svc.WithReviewAccessRepository(users)
 			svc.WithAppCheckVerifier(identity.NewFirebaseAppCheckVerifier())
 			kakao, err := oidc.NewKakao(nil)
 			if err != nil {
