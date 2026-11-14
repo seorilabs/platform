@@ -310,7 +310,9 @@ func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, 
 	result := append([]string(nil), app.IAP.EntitlementIDs...)
 	for _, entitlementID := range result {
 		// registry 검증을 우회한 잘못된 Firestore 문서도 여기서 fail-close한다.
-		if !adminEntitlementPattern.MatchString(entitlementID) || !h.catalog.Has(entitlementID) {
+		// 우편 전용 권리에는 판매 SKU가 없으므로 구매 앱만 SKU 교집합을 확인한다.
+		// 실제 IAP 변경 권한은 validateIAPContext의 별도 검사로 계속 차단한다.
+		if !adminEntitlementPattern.MatchString(entitlementID) || (app.FeatureEnabled("iap") && !h.catalog.Has(entitlementID)) {
 			return nil, platformerr.New(platformerr.CodeCatalogIncomplete,
 				"앱 entitlement allowlist와 SKU 카탈로그가 일치하지 않아요")
 		}
