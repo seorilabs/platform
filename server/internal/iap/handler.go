@@ -284,6 +284,7 @@ func (h *Handler) requireSession(r *http.Request, inboxRead bool) (identity.Sess
 	if err != nil {
 		return identity.Session{}, err
 	}
+	// IAP 불변식 8: 요청이 고른 신원으로 무료 권리의 소유자를 결정하지 않는다.
 	// 무료 우편 권리도 클라이언트가 고른 anon: 신원에는 공개하지 않는다.
 	// Firebase가 증명한 익명 사용자는 통과하며, 구매 경로는 아래에서 계속 차단한다.
 	if err := sess.EnsureNotAnonymous(); err != nil {

@@ -309,6 +309,7 @@ func (h *Handler) appEntitlements(ctx context.Context, appID string) ([]string, 
 
 	result := append([]string(nil), app.IAP.EntitlementIDs...)
 	for _, entitlementID := range result {
+		// IAP 불변식 8: 요청이 아닌 registry가 허용 권리와 구매 채택을 결정한다.
 		// registry 검증을 우회한 잘못된 Firestore 문서도 여기서 fail-close한다.
 		// 우편 전용 권리에는 판매 SKU가 없으므로 구매 앱만 SKU 교집합을 확인한다.
 		// 실제 IAP 변경 권한은 validateIAPContext의 별도 검사로 계속 차단한다.
