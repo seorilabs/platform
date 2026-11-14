@@ -2,7 +2,7 @@
 
 사용자가 게임 저장소 review-access-options.md A안을 승인했다. 기존 identity 패키지 안에서 앱별 체험 코드를 검증해 별도 Firebase UID를 발급한다. 새 서비스·키·Google 계정을 만들지 않는다. API 계약은 spec/openapi.yaml의 createReviewAccess다. 전체 흐름과 저장 분리는 [게임 상세 설계](https://github.com/seorilabs/my-little-parasite/tree/feat/review-access-code/docs/design/2026-11-14-review-access)에 연결한다.
 
-auth.review_access_code_sha256이 있는 iap:false 앱에서만 열며 App Check, 상수 시간 코드 대조, 앱 단위 분당120요청 제한을 적용한다. 이 값은 아직 운영 앱 레지스트리에 추가하지 않았다. 코드는 160비트 이상 난수를 앱별 자격증명으로 보관하고 서버에는 SHA256만 올린다.
+auth.review_access_code_sha256이 있는 iap:false 앱에서만 열며 App Check, 상수 시간 코드 대조, 앱 단위 분당120요청 제한을 적용한다. 원장 JSON에는 검증용 해시를 준비했으며 Firestore 운영 레지스트리에는 아직 반영하지 않았다. 코드는 160비트 이상 난수를 앱별 자격증명으로 보관하고 서버에는 SHA256만 올린다.
 
 서버가 만든 앱별 review UID만 허용하며 Firebase ID 토큰의 custom 공급자·seori_app_id·seori_guest=false 서명 claim을 함께 확인한다. UID 접두사만으로 권한을 올리지 않는다. 세션과 refresh는 체험 클라우드를 지원하지만 Google 연결·일반 계정 복구를 거부한다. 체험 신원은 AuthType=review로 기록하고 신규 실제 사용자 운영 이벤트에서 제외한다.
 
