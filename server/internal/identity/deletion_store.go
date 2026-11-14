@@ -159,6 +159,9 @@ func (r *StoreRepository) BeginDeletion(ctx context.Context, app registry.App, u
 			}
 			puid = mapping.PlatformUserID
 		}
+		if err = retireReviewAliasTx(tx, appID, uid); err != nil {
+			return err
+		}
 		job = DeletionJob{UserMarkerHash: hashHex(appID + "\x00" + puid), FirebaseProjectID: app.FirebaseProjectID, GA4PropertyID: app.GA4.PropertyID, ServiceAccount: app.FirebaseCustomTokenServiceAccount, AppID: appID, UID: uid, PlatformUserID: puid, ReceiptHash: hashHex(appID + "\x00" + receipt), State: "processing", RequestedAt: r.now().UTC(), NextAttemptAt: r.now(), GoogleAnalyticsDeletion: "not_requested"}
 		id := hashHex(appID + "\x00" + uid)
 		if err = tx.Set(p, job); err != nil {

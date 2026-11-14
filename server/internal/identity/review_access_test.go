@@ -172,3 +172,12 @@ func TestReviewHTTPRejectsChosenUIDAndAppMismatch(t *testing.T) {
 		}
 	}
 }
+
+func TestWrongReviewCodeDoesNotConsumeValidAccessBudget(t *testing.T) {
+	s, repo, _ := reviewTestService(t)
+	repo.allowed = false
+	_, err := s.CreateReviewAccess(t.Context(), "lizard-tycoon", "WRONG", "test-attestation")
+	if platformerr.CodeOf(err) != platformerr.CodeAuthInvalid || repo.calls != 0 {
+		t.Fatalf("wrong code consumed valid access budget: code=%s calls=%d", platformerr.CodeOf(err), repo.calls)
+	}
+}

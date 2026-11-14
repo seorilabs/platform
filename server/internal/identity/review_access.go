@@ -85,17 +85,19 @@ func (s *Service) CreateReviewAccess(ctx context.Context, appID, code, attestati
 	if len(code) == 0 || len(code) > 128 {
 		return FirebaseCustomTokenResult{}, platformerr.New(platformerr.CodeAuthInvalid, "체험 코드를 확인해 주세요")
 	}
+	digest := sha256.Sum256([]byte(normalizedReviewCode(code)))
+	want, decodeErr := hex.DecodeString(app.Auth.ReviewAccessCodeSHA256)
+	if decodeErr != nil || subtle.ConstantTimeCompare(digest[:], want) != 1 {
+		return FirebaseCustomTokenResult{}, platformerr.New(platformerr.CodeAuthInvalid, "체험 코드를 확인해 주세요")
+	}
+	// Only a valid code consumes the shared app budget. Incorrect codes must
+	// not let an unauthenticated caller deny legitimate review access.
 	allowed, err := s.reviewAccess.AllowReviewAttempt(ctx, appID, s.now().UTC())
 	if err != nil {
 		return FirebaseCustomTokenResult{}, err
 	}
 	if !allowed {
 		return FirebaseCustomTokenResult{}, platformerr.New(platformerr.CodeRateLimited, "잠시 후 체험 코드를 다시 입력해 주세요")
-	}
-	digest := sha256.Sum256([]byte(normalizedReviewCode(code)))
-	want, decodeErr := hex.DecodeString(app.Auth.ReviewAccessCodeSHA256)
-	if decodeErr != nil || subtle.ConstantTimeCompare(digest[:], want) != 1 {
-		return FirebaseCustomTokenResult{}, platformerr.New(platformerr.CodeAuthInvalid, "체험 코드를 확인해 주세요")
 	}
 	random := make([]byte, 32)
 	if _, err = rand.Read(random); err != nil {

@@ -95,3 +95,31 @@ func (r *StoreRepository) ResolveReviewUID(ctx context.Context, appID, candidate
 	})
 	return uid, err
 }
+
+// Retire the alias in the same transaction as the deletion request. The normal
+// deletion marker expires, but the alias must never resurrect that deleted UID.
+// A stale request for an older UID cannot retire a newer shared review identity.
+func retireReviewAliasTx(tx *store.Tx, appID, uid string) error {
+	if !isReviewUID(appID, uid) {
+		return nil
+	}
+	p, err := reviewPath("auth_review_identities", appID)
+	if err != nil {
+		return err
+	}
+	exists, snap, err := tx.Exists(p)
+	if err != nil || !exists {
+		return err
+	}
+	var d reviewUIDDoc
+	if err = snap.DataTo(&d); err != nil {
+		return err
+	}
+	if d.AppID != appID || !isReviewUID(appID, d.UID) {
+		return platformerr.New(platformerr.CodeLedgerStateInvalid, "체험 계정 기록이 올바르지 않아요")
+	}
+	if d.UID == uid {
+		return tx.Delete(p)
+	}
+	return nil
+}
