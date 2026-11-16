@@ -173,6 +173,7 @@ kill switch다. 해당 앱의 모든 플랫폼 호출이 즉시 403이 된다.
 | `jomul` | 활성 | 미사용 | 비활성 · 제품 이벤트는 모바일 Firebase SDK와 AIT 웹 스트림 | 비활성 | 활성 | — |
 | `lizard-tycoon` | 비활성 | production | 활성 | 활성 | 활성 | `sp_galaxy_gecko`, `sp_shootingstar_tokay` |
 | `lucid-chess` | 활성 | 미사용 | 핵심 퍼널·전면 광고 | 비활성 | 비활성 | — |
+| `malang` | 비활성 | 미사용 | 익명 핵심 퍼널·해금·유료 컬렉션 구매·공방 저장(`malang_` 접두사) | 비활성 | 비활성 | — |
 | `lucid-reversi` | 활성 | 미사용 | 비활성 | 비활성 | 비활성 | — |
 | `lord-ledger` | 활성 | 미사용 | 핵심 게임·군량 보상 | 비활성 | 활성 | — |
 | `merge-lizard` | 활성 | production | 활성 | 활성 | 활성 | 호박 묶음 10종·30일 호박·스타터, `growth_boost_25`, `nest_slots_plus_2`, `premium_land` |
