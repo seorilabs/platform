@@ -148,6 +148,12 @@ func TestMergeLizardRegistryContract(t *testing.T) {
 	if app.GA4.MeasurementID != "" || app.GA4.EventPrefix != "" {
 		t.Fatalf("GA4 중계 설정이 준비 전에 켜졌다: %#v", app.GA4)
 	}
+	// 앱 설정의 계정 삭제(merge-lizard DEC-037 LP-D3)는 lord-ledger와 같은 서버 삭제를 쓴다.
+	// worker는 이 속성에 GA4 사용자 삭제를 요청하므로 측정 ID와 짝인 Amber Lizards 속성이어야 한다.
+	// 외부 계정 연결이 없어 Apple 철회 단계는 타지 않는다.
+	if !app.FeatureEnabled("account_deletion") || app.GA4.PropertyID != "559075619" || len(app.Auth.AccountProviders) != 0 {
+		t.Fatalf("계정 삭제 계약이 다르다: features=%#v ga4=%#v auth=%#v", app.Features, app.GA4, app.Auth)
+	}
 	if len(app.CORSOrigins) != 0 {
 		t.Fatalf("네이티브 앱에 CORS origin이 있다: %v", app.CORSOrigins)
 	}
