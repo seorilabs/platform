@@ -12,7 +12,9 @@
   },
   "require_app_check": false,
   "ga4": {
-    "event_prefix": "malang_"
+    "event_prefix": "malang_",
+    "property_id": "564474934",
+    "measurement_id": "G-TYFF35SEC5"
   },
   "platform_event_allowlist": [
     "game_start",
